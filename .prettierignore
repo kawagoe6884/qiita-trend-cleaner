@@ -1,0 +1,5 @@
+node_modules/
+dist/
+package-lock.json
+# PRD と実装計画は手で整形している。Prettier のテーブル整形で崩さない
+.claude/

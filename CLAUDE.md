@@ -1,0 +1,108 @@
+# Qiita Trend Guard — プロジェクト規約
+
+## ⭐ 最終目的を見失わないこと
+
+このプロジェクトには**目的が 2 つ**ある。拡張機能を作ることだけが目的ではない。
+
+1. **Qiita のトレンドを健全化する Chrome 拡張を完成させる**
+2. **⭐ その過程すべてを Qiita 記事として投稿する**（PRD の Phase 10）
+
+**2 番目を忘れないこと。** 「PRD を書き、調査で前提が覆り、設計を作り直し、実装し、実機で壊れて直した」という**過程そのものが記事の主題**であり、拡張機能はその題材である。記事の主題は **拡張機能の紹介 と 開発プロセス の両方**（ユーザー確定済み）。
+
+### 記事の素材として既に確保できているもの
+
+| 素材 | 内容 |
+|---|---|
+| 設計の転回 | スクレイピング前提で設計 → 公式ヘルプの禁止規定を発見 → Atom フィード + API で再設計 |
+| 見つけにくい一次情報 | `help.qiita.com/ja/articles/qiita-api` は API ドキュメントからリンクされておらず気づきにくい |
+| 直感が外れる例 | Atom フィードの `<updated>` に数分のラグがあり、時刻トリガーでは古いセットを掴む → 変化検知に切り替え |
+| 誰でも踏む罠 | DevTools でコピーした CSS-in-JS のハッシュクラス名（`.style-*`）は次のデプロイで壊れる。ARIA 属性とテキストが実質的な公開 API |
+| 実装で実際に壊れた話 | エントリを両方 `index.ts` にしたら @crxjs のチャンク名が衝突し、service worker が一度も実行されなかった |
+| 検証の穴 | ビルド成功・型 OK・lint OK・テスト全通過でも成果物の配線は壊れうる。実機確認で初めて露見した |
+
+### 記事化の絶対制約
+
+**実アカウント名・具体的な記事 URL を一切掲載しない。** 誤検知による名誉毀損リスクと、利用規約第 11 条 5 項 1 号の回避のため。手法・統計値・開発プロセスだけで記事は成立する。一次証拠は PRD の Appendix に隔離してあり、**転載禁止**。
+
+---
+
+## 現在地
+
+**Phase 2（基盤構築）まで complete。** 検出機能は未実装。
+
+- 設計: [PRD](.claude/PRPs/prds/qiita-trend-guard.prd.md) — 改訂 3。意思決定ログと未解決事項はここ
+- 完了した計画: `.claude/PRPs/plans/completed/`
+- 実装レポート: `.claude/PRPs/reports/`
+
+次は **Phase 3（トークン設定 UI）と Phase 4（データ取得層）**。この 2 つは並行可能。
+
+---
+
+## 破ってはいけない設計上の約束
+
+1. **スクレイピング禁止。** Qiita は公式ヘルプで明確に禁止している。データ取得は**公式 API と Atom フィードのみ**。HTML ページの自動 fetch は一切しない。表示中ページの DOM 読み取り（追加リクエストゼロ）は可
+2. **DOM セレクタは `src/dom/selectors.ts` にのみ書く。** CSS-in-JS のハッシュクラス名（`.style-*`）は使用禁止。`src/dom/selectors.test.ts` が機械的に検査している
+3. **DOM 取得の失敗は例外を投げず `null` を返す。** 誤った対象を操作するより何もしない方が無害。**この方針がチャンク名衝突バグの発見に直結した**
+4. **`console` を直接呼ばない。** `src/lib/logger.ts` を通す（ESLint で強制）。Chrome は拡張機能内の `console.error` を「エラー」として収集する点に注意
+5. **エントリポイントに `index.ts` を使わない。** @crxjs がファイル名からチャンク名を導出するため、basename が衝突すると別々のローダーが同じチャンクを指す。`service-worker.ts` / `content-script.ts` のように一意にする
+6. **判定 UI で「不正アカウント」と断定しない。**「不自然ないいねパターン」に留める
+7. **ミュートがデフォルト。ブロックは一括自動実行しない。** ブロックは native `alert()` を起動し content script から閉じられない。かつ解除用の一覧 URL が存在せず誤検知を回収できない
+8. **広告・収益化をしない。** Qiita ヘルプが利用規約違反と明記
+
+---
+
+## 環境の罠（毎回引っかかるので先に読むこと）
+
+### Git Bash の `$PATH` が壊れている
+
+Windows 形式（`;` 区切り）と POSIX 形式（`:` 区切り）が混在しており、`/usr/bin` が解決できない。`node` どころか `ls` すら見つからない。**すべての Bash 呼び出しの先頭に必要**:
+
+```bash
+export PATH="/usr/bin:/bin:/mingw64/bin:/c/Program Files/nodejs"
+```
+
+Node.js v24.13.1 / npm 11.8.0 は正常にインストールされている。
+
+### Bash の heredoc は 140 行程度で切り捨てられる
+
+`unexpected EOF while looking for matching '` で失敗する。**100 行を超えるファイルは Write ツールで作成すること。**
+
+### このセッション自身がプロジェクトディレクトリをロックする
+
+Bash ツールは毎回 cwd をプロジェクトディレクトリに戻すため、**自分自身のプロジェクトフォルダは移動できない**（`Device or resource busy`）。移動が必要ならセッションを閉じてから外部で行う。
+
+---
+
+## コマンド
+
+| コマンド | 内容 |
+|---|---|
+| `npm run dev` | HMR 付き開発サーバー |
+| `npm run build` | 型チェック + 本番ビルド |
+| `npm run typecheck` | 型チェックのみ |
+| `npm run test` | ユニットテスト |
+| `npm run lint` | ESLint |
+| `npm run format` | Prettier |
+
+### ビルド後は `dist/` の配線を必ず検証する
+
+ビルド成功は「正しく動く」を意味しない。**service worker ローダーと content script ローダーが別々の正しいチャンクを指しているか**を毎回確認すること。
+
+```bash
+cat dist/service-worker-loader.js
+grep -o 'getURL("[^"]*")' dist/assets/*loader*.js
+```
+
+---
+
+## git
+
+このリポジトリは **git 未初期化**（2026-08-18 時点）。GitHub 上のリポジトリも未作成。
+
+個人用アカウントで運用する。`~/.gitconfig` の `includeIf` により、`C:/Users/Owner/Documents/PersonalProject/` 配下では `kawagoe6884` が自動適用される。remote は SSH エイリアス経由で設定すること:
+
+```
+git@github-personal:kawagoe6884/<repo>.git
+```
+
+`github.com` 直指定や HTTPS は**仕事用の鍵に紐づくため使わない**。
