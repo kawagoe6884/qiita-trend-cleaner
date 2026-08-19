@@ -408,7 +408,7 @@ chrome.storage.sync
 | 1 | 実測・仕様確定 | OQ-1〜6 を実測で解決 | **complete** | - | - | - |
 | 2 | 基盤構築 | Vite + TypeScript + MV3 scaffold、DOM セレクタ層の分離 | **complete** | - | - | [plan](../plans/completed/foundation-scaffold.plan.md) / [report](../reports/foundation-scaffold-report.md) |
 | 3 | トークン設定 UI | アクセストークンの入力・検証・保存（**任意設定**。未設定でもライトモードで動く） | pending | with 4 | 2 | - |
-| 4 | データ取得層 | Atom フィード解析 ＋ API クライアント ＋ スロットリング | pending | with 3 | 2 | - |
+| 4 | データ取得層 | Atom フィード解析 ＋ API クライアント ＋ スロットリング | **complete** | with 3 | 2 | [plan](../plans/completed/data-fetch-layer.plan.md) / [report](../reports/data-fetch-layer-report.md) |
 | 5 | 検出エンジン | 逆引きインデックス構築、共起クラスタ判定、バースト判定 | pending | - | 3, 4 | - |
 | 6 | 候補 UI・設定 UI | 候補一覧、スライダー、適合率フィードバック | pending | with 7 | 5 | - |
 | 7 | DOM 非表示 | 表示中ページでの非表示と除外件数バッジ | pending | with 6 | 5 | - |

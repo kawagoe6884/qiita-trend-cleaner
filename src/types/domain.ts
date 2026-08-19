@@ -72,6 +72,27 @@ export const DEFAULT_SETTINGS: Settings = {
   lookbackDays: 3,
 };
 
+/** 取得の射程。トークンの有無ではなくレート枠から決まる */
+export type ScanMode = 'light' | 'full';
+
+/** フィード 1 回分の取得結果 */
+export interface FeedSnapshot {
+  /** ルートの <updated>。変化検知のキー */
+  feedUpdated: IsoDateTime;
+  items: TrendItem[];
+}
+
+/** スキャン 1 回の結果サマリ。ログと Phase 6 の表示に使う */
+export interface ScanResult {
+  mode: ScanMode;
+  scannedItemCount: number;
+  likeRecordCount: number;
+  /** レート枠を使い切って打ち切ったか */
+  truncated: boolean;
+  startedAt: IsoDateTime;
+  finishedAt: IsoDateTime;
+}
+
 /**
  * storage.local のスキーマ全体。
  * token は sync に置かない（同期による漏出面の拡大を避けるため）。
@@ -86,4 +107,8 @@ export interface LocalState {
   candidates: Candidate[];
   /** 保持期間 7 日 */
   purgeAfter?: IsoDateTime;
+  /** 最後にスキャンした時刻 */
+  lastScanAt?: IsoDateTime;
+  /** 最後のスキャン結果 */
+  lastScanResult?: ScanResult;
 }

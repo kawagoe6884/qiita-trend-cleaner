@@ -10,9 +10,12 @@ function markInjected(version: string): void {
  * service worker からの応答を実行時に検証する。
  * 別コンテキストから来る値なので、型アサーションではなく型ガードで受ける。
  */
-function isPongResponse(value: unknown): value is QtgResponse {
+/** QtgResponse はユニオンなので、PONG だけに絞った型を用意する */
+type PongResponse = Extract<QtgResponse, { type: 'PONG' }>;
+
+function isPongResponse(value: unknown): value is PongResponse {
   if (typeof value !== 'object' || value === null) return false;
-  const candidate = value as Partial<QtgResponse>;
+  const candidate = value as Partial<PongResponse>;
   return candidate.type === 'PONG' && typeof candidate.version === 'string';
 }
 
