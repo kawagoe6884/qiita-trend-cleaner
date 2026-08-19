@@ -99,10 +99,15 @@ async function request(path: string, token: string | null): Promise<Response> {
     throw new QtgError(`api request failed: ${path}`, { cause: error });
   }
 
-  // 401 / 403 はトークンが無効なだけ。想定内の失敗なので warn に留める
-  // （logger.error は Chrome の拡張機能エラーバッジを立ててしまう）
+  // 401 / 403 はトークンが無効なだけで、拡張の異常ではない。
+  //
+  // 【実測 2026-08-19】Chrome は console.error だけでなく **console.warn も**
+  // chrome://extensions のエラー欄に収集する。warn のままだと、ユーザーが
+  // トークンを打ち間違えるたびに「拡張が壊れている」ように見える。
+  // 失敗は UI が伝え、スキャン中の 401 は scanner の catch が QtgError ごと
+  // 記録するため、ここは開発時にだけ見える debug で足りる。
   if (response.status === 401 || response.status === 403) {
-    logger.warn('api auth rejected:', response.status, path);
+    logger.debug('api auth rejected:', response.status, path);
     throw new QtgError(`api auth rejected (${String(response.status)})`);
   }
   if (response.status === 429) {
@@ -159,14 +164,25 @@ export async function fetchUserItems(
 }
 
 /**
+ * トークン検証の結果。
+ *
+ * boolean にすると「トークンが無効」と「通信できない」を UI が区別できず、
+ * ネットワーク断のときに「トークンが無効です」と嘘を表示することになる。
+ */
+export type TokenVerification = { ok: true } | { ok: false; reason: 'invalid' | 'network' };
+
+/**
  * トークンの疎通確認。Phase 3 のトークン設定 UI が使う。
  * 実測では有効なトークンで 200 と 18 キーの User が返り、Rate-Limit が 1000 になる。
  */
-export async function verifyToken(token: string): Promise<boolean> {
+export async function verifyToken(token: string): Promise<TokenVerification> {
   try {
     await request('/authenticated_user', token);
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (error) {
+    // 401/403 もネットワーク断も QtgError になるため message で判別する。
+    // request() の文言に依存する脆い判定だが、変えれば本関数のテストが落ちて気づける。
+    const invalid = error instanceof QtgError && error.message.includes('auth rejected');
+    return { ok: false, reason: invalid ? 'invalid' : 'network' };
   }
 }

@@ -1,6 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import { fetchLikes, fetchUserItems, verifyToken } from './qiita-client';
 import { QtgError } from '../lib/errors';
+import { logger } from '../lib/logger';
+
+// Chrome は console.warn も chrome://extensions のエラー欄に集めるため、
+// 想定内の失敗でレベルが上がっていないことを検証する
+vi.mock('../lib/logger', () => ({
+  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 /** 合成の liker。実アカウント名は使わない */
 function like(handle: string, itemsCount = 0): unknown {
@@ -141,13 +148,77 @@ describe('fetchUserItems', () => {
 });
 
 describe('verifyToken', () => {
-  it('200 なら true', async () => {
+  it('200 なら ok を返す', async () => {
+    // Arrange
     stubFetch({ id: 'example-user' });
-    await expect(verifyToken('dummy-token-value')).resolves.toBe(true);
+    // Act & Assert
+    await expect(verifyToken('dummy-token-value')).resolves.toEqual({ ok: true });
   });
 
-  it('401 なら例外にせず false を返す', async () => {
+  it('401 は invalid として返す（トークンが違う）', async () => {
     stubFetch({ message: 'Unauthorized' }, { status: 401 });
-    await expect(verifyToken('bad-token')).resolves.toBe(false);
+    await expect(verifyToken('bad-token')).resolves.toEqual({ ok: false, reason: 'invalid' });
+  });
+
+  it('403 も invalid として返す', async () => {
+    stubFetch({ message: 'Forbidden' }, { status: 403 });
+    await expect(verifyToken('bad-token')).resolves.toEqual({ ok: false, reason: 'invalid' });
+  });
+
+  it('通信失敗は network として返す（トークンのせいにしない）', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))));
+    await expect(verifyToken('dummy-token-value')).resolves.toEqual({
+      ok: false,
+      reason: 'network',
+    });
+  });
+
+  it('500 は network として返す（サーバー側の問題）', async () => {
+    stubFetch({ message: 'Internal Server Error' }, { status: 500 });
+    await expect(verifyToken('dummy-token-value')).resolves.toEqual({
+      ok: false,
+      reason: 'network',
+    });
+  });
+});
+
+describe('ログの扱い', () => {
+  beforeEach(() => {
+    vi.mocked(logger.warn).mockClear();
+    vi.mocked(logger.error).mockClear();
+  });
+
+  it('401 では warn も error も出さない（拡張の不具合として記録させない）', async () => {
+    // Arrange — ユーザーがトークンを打ち間違えただけ。UI が伝えるので十分
+    stubFetch({ message: 'Unauthorized' }, { status: 401 });
+    // Act
+    await expect(fetchLikes('0123456789abcdef0123', 'bad')).rejects.toThrow(QtgError);
+    // Assert
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.error)).not.toHaveBeenCalled();
+  });
+
+  it('403 でも warn も error も出さない', async () => {
+    stubFetch({ message: 'Forbidden' }, { status: 403 });
+    await expect(fetchLikes('0123456789abcdef0123', 'bad')).rejects.toThrow(QtgError);
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.error)).not.toHaveBeenCalled();
+  });
+
+  it('429 は warn を出す（設計どおりなら起きない異常）', async () => {
+    stubFetch({ message: 'Rate limit exceeded' }, { status: 429 });
+    await expect(fetchLikes('0123456789abcdef0123', null)).rejects.toThrow(QtgError);
+    expect(vi.mocked(logger.warn)).toHaveBeenCalled();
+  });
+
+  it('どのログにもトークンを渡さない', async () => {
+    stubFetch({ message: 'Unauthorized' }, { status: 401 });
+    await expect(fetchLikes('0123456789abcdef0123', 'dummy-token-value')).rejects.toThrow();
+    const calls = [
+      ...vi.mocked(logger.debug).mock.calls,
+      ...vi.mocked(logger.warn).mock.calls,
+      ...vi.mocked(logger.error).mock.calls,
+    ].flat();
+    expect(calls.some((arg) => String(arg).includes('dummy-token-value'))).toBe(false);
   });
 });

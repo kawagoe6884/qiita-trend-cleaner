@@ -8,12 +8,134 @@
         font-family: system-ui, sans-serif;
         margin: 0;
         padding: 24px;
+        max-width: 640px;
+        line-height: 1.7;
+      }
+      h1 {
+        font-size: 1.25rem;
+      }
+      .mode {
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 24px;
+      }
+      .mode-title {
+        font-weight: 700;
+        margin: 0 0 4px;
+      }
+      .mode-detail {
+        margin: 0;
+        font-size: 0.9rem;
+      }
+      label {
+        display: block;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+      input[type='password'] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px;
+        font-family: inherit;
+        font-size: 1rem;
+      }
+      button {
+        margin-top: 8px;
+        padding: 8px 16px;
+        font-family: inherit;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+      button[disabled] {
+        cursor: progress;
+        opacity: 0.6;
+      }
+      /* 削除の対象（マスク済みトークン）と操作を同じ行に置く。
+         離すと「何を削除するのか」が一瞬曖昧になる */
+      /* display を指定すると hidden 属性（UA の [hidden]{display:none}）が
+         作者スタイルに負けて効かなくなる。必ず明示的に打ち消す */
+      .saved[hidden] {
+        display: none;
+      }
+      .saved {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        margin-bottom: 24px;
+      }
+      .saved-label {
+        font-size: 0.9rem;
+      }
+      #masked {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        padding: 2px 8px;
+        border: 1px solid currentColor;
+        border-radius: 4px;
+      }
+      /* 行内に置くので button の既定の上マージンを打ち消す */
+      .saved button {
+        margin-top: 0;
+      }
+      .hint {
+        font-size: 0.85rem;
+        margin-top: 4px;
+      }
+      #message:not(:empty) {
+        border-left: 4px solid currentColor;
+        padding-left: 12px;
+        margin-top: 16px;
+      }
+      details {
+        margin-top: 32px;
+        font-size: 0.9rem;
       }
     </style>
   </head>
   <body>
     <h1>Qiita Trend Guard</h1>
-    <p>設定項目は Phase 3 以降で追加します。</p>
+
+    <section class="mode">
+      <p class="mode-title" id="mode-title"></p>
+      <p class="mode-detail" id="mode-detail"></p>
+    </section>
+
+    <section id="saved" class="saved" hidden>
+      <span class="saved-label">設定済みのトークン</span>
+      <code id="masked"></code>
+      <button type="button" id="remove">削除する</button>
+    </section>
+
+    <form id="token-form">
+      <label for="token">アクセストークン（任意）</label>
+      <!-- name を付けない: 万一ネイティブ送信が起きてもトークンをクエリに載せないため -->
+      <input type="password" id="token" autocomplete="off" spellcheck="false" />
+      <p class="hint">
+        設定すると著者の過去記事まで辿れるようになり、検出の射程が広がります。未設定でも検出は動きます。
+      </p>
+      <button type="submit" id="save">保存する</button>
+    </form>
+
+    <p id="message" role="status" aria-live="polite"></p>
+
+    <details>
+      <summary>トークンの取得手順</summary>
+      <ol>
+        <li>
+          Qiita の
+          <a href="https://qiita.com/settings/applications" target="_blank" rel="noreferrer">
+            設定 → アプリケーション
+          </a>
+          を開く
+        </li>
+        <li>「個人用アクセストークン」を発行する</li>
+        <li>
+          スコープは <code>read_qiita</code> だけで足ります。この拡張は Qiita に書き込みを行いません
+        </li>
+      </ol>
+    </details>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>
