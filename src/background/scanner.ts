@@ -66,7 +66,6 @@ function nextBudget(current: number, rate: RateState | null, mode: ScanMode): nu
   return rate === null ? Math.max(0, current - 1) : availableRequests(rate, fallbackLimitFor(mode));
 }
 
-
 /** スキャン中に持ち回る進捗。関数間では新しいオブジェクトとして受け渡す */
 interface ScanProgress {
   budget: number;
@@ -96,8 +95,16 @@ async function scanOneItem(
       scannedItemCount: progress.scannedItemCount + 1,
     };
   } catch (error) {
-    // 1 記事の失敗でスキャン全体を止めない
-    logger.warn('skip item:', item.itemId, error);
+    // 1 記事の失敗でスキャン全体を止めない。
+    //
+    // 【なぜ warn ではなく debug か】
+    // Chrome は console.warn も chrome://extensions のエラー欄に集める（2026-08-19 実測）。
+    // 記事の削除・限定公開・一時的な 5xx で数件落ちるのは通常運転であり、
+    // 失効トークンによる 401 もここへ落ちてくる。qiita-client 側で 401 を debug に
+    // 下げても、この catch が warn のままでは同じログが 1 スキャンにつき最大 30 回
+    // エラー欄に積まれ、修正が経路ごと素通りする。
+    // 全滅したかどうかは runScan の集計（scan produced no data）で拾う。
+    logger.debug('skip item:', item.itemId, error);
     return { ...progress, budget: Math.max(0, progress.budget - 1) };
   }
 }
@@ -141,7 +148,9 @@ async function scanAuthor(
     };
     return await scanItems(extras, token, mode, index, seen, afterListing);
   } catch (error) {
-    logger.warn('skip author:', handle, error);
+    // scanOneItem と同じ理由で debug。著者 1 人分の欠損は結果を歪めるが、
+    // 拡張の不具合ではない
+    logger.debug('skip author:', handle, error);
     return { ...initial, budget: Math.max(0, initial.budget - 1) };
   }
 }
@@ -197,10 +206,14 @@ async function persistScan(
 
   logger.info(
     'scan finished: mode=' + mode,
-    'items:', progress.scannedItemCount,
-    'likes:', progress.likeRecordCount,
-    'truncated:', progress.truncated,
-    'rate-remaining:', progress.rate?.remaining ?? 'unknown',
+    'items:',
+    progress.scannedItemCount,
+    'likes:',
+    progress.likeRecordCount,
+    'truncated:',
+    progress.truncated,
+    'rate-remaining:',
+    progress.rate?.remaining ?? 'unknown',
   );
   return result;
 }
@@ -234,6 +247,14 @@ export async function runScan(): Promise<ScanResult | null> {
   };
 
   progress = await scanItems(outcome.snapshot.items, token, mode, index, seen, progress);
+
+  // 個々の失敗は debug に留めるため、全滅だけはここで拾う。
+  // 30 件中 30 件が落ちるのは通常運転ではなく、パーサの破損・API 仕様変更・
+  // トークンの全面拒否のいずれか。これは「拡張が壊れている」なので warn でよい。
+  const attempted = outcome.snapshot.items.length;
+  if (attempted > 0 && !progress.truncated && progress.scannedItemCount === 0) {
+    logger.warn('scan produced no data: all', attempted, 'items failed');
+  }
 
   if (mode === 'full' && !progress.truncated) {
     const handles = [...new Set(outcome.snapshot.items.map((item) => item.authorHandle))];

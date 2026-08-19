@@ -11,7 +11,9 @@ export default defineManifest({
     48: 'icons/icon-48.png',
     128: 'icons/icon-128.png',
   },
-  permissions: ['storage', 'alarms'],
+  // alarms は要求しない。定期実行を持たない設計（service-worker.ts の冒頭）。
+  // 権限は少ないほど審査もユーザーの警戒も軽い
+  permissions: ['storage'],
   host_permissions: ['https://qiita.com/*'],
   background: { service_worker: 'src/background/service-worker.ts', type: 'module' },
   content_scripts: [

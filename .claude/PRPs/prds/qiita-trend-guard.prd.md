@@ -78,7 +78,7 @@ We'll know we're right when **提示された候補の適合率が 80% 以上を
 
 - [ ] **OQ-12**（最優先・Phase 5 で確認）: **ライトモード（トレンド 30 件のみ）で一次証拠のクラスタを検出できるか。**4 記事が同時にトレンドへ載る保証はなく、載らなければ共起が観測できない。検出できない場合、ライトモードの価値そのものが揺らぐ
 - [ ] **OQ-9 の残り**: ミュートを**起動する側**の DOM。トレンドカード／ユーザーページの「⋯」メニューを開く要素と、その中の「ミュート」項目。Phase 8 の着手時までに必要（Phase 2〜7 はこれ無しで進行可能）
-- [ ] **OQ-10**: Atom フィードへのアクセス頻度に許容範囲があるか（公式ヘルプに具体的な秒間隔の指示は記載なし）。conditional GET で 30 分間隔なら一般的な RSS リーダーと同等以下と判断するが、根拠は常識の範囲
+- [x] **OQ-10**（改訂 5 で実質解消）: Atom フィードへのアクセス頻度に許容範囲があるか（公式ヘルプに具体的な秒間隔の指示は記載なし）。**定期実行を廃止したため、フィードへの自動アクセスは「インストール時」「ブラウザ起動時」の 2 契機のみになり、一般的な RSS リーダーより明確に少ない。**頻度の上限を推測する必要がなくなった
 
 ---
 
@@ -218,21 +218,31 @@ Qiita 公式ヘルプ [Qiita API・スクレイピングについて](https://he
 - ルートの `<updated>`: `2026-08-18T17:00:00+09:00` → 5:00 / 17:00 更新の裏付け
 - ⚠️ **`<updated>` の反映には数分のラグがある。**17:00 を数分過ぎた時点でも `T05:00:00` のままで、その後 `T17:00:00` に切り替わる（OQ-8 実測）
 
-### スキャンの起動条件（時刻ベースは使用しない）
+### スキャンの起動条件（時刻ベースも定期実行も使用しない）
 
 `<updated>` にラグがあるため、5:00 / 17:00 ちょうどに走らせると古いセットを取得する。**`<updated>` の変化を検知して起動する**。
 
+**定期実行は持たない（改訂 5 で決定）。** ライトモードの枠は 60 req/h、1 スキャンは約 30 req。30 分間隔で回すと 60 req/h ちょうどで余裕がゼロになり、起動時スキャンや手動スキャンが 1 回入るだけで 429 に届く。つまり**無料プランの設計どおりの挙動が「拡張の不具合」として `chrome://extensions` に記録される**。
+
+代わりに、拡張を入れたユーザーが自分のタイミングで走らせる。連打しても `<updated>` が変わっていなければ API を 1 度も叩かないため、手動 2 回目以降は枠を消費しない。この判断により **`alarms` 権限も不要になった**。
+
 ```
-chrome.alarms で30分ごと（＋ブラウザ起動時）
+起動契機は 3 つだけ: onInstalled ／ onStartup ／ 手動（SCAN_NOW）
     ↓
 Atom feed を conditional GET（If-None-Match / If-Modified-Since）
     ↓
-304 → 何もしない（サーバー負荷ほぼゼロ）
+304 → 何もしない（API 枠を 1 も消費しない）
     ↓
 200 → <updated> を lastFeedUpdated と比較
     ↓
 変化あり → スキャン実行 → lastFeedUpdated / feedETag を更新
 ```
+
+| 契機 | 頻度 | API 消費 |
+|---|---|---|
+| `onInstalled` | インストール／更新時に 1 回 | 約 30 req（キャッシュが空なので必ず走る） |
+| `onStartup` | ブラウザ起動時に 1 回 | フィード不変なら 0 req |
+| 手動（SCAN_NOW） | ユーザー次第 | フィード不変なら 0 req |
 
 この方式の利点:
 
@@ -407,7 +417,7 @@ chrome.storage.sync
 |---|-------|-------------|--------|----------|---------|----------|
 | 1 | 実測・仕様確定 | OQ-1〜6 を実測で解決 | **complete** | - | - | - |
 | 2 | 基盤構築 | Vite + TypeScript + MV3 scaffold、DOM セレクタ層の分離 | **complete** | - | - | [plan](../plans/completed/foundation-scaffold.plan.md) / [report](../reports/foundation-scaffold-report.md) |
-| 3 | トークン設定 UI | アクセストークンの入力・検証・保存（**任意設定**。未設定でもライトモードで動く） | pending | with 4 | 2 | - |
+| 3 | トークン設定 UI | アクセストークンの入力・検証・保存（**任意設定**。未設定でもライトモードで動く） | **complete** | with 4 | 2 | [plan](../plans/completed/token-settings-ui.plan.md) / [report](../reports/token-settings-ui-report.md) |
 | 4 | データ取得層 | Atom フィード解析 ＋ API クライアント ＋ スロットリング | **complete** | with 3 | 2 | [plan](../plans/completed/data-fetch-layer.plan.md) / [report](../reports/data-fetch-layer-report.md) |
 | 5 | 検出エンジン | 逆引きインデックス構築、共起クラスタ判定、バースト判定 | pending | - | 3, 4 | - |
 | 6 | 候補 UI・設定 UI | 候補一覧、スライダー、適合率フィードバック | pending | with 7 | 5 | - |
@@ -439,7 +449,7 @@ chrome.storage.sync
 **Phase 4: データ取得層**
 
 - **Goal**: スクレイピングを一切行わずに検出の入力を揃える
-- **Scope**: Atom フィードの conditional GET と XML パース、**`<updated>` 変化検知によるスキャン起動**（`chrome.alarms` 30 分間隔＋起動時）、`GET /api/v2/users/:user_id/items`、`GET /api/v2/items/:item_id/likes`、レート制限ハンドリング、スロットリング
+- **Scope**: Atom フィードの conditional GET と XML パース、**`<updated>` 変化検知によるスキャン起動**（インストール時／ブラウザ起動時／手動。定期実行なし）、`GET /api/v2/users/:user_id/items`、`GET /api/v2/items/:item_id/likes`、レート制限ハンドリング、スロットリング
 - **Success signal**: 1 回のスキャンで、トレンド 30 件分の likers が `created_at` 付きで `chrome.storage.local` に入る。かつ `<updated>` が変わらない限りスキャンが走らない
 - **モード対応**: レート枠（60 / 1000 req/h）に応じて取得範囲を切り替える。`Rate-Remaining` ヘッダーを追跡し、枠を使い切る前に打ち切る。ページネーションの要否は `Total-Count` で判定する
 - **OQ-7 は解決済み**（2026-08-19 実測）。ミュートは likes API の結果に影響しないため、実行前インデックスの保持は**不要**

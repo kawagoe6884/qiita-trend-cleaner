@@ -40,8 +40,13 @@ function createChromeMock() {
       sendMessage: vi.fn(),
       onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
       onInstalled: { addListener: vi.fn() },
+      onStartup: { addListener: vi.fn() },
     },
     storage: { local: createStorageArea(), sync: createStorageArea() },
+    // 拡張はもう alarms を使わない（定期実行を持たない設計）。
+    // それでもモックを残すのは番人として。service-worker.test.ts が
+    // 「create も onAlarm も呼ばれないこと」を検査しており、
+    // 定期実行を戻すと落ちる。消すと ReferenceError になって検査が成立しない
     alarms: { create: vi.fn(), clear: vi.fn(), onAlarm: { addListener: vi.fn() } },
   };
 }
