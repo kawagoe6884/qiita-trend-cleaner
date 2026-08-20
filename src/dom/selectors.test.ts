@@ -69,8 +69,8 @@ describe('DEFAULT_SETTINGS', () => {
 
 describe('chrome mock', () => {
   it('storage.local が set した値を get で返す', async () => {
-    await chrome.storage.local.set({ lastFeedUpdated: '2026-08-18T17:00:00+09:00' });
-    const result = await chrome.storage.local.get('lastFeedUpdated');
-    expect(result).toEqual({ lastFeedUpdated: '2026-08-18T17:00:00+09:00' });
+    await chrome.storage.local.set({ rateLimitedUntil: 1787104432 });
+    const result = await chrome.storage.local.get('rateLimitedUntil');
+    expect(result).toEqual({ rateLimitedUntil: 1787104432 });
   });
 });

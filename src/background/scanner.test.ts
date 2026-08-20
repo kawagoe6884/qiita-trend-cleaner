@@ -1,20 +1,26 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runScan } from './scanner';
-import { fetchFeedIfChanged } from '../feed/feed-fetcher';
 import { fetchLikes, fetchUserItems } from '../api/qiita-client';
-import { saveToken, getLikeIndex, getFeedCache, getCandidates } from '../lib/storage';
+import {
+  saveToken,
+  getLikeIndex,
+  saveLikeIndex,
+  getCandidates,
+  getRateLimitedUntil,
+} from '../lib/storage';
+import { RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { countRecords } from '../detect/like-index';
+import type { TrendItem } from '../types/domain';
 
-vi.mock('../feed/feed-fetcher', () => ({ fetchFeedIfChanged: vi.fn() }));
 vi.mock('../api/qiita-client', () => ({ fetchLikes: vi.fn(), fetchUserItems: vi.fn() }));
 
-const feedMock = vi.mocked(fetchFeedIfChanged);
 const likesMock = vi.mocked(fetchLikes);
 const itemsMock = vi.mocked(fetchUserItems);
 
-function trendItem(index: number) {
-  const handle = `example-author-${index}`;
+/** 合成のトレンド記事。実アカウント名・実 item_id は使わない */
+function trendItem(index: number): TrendItem {
+  const handle = `example-author-${String(index)}`;
   const itemId = `0123456789abcdef${String(index).padStart(4, '0')}`;
   return {
     itemId,
@@ -23,6 +29,9 @@ function trendItem(index: number) {
     publishedAt: '2026-08-18T10:00:00+09:00',
   };
 }
+
+/** 既定の入力。content script が読んだ 2 件のつもり */
+const TWO_ITEMS: TrendItem[] = [trendItem(1), trendItem(2)];
 
 function likeOf(handle: string) {
   return {
@@ -41,11 +50,6 @@ function likesResponse(handles: string[], remaining = 55) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  feedMock.mockResolvedValue({
-    kind: 'updated',
-    snapshot: { feedUpdated: '2026-08-19T05:00:00+09:00', items: [trendItem(1), trendItem(2)] },
-    etag: 'W/"0123456789abcdef"',
-  });
   likesMock.mockResolvedValue(likesResponse(['example-liker-a', 'example-liker-b']));
   itemsMock.mockResolvedValue({
     data: [{ id: 'fedcba9876543210fedc', created_at: '2026-08-10T09:00:00+09:00' }],
@@ -55,11 +59,19 @@ beforeEach(() => {
 });
 
 describe('runScan', () => {
-  it('フィードが変わっていなければ null を返し API を叩かない', async () => {
-    // Arrange
-    feedMock.mockResolvedValue({ kind: 'unchanged' });
+  it('渡されたトレンド記事をスキャンする', async () => {
     // Act
-    const result = await runScan();
+    const result = await runScan(TWO_ITEMS);
+    // Assert
+    expect(likesMock).toHaveBeenCalledTimes(2);
+    expect(result?.newItemCount).toBe(2);
+    expect(result?.scannedItemCount).toBe(2);
+  });
+
+  it('空配列なら null を返し、例外も API 呼び出しも無い', async () => {
+    // Arrange — トレンド以外のページでは 0 件が正常
+    // Act
+    const result = await runScan([]);
     // Assert
     expect(result).toBeNull();
     expect(likesMock).not.toHaveBeenCalled();
@@ -68,7 +80,7 @@ describe('runScan', () => {
   it('ライトモードでは著者の過去記事を辿らない', async () => {
     // Arrange — トークン未設定
     // Act
-    const result = await runScan();
+    const result = await runScan(TWO_ITEMS);
     // Assert
     expect(result?.mode).toBe('light');
     expect(itemsMock).not.toHaveBeenCalled();
@@ -79,7 +91,7 @@ describe('runScan', () => {
     // Arrange
     await saveToken('dummy-token-value');
     // Act
-    const result = await runScan();
+    const result = await runScan(TWO_ITEMS);
     // Assert
     expect(result?.mode).toBe('full');
     expect(itemsMock).toHaveBeenCalledTimes(2);
@@ -87,7 +99,7 @@ describe('runScan', () => {
 
   it('likers をアカウント単位に畳んで保存する', async () => {
     // Act
-    await runScan();
+    await runScan(TWO_ITEMS);
     // Assert
     const index = await getLikeIndex();
     expect(Object.keys(index).sort()).toEqual(['example-liker-a', 'example-liker-b']);
@@ -95,61 +107,18 @@ describe('runScan', () => {
     expect(index['example-liker-a']?.likes[0]?.itemPostedAt).toBe('2026-08-18T10:00:00+09:00');
   });
 
-  it('残り枠が余白を切ったら打ち切って truncated を立てる', async () => {
-    // Arrange — 1 件目の応答で残量 3（余白 5 未満）
-    likesMock.mockResolvedValueOnce(likesResponse(['example-liker-a'], 3));
-    // Act
-    const result = await runScan();
-    // Assert
-    expect(result?.truncated).toBe(true);
-    expect(result?.scannedItemCount).toBe(1);
-    expect(likesMock).toHaveBeenCalledTimes(1);
-  });
-
   it('1 記事が失敗しても残りを処理する', async () => {
     // Arrange
     likesMock.mockRejectedValueOnce(new Error('boom'));
     // Act
-    const result = await runScan();
+    const result = await runScan(TWO_ITEMS);
     // Assert
     expect(result?.scannedItemCount).toBe(1);
     expect(likesMock).toHaveBeenCalledTimes(2);
   });
 
-  it('完走したらフィードを処理済みとして保存する', async () => {
-    // Act
-    const result = await runScan();
-    // Assert
-    expect(result?.truncated).toBe(false);
-    const cache = await getFeedCache();
-    expect(cache.lastUpdated).toBe('2026-08-19T05:00:00+09:00');
-    expect(cache.etag).toBe('W/"0123456789abcdef"');
-  });
-
-  it('打ち切ったらフィードを処理済みにしない（次回に再試行できる）', async () => {
-    // Arrange — 1 件目の応答で残量 3（余白 5 未満）にして打ち切らせる
-    likesMock.mockResolvedValueOnce(likesResponse(['example-liker-a'], 3));
-    // Act
-    const result = await runScan();
-    // Assert — 保存すると次回が <updated> 不変でスキップされ、欠けたまま固定される
-    expect(result?.truncated).toBe(true);
-    const cache = await getFeedCache();
-    expect(cache.lastUpdated).toBeNull();
-    expect(cache.etag).toBeNull();
-  });
-
-  it('打ち切っても取得済みのインデックスは保存する', async () => {
-    // Arrange
-    likesMock.mockResolvedValueOnce(likesResponse(['example-liker-a'], 3));
-    // Act
-    await runScan();
-    // Assert — 途中まででも成果は捨てない
-    const index = await getLikeIndex();
-    expect(Object.keys(index)).toEqual(['example-liker-a']);
-  });
-
   it('スキャン結果に開始と終了の時刻が入る', async () => {
-    const result = await runScan();
+    const result = await runScan(TWO_ITEMS);
     expect(result?.startedAt).toBeTruthy();
     expect(result?.finishedAt).toBeTruthy();
     expect(result?.likeRecordCount).toBe(4);
@@ -157,8 +126,121 @@ describe('runScan', () => {
 });
 
 /**
+ * ページをリロードするたびに 30 req 使うと、ライトモードの 60 req/h は
+ * 2 回で尽きる。「見ている 30 件を渡す」設計は、既知の除外とセットで成立する。
+ */
+describe('runScan の既知記事の除外', () => {
+  it('既にインデックスにある記事は叩かない', async () => {
+    // Arrange — 1 回目で 2 件とも取得済みにする
+    await runScan(TWO_ITEMS);
+    vi.clearAllMocks();
+    likesMock.mockResolvedValue(likesResponse(['example-liker-c']));
+    // Act — 3 件目だけが新しい
+    const result = await runScan([...TWO_ITEMS, trendItem(3)]);
+    // Assert
+    expect(likesMock).toHaveBeenCalledTimes(1);
+    expect(result?.newItemCount).toBe(1);
+  });
+
+  it('全件既知なら API を 1 度も叩かないが、検出は走る', async () => {
+    // Arrange
+    await runScan(TWO_ITEMS);
+    vi.clearAllMocks();
+    // Act — 同じページをリロードした状況
+    const result = await runScan(TWO_ITEMS);
+    // Assert
+    expect(likesMock).not.toHaveBeenCalled();
+    expect(result?.newItemCount).toBe(0);
+    // 蓄積は残り、候補の再計算も行われる
+    expect(await getCandidates()).toEqual([]);
+    expect(countRecords(await getLikeIndex())).toBe(4);
+  });
+
+  it("フルモードでも全件既知なら著者一覧を叩かない", async () => {
+    // Arrange — 「リロードでは API を 1 度も叩かない」はライトモードだけの
+    // 性質であってはならない。fetchUserItems は seen を見る前に呼ばれるため、
+    // 著者を items から取ると既知の記事しか無くても著者数ぶん消費する
+    await saveToken("dummy-token-value");
+    await runScan(TWO_ITEMS);
+    vi.clearAllMocks();
+    // Act — 同じページをリロードした状況
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(likesMock).not.toHaveBeenCalled();
+    expect(itemsMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 429 は「設計どおりの停止信号」であって不具合ではない（改訂 6）。
+ * 予測して手前で止めるのをやめた代わりに、止まったことを正しく記録する。
+ */
+describe('runScan の 429 の扱い', () => {
+  it('429 を受けたらそこで止め、取得済みの分は保存する', async () => {
+    // Arrange — 1 件目は成功、2 件目で枠切れ
+    likesMock.mockResolvedValueOnce(likesResponse(['example-liker-a']));
+    likesMock.mockRejectedValueOnce(new RateLimitError(1787104432));
+    // Act
+    const result = await runScan(TWO_ITEMS);
+    // Assert — 途中まででも成果は捨てない
+    expect(result?.scannedItemCount).toBe(1);
+    expect(Object.keys(await getLikeIndex())).toEqual(['example-liker-a']);
+    expect(await getRateLimitedUntil()).toBe(1787104432);
+  });
+
+  it('Rate-Reset が読めない 429 では 1 時間後を再開時刻にする', async () => {
+    // Arrange
+    likesMock.mockRejectedValue(new RateLimitError(null));
+    const before = Math.floor(Date.now() / 1000);
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert — 枠は 1 時間単位で回復する。早すぎる案内より遅い案内を選ぶ
+    const until = await getRateLimitedUntil();
+    expect(until).toBeGreaterThanOrEqual(before + 3600);
+    expect(until).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 3600);
+  });
+
+  it('429 で止まった残りは次のスキャンで拾える', async () => {
+    // Arrange — 1 回目は 1 件目だけ成功
+    likesMock.mockResolvedValueOnce(likesResponse(['example-liker-a']));
+    likesMock.mockRejectedValueOnce(new RateLimitError(1787104432));
+    await runScan(TWO_ITEMS);
+    vi.clearAllMocks();
+    likesMock.mockResolvedValue(likesResponse(['example-liker-b']));
+    // Act — 同じ 2 件を渡す
+    const result = await runScan(TWO_ITEMS);
+    // Assert — 取り逃した 2 件目だけを叩く
+    expect(likesMock).toHaveBeenCalledTimes(1);
+    expect(likesMock).toHaveBeenCalledWith(TWO_ITEMS[1]?.itemId, null);
+    expect(result?.newItemCount).toBe(1);
+  });
+
+  it('429 なしで終わったら再開時刻の記録を消す', async () => {
+    // Arrange — 前回 429 で止まっている
+    likesMock.mockRejectedValueOnce(new RateLimitError(1787104432));
+    await runScan([trendItem(9)]);
+    expect(await getRateLimitedUntil()).toBe(1787104432);
+    likesMock.mockResolvedValue(likesResponse(['example-liker-a']));
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert — 「いま止まっているか」だけを表す
+    expect(await getRateLimitedUntil()).toBeNull();
+  });
+
+  it('フルモードでも 429 のあとは著者の巡回に入らない', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    likesMock.mockRejectedValue(new RateLimitError(1787104432));
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert — 枠が無いのに追加取得を始めない
+    expect(itemsMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * Chrome は console.warn も chrome://extensions のエラー欄に集める（2026-08-19 実測）。
- * qiita-client 側で 401 を debug へ下げても、scanner の catch が warn のままだと
+ * qiita-client 側で 401 や 429 を debug へ下げても、scanner の catch が warn のままだと
  * 同じログが経路を変えてエラー欄に戻ってくる。ここはその再発を止める番人。
  */
 describe('runScan のログ水準', () => {
@@ -174,7 +256,7 @@ describe('runScan のログ水準', () => {
     // Arrange — 2 件中 1 件だけ失敗（記事の削除・限定公開・一時的な 5xx 相当）
     likesMock.mockRejectedValueOnce(new Error('boom'));
     // Act
-    await runScan();
+    await runScan(TWO_ITEMS);
     // Assert — 想定内の欠損を「拡張の不具合」として記録しない
     expect(warnSpy).not.toHaveBeenCalled();
     expect(debugSpy).toHaveBeenCalledWith('skip item:', expect.any(String), expect.any(Error));
@@ -186,20 +268,30 @@ describe('runScan のログ水準', () => {
     likesMock.mockRejectedValue(new Error('api auth rejected (401)'));
     itemsMock.mockRejectedValue(new Error('api auth rejected (401)'));
     // Act
-    await runScan();
+    await runScan(TWO_ITEMS);
     // Assert — 件数ぶん積み上がらず、集計の 1 行だけに畳まれる
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith('scan produced no data: all', 2, 'items failed');
   });
 
   it('全記事が失敗したときだけ warn で知らせる', async () => {
-    // Arrange — パーサ破損・API 仕様変更なら全滅する。これは本当に壊れている
+    // Arrange — API 仕様変更なら全滅する。これは本当に壊れている
     likesMock.mockRejectedValue(new Error('boom'));
     // Act
-    const result = await runScan();
+    const result = await runScan(TWO_ITEMS);
     // Assert
     expect(result?.scannedItemCount).toBe(0);
     expect(warnSpy).toHaveBeenCalledWith('scan produced no data: all', 2, 'items failed');
+  });
+
+  it('429 は全滅と区別する（warn を出さない）', async () => {
+    // Arrange — 1 件目で枠切れ。0 件しか取れていないが「壊れている」わけではない
+    likesMock.mockRejectedValue(new RateLimitError(1787104432));
+    // Act
+    const result = await runScan(TWO_ITEMS);
+    // Assert — 正常な無料プランの挙動をエラー欄に載せない
+    expect(result?.scannedItemCount).toBe(0);
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it('著者の過去記事の取得に失敗しても warn を出さない', async () => {
@@ -207,7 +299,7 @@ describe('runScan のログ水準', () => {
     await saveToken('dummy-token-value');
     itemsMock.mockRejectedValue(new Error('boom'));
     // Act
-    await runScan();
+    await runScan(TWO_ITEMS);
     // Assert — 記事は取れているので全滅ではない
     expect(warnSpy).not.toHaveBeenCalled();
     expect(debugSpy).toHaveBeenCalledWith('skip author:', expect.any(String), expect.any(Error));
@@ -216,18 +308,13 @@ describe('runScan のログ水準', () => {
   it('検出はゼロ件でも warn を出さない', async () => {
     // Arrange — 既定は 2 記事 / 2 アカウントなので閾値（N=5 M=2）に届かない
     // Act
-    await runScan();
+    await runScan(TWO_ITEMS);
     // Assert — 「候補なし」は正常。エラー欄に載せない
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it('打ち切りは全滅と区別する（warn を出さない）', async () => {
-    // Arrange — 1 件目の応答で残量 3（余白 5 未満）にして打ち切らせる
-    likesMock.mockResolvedValueOnce(likesResponse(['example-liker-a'], 3));
-    // Act
-    const result = await runScan();
-    // Assert — 枠切れは想定内。次回スキャンで再試行される
-    expect(result?.truncated).toBe(true);
+  it('トレンド以外のページ（0 件）でも warn を出さない', async () => {
+    await runScan([]);
     expect(warnSpy).not.toHaveBeenCalled();
   });
 });
@@ -237,7 +324,7 @@ describe('runScan のログ水準', () => {
  * ここをモックすると「配線されているか」が検証できない。
  */
 describe('runScan の蓄積と検出', () => {
-  /** 著者 A の 2 記事に count 人が揃った likes 応答を作る */
+  /** 著者 A の記事に count 人が揃った likes 応答を作る */
   function clusterLikes(count: number) {
     const handles = Array.from({ length: count }, (_, i) => `example-liker-${String(i + 1)}`);
     return likesResponse(handles);
@@ -245,42 +332,28 @@ describe('runScan の蓄積と検出', () => {
 
   it('2 回スキャンするとインデックスが蓄積される', async () => {
     // Arrange — 1 回目は記事 1,2
-    await runScan();
+    await runScan(TWO_ITEMS);
     const afterFirst = countRecords(await getLikeIndex());
-    // 2 回目は別のトレンドセット（記事 3,4）
-    feedMock.mockResolvedValue({
-      kind: 'updated',
-      snapshot: { feedUpdated: '2026-08-19T17:00:00+09:00', items: [trendItem(3), trendItem(4)] },
-      etag: 'W/"fedcba9876543210"',
-    });
-    // Act
-    await runScan();
+    // Act — 2 回目は別のトレンドセット（記事 3,4）
+    await runScan([trendItem(3), trendItem(4)]);
     // Assert — 上書きなら afterFirst のままになる
     expect(countRecords(await getLikeIndex())).toBe(afterFirst * 2);
   });
 
-  it('同じフィードを 2 回処理しても重複しない', async () => {
-    // Arrange & Act — feedMock は同じ items を返し続ける
-    await runScan();
+  it('同じトレンドを 2 回処理しても重複しない', async () => {
+    // Arrange & Act
+    await runScan(TWO_ITEMS);
     const afterFirst = countRecords(await getLikeIndex());
-    await runScan();
+    await runScan(TWO_ITEMS);
     // Assert — アカウントが同じ記事に 2 回いいねすることはない
     expect(countRecords(await getLikeIndex())).toBe(afterFirst);
   });
 
   it('検出結果が storage に保存される', async () => {
     // Arrange — 5 人が著者 1 の 2 記事に揃う（N=5 M=2 を満たす）
-    feedMock.mockResolvedValue({
-      kind: 'updated',
-      snapshot: {
-        feedUpdated: '2026-08-19T05:00:00+09:00',
-        items: [trendItem(1), { ...trendItem(2), authorHandle: 'example-author-1' }],
-      },
-      etag: 'W/"0123456789abcdef"',
-    });
     likesMock.mockResolvedValue(clusterLikes(5));
     // Act
-    await runScan();
+    await runScan([trendItem(1), { ...trendItem(2), authorHandle: 'example-author-1' }]);
     // Assert
     const candidates = await getCandidates();
     expect(candidates).toHaveLength(1);
@@ -290,19 +363,96 @@ describe('runScan の蓄積と検出', () => {
 
   it('候補ゼロでも空配列が保存される', async () => {
     // Act — 既定のフィクスチャは 2 アカウントしかいない
-    await runScan();
+    await runScan(TWO_ITEMS);
     // Assert — 未保存（undefined）ではなく空配列
     expect(await getCandidates()).toEqual([]);
   });
 
-  it('打ち切っても蓄積と検出は行う', async () => {
-    // Arrange — 1 件目の応答で残量 3（余白 5 未満）にして打ち切らせる
-    likesMock.mockResolvedValueOnce(likesResponse(['example-liker-a'], 3));
+  it('429 で止まっても蓄積と検出は行う', async () => {
+    // Arrange
+    likesMock.mockResolvedValueOnce(likesResponse(['example-liker-a']));
+    likesMock.mockRejectedValueOnce(new RateLimitError(1787104432));
     // Act
-    const result = await runScan();
+    await runScan(TWO_ITEMS);
     // Assert — 途中まででも成果は捨てない
-    expect(result?.truncated).toBe(true);
     expect(countRecords(await getLikeIndex())).toBe(1);
     expect(await getCandidates()).toEqual([]);
+  });
+});
+
+/**
+ * content script は qiita.com のページを開くたびに TREND_ITEMS を送る。
+ * 2 タブ同時、あるいはスキャン中のリロードで runScan が重なりうる。
+ * service-worker には待ち行列もロックも無い（fire-and-forget）。
+ */
+describe('runScan の同時実行', () => {
+  /**
+   * likes の 1 回目で止め、そこに到達したことを呼び出し側に知らせる。
+   *
+   * entered を待たずに storage を書くと、モックの set が Map を **同期的に**
+   * 書き換えるため、スキャンが getLikeIndex を読む前に着地してしまう。
+   * それでは「読んだあとに他者が書いた」状況を再現できず、テストが素通りする。
+   */
+  function gateFirstFetch(): { entered: Promise<void>; release: () => void } {
+    let release = (): void => undefined;
+    let markEntered = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    likesMock.mockImplementationOnce(() => {
+      markEntered();
+      return gate.then(() => likesResponse(['example-liker-a', 'example-liker-b']));
+    });
+    return {
+      entered,
+      release: () => {
+        release();
+      },
+    };
+  }
+
+  it('スキャン中に来た 2 本目は走らせない（枠の二重消費を防ぐ）', async () => {
+    // Arrange — 1 本目を 1 記事目で止める
+    const gate = gateFirstFetch();
+    const first = runScan(TWO_ITEMS);
+    await gate.entered;
+    // Act — 別タブが同じトレンドを送ってきた
+    const second = await runScan(TWO_ITEMS);
+    gate.release();
+    await first;
+    // Assert — 2 本目が走ると同じ件数をもう一度叩き、60 req/h を一気に使う
+    expect(second).toBeNull();
+    expect(likesMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('スキャン中に保存された蓄積を上書きで消さない', async () => {
+    // Arrange — スキャンが storage を読んだ **あと** に別の書き手が保存した状況。
+    // 開始時のスナップショットを持ち回ると、この分が保存時に消える
+    const gate = gateFirstFetch();
+    const first = runScan(TWO_ITEMS);
+    await gate.entered;
+    await saveLikeIndex({
+      'example-outsider': {
+        likes: [
+          {
+            itemId: 'ffffffffffffffffffff',
+            authorHandle: 'example-author-9',
+            likedAt: '2026-08-19T06:00:00+09:00',
+            itemPostedAt: '2026-08-19T05:30:00+09:00',
+          },
+        ],
+        itemsCount: 0,
+        followersCount: 1,
+        hasDescription: false,
+      },
+    });
+    // Act
+    gate.release();
+    await first;
+    // Assert — 保存の直前に読み直していれば残る
+    expect(Object.keys(await getLikeIndex())).toContain('example-outsider');
   });
 });

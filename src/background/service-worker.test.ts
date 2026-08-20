@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { QtgRequest, QtgResponse } from '../types/messages';
+import type { TrendItem } from '../types/domain';
 
 vi.mock('./scanner', () => ({ runScan: vi.fn() }));
 
 type InstalledListener = (details: { reason: string }) => void;
-type StartupListener = () => void;
 type MessageListener = (
   message: QtgRequest,
   sender: unknown,
@@ -45,17 +45,29 @@ async function bootServiceWorker() {
   return { runScan, logger };
 }
 
+/** 合成のトレンド記事 */
+const ITEM: TrendItem = {
+  itemId: '0123456789abcdef0001',
+  url: 'https://qiita.com/example-author-1/items/0123456789abcdef0001',
+  authorHandle: 'example-author-1',
+  publishedAt: '2026-08-18T10:00:00Z',
+};
+
+/** 型を外して壊れたメッセージを送る。別コンテキストは何でも送れる */
+function malformed(items: unknown): QtgRequest {
+  return { type: 'TREND_ITEMS', items } as unknown as QtgRequest;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('service worker の配線', () => {
+describe('service worker の起動契機', () => {
   it('定期実行（alarms）を一切登録しない', async () => {
     // Arrange — 起動しただけでは足りない。alarms.create は onInstalled の中に
     // 書かれるのが自然なので、ライフサイクルを一巡させてから検査する
     await bootServiceWorker();
     firstListener<InstalledListener>(chrome.runtime.onInstalled)({ reason: 'install' });
-    firstListener<StartupListener>(chrome.runtime.onStartup)();
 
     // Assert — ライトモードの枠は 60 req/h、1 スキャンは約 30 req。
     // 30 分間隔で回すと枠ちょうどになり、起動時や手動の 1 回で 429 に届く。
@@ -76,35 +88,35 @@ describe('service worker の配線', () => {
     expect(permissions).toEqual(['storage']);
   });
 
-  it('インストール時に 1 回だけスキャンする', async () => {
+  it('インストール時にスキャンしない', async () => {
     // Arrange
     const { runScan } = await bootServiceWorker();
     const onInstalled = firstListener<InstalledListener>(chrome.runtime.onInstalled);
     // Act
     onInstalled({ reason: 'install' });
-    // Assert — 初回はキャッシュが空なので必ず取得が走る唯一の自動実行
-    expect(runScan).toHaveBeenCalledTimes(1);
+    // Assert — トレンドを取りに行かなくなったため、ページを開いていない時点では
+    // 見に行く先が無い
+    expect(runScan).not.toHaveBeenCalled();
   });
 
-  it('ブラウザ起動時にスキャンする', async () => {
-    // Arrange
-    const { runScan } = await bootServiceWorker();
-    const onStartup = firstListener<StartupListener>(chrome.runtime.onStartup);
-    // Act
-    onStartup();
-    // Assert — フィード不変なら API を叩かずに終わるので枠を消費しない
-    expect(runScan).toHaveBeenCalledTimes(1);
+  it('ブラウザ起動のリスナーを登録しない', async () => {
+    // Arrange & Act
+    await bootServiceWorker();
+    // Assert — 起動契機はトレンドページを開いたときだけ
+    expect(mockOf(chrome.runtime.onStartup, 'addListener')).not.toHaveBeenCalled();
   });
+});
 
-  it('SCAN_NOW を受けたらスキャンし SCAN_ACCEPTED を返す', async () => {
+describe('service worker のメッセージ処理', () => {
+  it('TREND_ITEMS を受けたらスキャンし SCAN_ACCEPTED を返す', async () => {
     // Arrange
     const { runScan } = await bootServiceWorker();
     const onMessage = firstListener<MessageListener>(chrome.runtime.onMessage);
     const sendResponse = vi.fn();
     // Act
-    const keepChannelOpen = onMessage({ type: 'SCAN_NOW' }, null, sendResponse);
+    const keepChannelOpen = onMessage({ type: 'TREND_ITEMS', items: [ITEM] }, null, sendResponse);
     // Assert
-    expect(runScan).toHaveBeenCalledTimes(1);
+    expect(runScan).toHaveBeenCalledWith([ITEM]);
     expect(sendResponse).toHaveBeenCalledWith({ type: 'SCAN_ACCEPTED' });
     // true を返すとチャネルが開きっぱなしになる
     expect(keepChannelOpen).toBe(false);
@@ -127,14 +139,102 @@ describe('service worker の配線', () => {
     const { runScan, logger } = await bootServiceWorker();
     const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
     runScan.mockRejectedValueOnce(new Error('boom'));
-    const onStartup = firstListener<StartupListener>(chrome.runtime.onStartup);
+    const onMessage = firstListener<MessageListener>(chrome.runtime.onMessage);
     // Act & Assert — catch し損ねると unhandled rejection になり原因が追えない
     expect(() => {
-      onStartup();
+      onMessage({ type: 'TREND_ITEMS', items: [ITEM] }, null, vi.fn());
     }).not.toThrow();
     await vi.waitFor(() => {
       expect(errorSpy).toHaveBeenCalled();
     });
     errorSpy.mockRestore();
+  });
+});
+
+/**
+ * trend-reader が検証済みでも、**メッセージ境界を越えたら再検証する**。
+ * ここを通った itemId はそのまま API のパスに入るため、送り手が本当に
+ * 自分の content script だったかを型で保証できない以上、受け側で確かめる。
+ */
+describe('service worker の TREND_ITEMS 検証', () => {
+  async function sendItems(items: unknown) {
+    const { runScan } = await bootServiceWorker();
+    const onMessage = firstListener<MessageListener>(chrome.runtime.onMessage);
+    const sendResponse = vi.fn();
+    onMessage(malformed(items), null, sendResponse);
+    return { runScan, sendResponse };
+  }
+
+  it('配列でない items は拒否する', async () => {
+    const { runScan, sendResponse } = await sendItems('not-an-array');
+    expect(runScan).not.toHaveBeenCalled();
+    expect(sendResponse).not.toHaveBeenCalled();
+  });
+
+  it('形の違う要素を含む items は拒否する', async () => {
+    const { runScan } = await sendItems([{ foo: 1 }]);
+    expect(runScan).not.toHaveBeenCalled();
+  });
+
+  it('itemId に危険な文字を含む items は拒否する', async () => {
+    // Arrange — ".." が通ると /users/../items が /api/items に潰れる
+    const { runScan } = await sendItems([{ ...ITEM, itemId: '../admin' }]);
+    // Assert
+    expect(runScan).not.toHaveBeenCalled();
+  });
+
+  it('authorHandle に危険な文字を含む items は拒否する', async () => {
+    const { runScan } = await sendItems([{ ...ITEM, authorHandle: 'ex/ample' }]);
+    expect(runScan).not.toHaveBeenCalled();
+  });
+
+  it('publishedAt が空の items は拒否する', async () => {
+    const { runScan } = await sendItems([{ ...ITEM, publishedAt: '' }]);
+    expect(runScan).not.toHaveBeenCalled();
+  });
+
+  it('1 件でも壊れていれば配列ごと拒否する', async () => {
+    // Arrange — 混ざっているときに「良い方だけ通す」と、境界の検証が
+    // 部分的にしか効かなくなる
+    const { runScan } = await sendItems([ITEM, { foo: 1 }]);
+    // Assert
+    expect(runScan).not.toHaveBeenCalled();
+  });
+
+  it('空配列は受理する（scanner 側で 0 件を正常として扱う）', async () => {
+    const { runScan, sendResponse } = await sendItems([]);
+    expect(runScan).toHaveBeenCalledWith([]);
+    expect(sendResponse).toHaveBeenCalledWith({ type: 'SCAN_ACCEPTED' });
+  });
+});
+
+/**
+ * url は API のパスには入らないが、Phase 6 が候補一覧でリンクとして描画する。
+ * typeof チェックだけだと javascript: スキームを持ち込める。
+ */
+describe('service worker の url 検証', () => {
+  async function sendItems(items: unknown) {
+    const { runScan } = await bootServiceWorker();
+    const onMessage = firstListener<MessageListener>(chrome.runtime.onMessage);
+    onMessage(malformed(items), null, vi.fn());
+    return runScan;
+  }
+
+  it('handle と itemId から組み立てた形と違う url は拒否する', async () => {
+    const runScan = await sendItems([{ ...ITEM, url: 'https://evil.example.com/x' }]);
+    expect(runScan).not.toHaveBeenCalled();
+  });
+
+  it('javascript: スキームの url は拒否する', async () => {
+    const runScan = await sendItems([{ ...ITEM, url: 'javascript:alert(1)' }]);
+    expect(runScan).not.toHaveBeenCalled();
+  });
+
+  it('別の記事を指す url は拒否する', async () => {
+    // Arrange — itemId は正しいが url が他人の記事を指している
+    const runScan = await sendItems([
+      { ...ITEM, url: 'https://qiita.com/example-author-2/items/0123456789abcdef0001' },
+    ]);
+    expect(runScan).not.toHaveBeenCalled();
   });
 });

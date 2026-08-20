@@ -1,13 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  readRateHeaders,
-  decideMode,
-  fallbackLimitFor,
-  availableRequests,
-  RATE_LIMIT_ANON,
-  RATE_LIMIT_AUTH,
-  RATE_SAFETY_MARGIN,
-} from './rate-budget';
+import { readRateHeaders, decideMode, RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from './rate-budget';
 
 describe('readRateHeaders', () => {
   it('実測どおりの Rate-* ヘッダーを読める', () => {
@@ -54,37 +46,13 @@ describe('decideMode', () => {
   });
 });
 
-describe('fallbackLimitFor', () => {
-  it('light は認証なしの枠', () => {
-    expect(fallbackLimitFor('light')).toBe(RATE_LIMIT_ANON);
-  });
-
-  it('full は認証ありの枠', () => {
-    expect(fallbackLimitFor('full')).toBe(RATE_LIMIT_AUTH);
-  });
-});
-
-describe('availableRequests', () => {
-  it('実測の残量から余白を引く', () => {
-    // Arrange
-    const state = { limit: 60, remaining: 40, resetAt: null };
-    // Act & Assert
-    expect(availableRequests(state, RATE_LIMIT_ANON)).toBe(40 - RATE_SAFETY_MARGIN);
-  });
-
-  it('残量が読めないときはモードの想定値から引く', () => {
-    expect(availableRequests(null, RATE_LIMIT_ANON)).toBe(RATE_LIMIT_ANON - RATE_SAFETY_MARGIN);
-  });
-
-  it('残量が余白以下なら 0 を返す（負にしない）', () => {
-    expect(availableRequests({ limit: 60, remaining: 3, resetAt: null }, RATE_LIMIT_ANON)).toBe(0);
-    expect(availableRequests({ limit: 60, remaining: 0, resetAt: null }, RATE_LIMIT_ANON)).toBe(0);
-  });
-
-  it('ライトモードの枠でトレンド 30 件を賄える', () => {
-    // Arrange — 60 req/h から余白を引いても 30 件のスキャンは通る
-    const available = availableRequests({ limit: 60, remaining: 60, resetAt: null }, RATE_LIMIT_ANON);
-    // Assert
-    expect(available).toBeGreaterThanOrEqual(30);
+/**
+ * 枠の実測値。判定には使わないが、options ページがモードの説明文で提示する
+ * （token-form.ts）。値が変わったら文言も変わるので、ここで固定しておく。
+ */
+describe('レート枠の定数', () => {
+  it('認証なしは 60 req/h、認証ありは 1000 req/h', () => {
+    expect(RATE_LIMIT_ANON).toBe(60);
+    expect(RATE_LIMIT_AUTH).toBe(1000);
   });
 });

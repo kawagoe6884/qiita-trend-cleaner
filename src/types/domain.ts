@@ -7,7 +7,10 @@ export type AccountHandle = string;
 /** Qiita の記事 ID */
 export type ItemId = string;
 
-/** Atom フィードの 1 エントリ */
+/**
+ * トレンドページに出ている記事 1 件。
+ * 表示中の DOM から読む（src/dom/trend-reader.ts）。HTML の fetch はしない。
+ */
 export interface TrendItem {
   itemId: ItemId;
   url: string;
@@ -84,20 +87,14 @@ export const DEFAULT_SETTINGS: Settings = {
 /** 取得の射程。トークンの有無ではなくレート枠から決まる */
 export type ScanMode = 'light' | 'full';
 
-/** フィード 1 回分の取得結果 */
-export interface FeedSnapshot {
-  /** ルートの <updated>。変化検知のキー */
-  feedUpdated: IsoDateTime;
-  items: TrendItem[];
-}
-
 /** スキャン 1 回の結果サマリ。ログと Phase 6 の表示に使う */
 export interface ScanResult {
   mode: ScanMode;
+  /** 蓄積に無く、今回取得を試みた記事の数 */
+  newItemCount: number;
+  /** 実際に likers を取得できた記事の数 */
   scannedItemCount: number;
   likeRecordCount: number;
-  /** レート枠を使い切って打ち切ったか */
-  truncated: boolean;
   startedAt: IsoDateTime;
   finishedAt: IsoDateTime;
 }
@@ -108,10 +105,11 @@ export interface ScanResult {
  */
 export interface LocalState {
   token?: string;
-  /** Atom feed ルートの <updated>。変化検知でスキャンを起動する */
-  lastFeedUpdated?: IsoDateTime;
-  /** conditional GET 用 */
-  feedETag?: string;
+  /**
+   * 429 に達したときの再開時刻。**Unix 秒**（Rate-Reset の単位）。
+   * ミリ秒ではない。Phase 6 がバッジとポップアップで「あと N 分」を出す
+   */
+  rateLimitedUntil?: number;
   likeIndex: LikeIndex;
   candidates: Candidate[];
   /** 保持期間 7 日 */

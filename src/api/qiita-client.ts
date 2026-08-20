@@ -11,7 +11,7 @@
  * content-script.ts の isPongResponse と同じ方針で、レスポンスは型ガードで検証する。
  * JSON.parse の結果を型アサーションで信用しない。
  */
-import { QtgError } from '../lib/errors';
+import { QtgError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { readRateHeaders } from './rate-budget';
 import type { RateState } from './rate-budget';
@@ -110,9 +110,13 @@ async function request(path: string, token: string | null): Promise<Response> {
     logger.debug('api auth rejected:', response.status, path);
     throw new QtgError(`api auth rejected (${String(response.status)})`);
   }
+  // 429 は改訂 6 で「設計どおりの停止信号」になった。ライトモードの枠は 60 req/h で、
+  // トレンド 30 件のスキャンを 2 回まわせば届く。正常な無料プランの挙動を warn に
+  // すると、Chrome のエラー欄に「拡張が壊れている」として記録され続ける。
+  // 呼び出し側は RateLimitError を見てそこで止め、Rate-Reset を記録する
   if (response.status === 429) {
-    logger.warn('api rate limit exceeded:', path);
-    throw new QtgError('api rate limit exceeded');
+    logger.debug('api rate limit exceeded:', path);
+    throw new RateLimitError(readRateHeaders(response.headers)?.resetAt ?? null);
   }
   if (!response.ok) {
     throw new QtgError(`api returned status ${String(response.status)}: ${path}`);

@@ -1,5 +1,12 @@
-/** content script / UI -> service worker */
-export type QtgRequest = { type: 'PING' } | { type: 'SCAN_NOW' };
+import type { TrendItem } from './domain';
+
+/**
+ * content script / UI -> service worker
+ *
+ * TREND_ITEMS は「いまユーザーが見ている 30 件」を運ぶ。
+ * service worker はトレンドを取りに行かないので、これが唯一のスキャン契機になる。
+ */
+export type QtgRequest = { type: 'PING' } | { type: 'TREND_ITEMS'; items: TrendItem[] };
 
 /**
  * service worker -> 呼び出し元。

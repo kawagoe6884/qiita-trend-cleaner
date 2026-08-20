@@ -11,7 +11,7 @@
  * ここが読むのは自分で書いた値なので、API レスポンスほど厳密には検証しない。
  * ただし storage が壊れていても例外で落とさず、既定値へフォールバックする。
  */
-import type { Candidate, IsoDateTime, LikeIndex, LocalState, ScanResult } from '../types/domain';
+import type { Candidate, LikeIndex, ScanResult } from '../types/domain';
 
 /** storage が空のときに使う値 */
 const DEFAULT_LIKE_INDEX: LikeIndex = {};
@@ -43,28 +43,28 @@ export async function clearToken(): Promise<void> {
   await chrome.storage.local.remove('token');
 }
 
-/** conditional GET と変化検知に使う前回値 */
-export async function getFeedCache(): Promise<{
-  etag: string | null;
-  lastUpdated: IsoDateTime | null;
-}> {
+/**
+ * 429 に達したことの記録。**Unix 秒**（Rate-Reset の単位）。ミリ秒ではない。
+ * Phase 6 がバッジとポップアップで「あと N 分」を出すために読む。
+ */
+export async function getRateLimitedUntil(): Promise<number | null> {
   const raw = await readRaw();
-  return {
-    etag: asNonEmptyString(raw.feedETag),
-    lastUpdated: asNonEmptyString(raw.lastFeedUpdated),
-  };
+  const value = raw.rateLimitedUntil;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 /**
- * フィードの取得結果を記録する。
- * 呼び出し側はスキャンが成功してから呼ぶこと。先に保存すると、
- * 途中で失敗したときに「取得済み」と誤認して次回スキャンがスキップされる。
+ * 再開時刻を記録する。null を渡すとキーごと消える。
+ *
+ * 枠が回復したかどうかを保存側で判断しない。429 を受けたら書き、
+ * スキャンが 429 なしで終わったら消す。「いま止まっているか」だけを表す。
  */
-export async function saveFeedCache(etag: string | null, lastUpdated: IsoDateTime): Promise<void> {
-  // exactOptionalPropertyTypes のため、値が無いキーは含めない
-  const patch: Partial<LocalState> = { lastFeedUpdated: lastUpdated };
-  if (etag !== null) patch.feedETag = etag;
-  await chrome.storage.local.set(patch);
+export async function saveRateLimit(resetAt: number | null): Promise<void> {
+  if (resetAt === null) {
+    await chrome.storage.local.remove('rateLimitedUntil');
+    return;
+  }
+  await chrome.storage.local.set({ rateLimitedUntil: resetAt });
 }
 
 export async function getLikeIndex(): Promise<LikeIndex> {

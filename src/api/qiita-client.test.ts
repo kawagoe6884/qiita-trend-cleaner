@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { fetchLikes, fetchUserItems, verifyToken } from './qiita-client';
-import { QtgError } from '../lib/errors';
+import { QtgError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 
 // Chrome は console.warn も chrome://extensions のエラー欄に集めるため、
@@ -88,9 +88,26 @@ describe('fetchLikes', () => {
     await expect(fetchLikes('0123456789abcdef0123', 'bad')).rejects.toThrow(QtgError);
   });
 
-  it('429 なら QtgError を投げる', async () => {
+  it('429 なら RateLimitError を投げ、Rate-Reset を載せる', async () => {
+    // Arrange — 呼び出し側は「読み飛ばして続行」と「そこで止める」を
+    // 区別する必要がある。message の文字列一致で見分けるのは脆い
+    stubFetch(
+      { message: 'Rate limit exceeded' },
+      { status: 429, headers: { 'Rate-Limit': '60', 'Rate-Remaining': '0', 'Rate-Reset': '1787104432' } },
+    );
+    // Act
+    const error = await fetchLikes('0123456789abcdef0123', null).catch((e: unknown) => e);
+    // Assert
+    expect(error).toBeInstanceOf(RateLimitError);
+    expect(error).toBeInstanceOf(QtgError);
+    expect((error as RateLimitError).resetAt).toBe(1787104432);
+  });
+
+  it('Rate-Reset の無い 429 でも RateLimitError を投げる（resetAt は null）', async () => {
     stubFetch({ message: 'Rate limit exceeded' }, { status: 429 });
-    await expect(fetchLikes('0123456789abcdef0123', null)).rejects.toThrow(QtgError);
+    const error = await fetchLikes('0123456789abcdef0123', null).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(RateLimitError);
+    expect((error as RateLimitError).resetAt).toBeNull();
   });
 
   it('配列でない応答なら QtgError を投げる', async () => {
@@ -205,10 +222,15 @@ describe('ログの扱い', () => {
     expect(vi.mocked(logger.error)).not.toHaveBeenCalled();
   });
 
-  it('429 は warn を出す（設計どおりなら起きない異常）', async () => {
+  it('429 でも warn も error も出さない（設計どおりの停止信号）', async () => {
+    // Arrange — ライトモードの枠は 60 req/h。トレンド 30 件を 2 回読めば届く。
+    // 正常な無料プランの挙動がエラー欄に記録されるのは設計の失敗（改訂 6）
     stubFetch({ message: 'Rate limit exceeded' }, { status: 429 });
-    await expect(fetchLikes('0123456789abcdef0123', null)).rejects.toThrow(QtgError);
-    expect(vi.mocked(logger.warn)).toHaveBeenCalled();
+    // Act
+    await expect(fetchLikes('0123456789abcdef0123', null)).rejects.toThrow(RateLimitError);
+    // Assert
+    expect(vi.mocked(logger.warn)).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.error)).not.toHaveBeenCalled();
   });
 
   it('どのログにもトークンを渡さない', async () => {

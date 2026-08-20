@@ -3,8 +3,8 @@ import {
   getToken,
   saveToken,
   clearToken,
-  getFeedCache,
-  saveFeedCache,
+  getRateLimitedUntil,
+  saveRateLimit,
   getLikeIndex,
   saveLikeIndex,
   saveScanResult,
@@ -44,34 +44,38 @@ describe('getToken', () => {
   });
 });
 
-describe('getFeedCache', () => {
-  it('未保存なら etag も lastUpdated も null', async () => {
-    // Act
-    const cache = await getFeedCache();
-    // Assert
-    expect(cache).toEqual({ etag: null, lastUpdated: null });
+/**
+ * 429 の記録。単位は **Unix 秒**（Rate-Reset の単位）。ミリ秒と混同すると
+ * Phase 6 の「あと N 分」が 1000 倍ずれる。
+ */
+describe('getRateLimitedUntil', () => {
+  it('未保存なら null', async () => {
+    // Act & Assert
+    expect(await getRateLimitedUntil()).toBeNull();
   });
 
-  it('保存した ETag と updated を読み戻せる', async () => {
+  it('保存した再開時刻を読み戻せる', async () => {
+    // Arrange — 2026-08-19 の実測ヘッダーと同じ桁
+    await saveRateLimit(1787104432);
+    // Act & Assert
+    expect(await getRateLimitedUntil()).toBe(1787104432);
+  });
+
+  it('null を渡すとキーごと消える（枠が回復したら止まっていない）', async () => {
     // Arrange
-    await saveFeedCache('W/"0123456789abcdef"', '2026-08-19T05:00:00+09:00');
+    await saveRateLimit(1787104432);
     // Act
-    const cache = await getFeedCache();
+    await saveRateLimit(null);
     // Assert
-    expect(cache).toEqual({
-      etag: 'W/"0123456789abcdef"',
-      lastUpdated: '2026-08-19T05:00:00+09:00',
-    });
+    expect(await getRateLimitedUntil()).toBeNull();
+    expect(await chrome.storage.local.get(null)).not.toHaveProperty('rateLimitedUntil');
   });
 
-  it('etag が null のときは feedETag キーを書かない', async () => {
-    // Arrange — exactOptionalPropertyTypes に合わせ undefined を書き込まないことの確認
-    await saveFeedCache(null, '2026-08-19T05:00:00+09:00');
-    // Act
-    const stored = await chrome.storage.local.get(null);
-    // Assert
-    expect(stored).not.toHaveProperty('feedETag');
-    expect((await getFeedCache()).lastUpdated).toBe('2026-08-19T05:00:00+09:00');
+  it('数値でない値が入っていても例外を投げず null を返す', async () => {
+    // Arrange — storage が壊れているケース
+    await chrome.storage.local.set({ rateLimitedUntil: 'soon' });
+    // Act & Assert
+    await expect(getRateLimitedUntil()).resolves.toBeNull();
   });
 });
 
@@ -117,9 +121,9 @@ describe('saveScanResult', () => {
     // Arrange
     const result: ScanResult = {
       mode: 'light',
+      newItemCount: 30,
       scannedItemCount: 30,
       likeRecordCount: 540,
-      truncated: false,
       startedAt: '2026-08-19T05:01:00+09:00',
       finishedAt: '2026-08-19T05:03:00+09:00',
     };

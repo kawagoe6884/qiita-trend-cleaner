@@ -14,6 +14,20 @@ export const SELECTORS = {
   snackbarLiveRegion: '[aria-live="polite"][aria-atomic="true"]',
   /** Snackbar 内のメッセージ本文 */
   snackbarMessage: 'p',
+  /**
+   * トレンドカードの記事リンク。
+   * URL のパス構造（/{handle}/items/{itemId}）は Qiita の実質的な公開 API であり、
+   * CSS-in-JS のハッシュクラスと違ってリニューアルに耐える。
+   *
+   * ⚠️ 1 カードにつき 2 本ある（タイトル付きと無し）。実測で 30 カード = 60 リンク。
+   *    href で重複排除すること。
+   */
+  trendItemLink: 'a[href*="/items/"]',
+  /**
+   * 投稿時刻。datetime 属性は HTML 標準で、秒精度の ISO 8601（UTC）が入る。
+   * 表示テキスト（「2026年08月18日」）は UTC との日付ずれがあるため読まない。
+   */
+  trendItemTime: 'time[datetime]',
 } as const;
 
 /** Snackbar が表示する完了メッセージ。Phase 8 の完了検知に使う */
@@ -24,6 +38,15 @@ export const SNACKBAR_TEXT = {
 
 /** 拡張が注入済みであることを示すマーカー（dataset のキー名） */
 export const INJECTION_MARKER = 'qtgInjected';
+
+/**
+ * 1 カードに含まれる記事リンクの数。これを超えたらカード境界を越えている。
+ * 実測ではタイトル付きと無しの 2 本で、30 カード = 60 リンクだった。
+ */
+export const LINKS_PER_CARD = 2;
+
+/** カードを探して祖先を遡る上限。無限ループの防止も兼ねる */
+export const MAX_CARD_DEPTH = 6;
 
 /**
  * Snackbar のコンテナを取得する。
