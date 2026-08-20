@@ -215,7 +215,10 @@ describe('入力欄の扱い（失敗時に消さない）', () => {
   it('検証に失敗したら入力欄を残す（直せるように）', async () => {
     // Arrange — submitToken は resolve するが message を載せて返す
     await init();
-    submitMock.mockResolvedValue({ kind: 'light', message: 'トークンが受け付けられませんでした。' });
+    submitMock.mockResolvedValue({
+      kind: 'light',
+      message: 'トークンが受け付けられませんでした。',
+    });
     // Act
     el<HTMLInputElement>('#token').value = TYPED;
     dispatchSubmit();

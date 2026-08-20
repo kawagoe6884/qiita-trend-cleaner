@@ -8,12 +8,183 @@
         font-family: system-ui, sans-serif;
         margin: 0;
         padding: 16px;
-        min-width: 280px;
+        /* ポップアップの最大は 800x600。超えた分はポップアップ自体がスクロールする */
+        width: 520px;
+        line-height: 1.6;
+      }
+      /* display を指定すると hidden 属性（UA の [hidden]{display:none}）が
+         作者スタイルに負けて効かなくなる。必ず明示的に打ち消す */
+      [hidden] {
+        display: none !important;
+      }
+      #notice {
+        border-left: 4px solid currentColor;
+        padding: 8px 12px;
+        margin: 0 0 12px;
+        font-size: 0.9rem;
+      }
+      /* 動作モードとトークンの案内。**上に置く。**
+         下に置くと、なぜトークンを設定するのかが候補の後ろに埋もれる */
+      /* 余白の使い分け:
+           12px = 関係のある要素どうし（見出しと補足など）
+           32px = 区画のあいだ
+         ここは「拡張の状態」と「検出の結果」の境目なので区画の間隔を使う。
+         同じ 12px にすると、トークンの案内が候補の見出しと 1 かたまりに見える */
+      .mode {
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 8px 12px 10px;
+        margin: 0 0 32px;
+      }
+      #mode-title {
+        font-weight: 700;
+        font-size: 0.9rem;
+        margin: 0 0 2px;
+      }
+      #mode-detail {
+        font-size: 0.8rem;
+        margin: 0;
+        opacity: 0.85;
+      }
+      .mode button {
+        margin-top: 8px;
+      }
+      #summary {
+        font-weight: 700;
+        margin: 0;
+      }
+      /* 何をすればよいかの一言。数字の直後に置いて、結果ゾーンの入口にする */
+      #call {
+        margin: 2px 0 0;
+        font-size: 0.85rem;
+      }
+      #last-scan {
+        margin: 0 0 12px;
+        font-size: 0.8rem;
+        opacity: 0.75;
+      }
+      /* 内側にスクロール領域を作らない。ポップアップ全体で 1 本のスクロールにする。
+         入れ子のスクロールは、どちらが動くのか分からなくなる */
+      #candidates {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      #candidates li {
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+      }
+      #candidates p {
+        margin: 0 0 2px;
+      }
+      .author {
+        font-weight: 700;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .stats {
+        font-size: 0.9rem;
+      }
+      .scores {
+        font-size: 0.8rem;
+        opacity: 0.75;
+      }
+      .evidence {
+        font-size: 0.85rem;
+      }
+      .actions {
+        margin-top: 6px;
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        padding: 4px 14px;
+        font-family: inherit;
+        font-size: 0.9rem;
+        cursor: pointer;
+      }
+      button[aria-pressed='true'] {
+        font-weight: 700;
+        outline: 2px solid currentColor;
+      }
+      #empty {
+        font-size: 0.9rem;
+        opacity: 0.75;
+      }
+      /* 判定の条件は一覧の **上** に置く。下に置くと、ドラッグ中に候補の件数が
+         変わって一覧の高さが変わり、つまみが指の下から逃げてスライドできない */
+      #conditions {
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 6px 12px;
+        margin: 0 0 12px;
+      }
+      #conditions[open] {
+        padding-bottom: 12px;
+      }
+      summary {
+        font-size: 0.85rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .slider {
+        display: grid;
+        grid-template-columns: 11em 1fr 2.5em;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+      }
+      .slider output {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .footnote {
+        font-size: 0.8rem;
+        opacity: 0.75;
+        margin: 0 0 12px;
       }
     </style>
   </head>
   <body>
-    <div id="app">Qiita Trend Guard — 未設定</div>
+    <p id="notice" hidden></p>
+
+    <section class="mode">
+      <p id="mode-title"></p>
+      <p id="mode-detail"></p>
+      <button type="button" id="open-options">トークンを設定する</button>
+    </section>
+
+    <p id="summary">読み込み中…</p>
+    <p id="call" hidden></p>
+    <p id="last-scan"></p>
+
+    <details id="conditions">
+      <summary id="conditions-summary">判定の条件</summary>
+      <p class="slider">
+        <label for="min-cluster">何アカウントそろったら</label>
+        <input type="range" id="min-cluster" min="2" max="30" step="1" />
+        <output id="min-cluster-value"></output>
+      </p>
+      <p class="slider">
+        <label for="min-shared">何記事に共通していたら</label>
+        <input type="range" id="min-shared" min="2" max="10" step="1" />
+        <output id="min-shared-value"></output>
+      </p>
+      <p class="slider">
+        <label for="lookback">さかのぼる日数</label>
+        <input type="range" id="lookback" min="1" max="7" step="1" />
+        <output id="lookback-value"></output>
+      </p>
+      <p class="footnote">
+        条件を変えても Qiita には問い合わせません。すでに集めたデータで判定をやり直すだけです。
+      </p>
+    </details>
+    <ul id="candidates"></ul>
+    <p id="empty" hidden>
+      いまの条件に当てはまる候補はありません。トレンドページを開くと蓄積が増えます。
+    </p>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

@@ -66,7 +66,11 @@ describe('fetchLikes', () => {
 
   it('user が欠けた要素だけ落として他は返す', async () => {
     // Arrange — 3 件中 1 件が壊れている
-    stubFetch([like('example-liker-1'), { created_at: '2026-08-19T06:00:00+09:00' }, like('example-liker-2')]);
+    stubFetch([
+      like('example-liker-1'),
+      { created_at: '2026-08-19T06:00:00+09:00' },
+      like('example-liker-2'),
+    ]);
     // Act
     const result = await fetchLikes('0123456789abcdef0123', null);
     // Assert
@@ -93,7 +97,10 @@ describe('fetchLikes', () => {
     // 区別する必要がある。message の文字列一致で見分けるのは脆い
     stubFetch(
       { message: 'Rate limit exceeded' },
-      { status: 429, headers: { 'Rate-Limit': '60', 'Rate-Remaining': '0', 'Rate-Reset': '1787104432' } },
+      {
+        status: 429,
+        headers: { 'Rate-Limit': '60', 'Rate-Remaining': '0', 'Rate-Reset': '1787104432' },
+      },
     );
     // Act
     const error = await fetchLikes('0123456789abcdef0123', null).catch((e: unknown) => e);
@@ -116,7 +123,10 @@ describe('fetchLikes', () => {
   });
 
   it('ネットワーク失敗なら QtgError を投げる', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('offline'))),
+    );
     await expect(fetchLikes('0123456789abcdef0123', null)).rejects.toThrow(QtgError);
   });
 });
@@ -155,7 +165,9 @@ describe('パスセグメントの検証', () => {
 
 describe('fetchUserItems', () => {
   it('著者ハンドルをパスに入れる', async () => {
-    const mock = stubFetch([{ id: '0123456789abcdef0123', created_at: '2026-08-18T10:00:00+09:00' }]);
+    const mock = stubFetch([
+      { id: '0123456789abcdef0123', created_at: '2026-08-18T10:00:00+09:00' },
+    ]);
     const result = await fetchUserItems('example-author', null);
     expect(mock.mock.calls[0]?.[0]).toBe(
       'https://qiita.com/api/v2/users/example-author/items?per_page=100',
@@ -183,7 +195,10 @@ describe('verifyToken', () => {
   });
 
   it('通信失敗は network として返す（トークンのせいにしない）', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline'))));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new Error('offline'))),
+    );
     await expect(verifyToken('dummy-token-value')).resolves.toEqual({
       ok: false,
       reason: 'network',

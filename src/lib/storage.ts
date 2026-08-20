@@ -11,7 +11,16 @@
  * ここが読むのは自分で書いた値なので、API レスポンスほど厳密には検証しない。
  * ただし storage が壊れていても例外で落とさず、既定値へフォールバックする。
  */
-import type { Candidate, LikeIndex, ScanResult } from '../types/domain';
+import { DEFAULT_SETTINGS } from '../types/domain';
+import type {
+  AccountHandle,
+  Candidate,
+  FeedbackLog,
+  LikeIndex,
+  ScanResult,
+  Settings,
+  Verdict,
+} from '../types/domain';
 
 /** storage が空のときに使う値 */
 const DEFAULT_LIKE_INDEX: LikeIndex = {};
@@ -33,6 +42,14 @@ function asNonEmptyString(value: unknown): string | null {
 export async function getToken(): Promise<string | null> {
   const raw = await readRaw();
   return asNonEmptyString(raw.token);
+}
+
+/**
+ * トークンが設定されているかだけを返す。
+ * 表示にしか使わない画面へ生のトークンを渡さないための入口。
+ */
+export async function hasToken(): Promise<boolean> {
+  return (await getToken()) !== null;
 }
 
 export async function saveToken(token: string): Promise<void> {
@@ -65,6 +82,70 @@ export async function saveRateLimit(resetAt: number | null): Promise<void> {
     return;
   }
   await chrome.storage.local.set({ rateLimitedUntil: resetAt });
+}
+
+function asPositiveInt(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+/**
+ * 判定の閾値。**sync に置く唯一のデータ**（PRD のストレージ設計）。
+ * 共起インデックスは 10 MB 級になるので local 固定、これだけが sync。
+ *
+ * 【フィールド単位で検証する理由】
+ * { minClusterSize: '5' } のような壊れ方を通すと findClusters の比較が
+ * すべて false になり、候補が黙ってゼロになる。壊れた値ではなく既定値を返す。
+ * 全体ではなく項目ごとに倒すのは、あとで項目を足したときに
+ * 既存の 3 つまで巻き添えで失わないようにするため。
+ */
+export async function getSettings(): Promise<Settings> {
+  const raw: unknown = await chrome.storage.sync.get('settings');
+  const stored = (raw as { settings?: unknown } | null)?.settings;
+  if (typeof stored !== 'object' || stored === null) return DEFAULT_SETTINGS;
+  const candidate = stored as Partial<Record<keyof Settings, unknown>>;
+  return {
+    minClusterSize: asPositiveInt(candidate.minClusterSize) ?? DEFAULT_SETTINGS.minClusterSize,
+    minSharedItems: asPositiveInt(candidate.minSharedItems) ?? DEFAULT_SETTINGS.minSharedItems,
+    lookbackDays: asPositiveInt(candidate.lookbackDays) ?? DEFAULT_SETTINGS.lookbackDays,
+  };
+}
+
+export async function saveSettings(settings: Settings): Promise<void> {
+  await chrome.storage.sync.set({ settings });
+}
+
+/**
+ * 著者ごとの判定。適合率の唯一の入力。
+ *
+ * 1 件だけ壊れていても全体を捨てない。評価はユーザーが積み上げた資産であり、
+ * 候補と違って再計算で復元できない。
+ */
+export async function getFeedback(): Promise<FeedbackLog> {
+  const raw = await readRaw();
+  const stored = raw.feedback;
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {};
+  const log: FeedbackLog = {};
+  // Object.entries(object) の値は any になる。unknown に落としてから絞ると、
+  // 知らない値が FeedbackLog に紛れ込むのを型で止められる
+  for (const [handle, value] of Object.entries(stored as Record<string, unknown>)) {
+    if (value === 'valid' || value === 'false_positive') log[handle] = value;
+  }
+  return log;
+}
+
+/**
+ * 判定を 1 件記録し、**書いた後の全体を返す。**
+ *
+ * 読んで足して書く。全件上書きにすると、ポップアップを 2 枚開いたときに
+ * 互いの評価を消し合う。
+ *
+ * マージ結果を返すのは、呼び出し側が適合率を出すために読み直さずに済むため。
+ * 捨てると 1 クリックあたり storage の往復が 3 回（読む・書く・また読む）になる。
+ */
+export async function saveVerdict(handle: AccountHandle, verdict: Verdict): Promise<FeedbackLog> {
+  const feedback = { ...(await getFeedback()), [handle]: verdict };
+  await chrome.storage.local.set({ feedback });
+  return feedback;
 }
 
 export async function getLikeIndex(): Promise<LikeIndex> {

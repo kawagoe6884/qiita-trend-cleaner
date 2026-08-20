@@ -27,8 +27,7 @@ import { RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from '../../api/rate-budget';
  * message は「直前の操作の結果」であって、モードを変えるものではない。
  */
 export type SettledState =
-  | { kind: 'light'; message?: string }
-  | { kind: 'full'; masked: string; message?: string };
+  { kind: 'light'; message?: string } | { kind: 'full'; masked: string; message?: string };
 
 /** 画面が取りうる状態。verifying は過渡状態で保存状態を表さない */
 export type TokenState = SettledState | { kind: 'verifying' };
@@ -65,7 +64,7 @@ export function describeMode(state: TokenState): ModeCopy {
   if (state.kind === 'full') {
     return {
       title: 'フルモードで動作中',
-      detail: `トレンド 30 件に加えて、著者の過去記事まで辿ります。1 時間あたり ${String(RATE_LIMIT_AUTH)} リクエストまで使えます。`,
+      detail: `いま画面に出ている記事に加えて、著者の過去記事まで辿ります。1 時間あたり ${String(RATE_LIMIT_AUTH)} リクエストまで使えます。`,
     };
   }
   if (state.kind === 'verifying') {
@@ -73,7 +72,7 @@ export function describeMode(state: TokenState): ModeCopy {
   }
   return {
     title: 'ライトモードで動作中',
-    detail: `トレンド 30 件の範囲で検出します。1 時間あたり ${String(RATE_LIMIT_ANON)} リクエストまで。`,
+    detail: `いま画面に出ている記事の範囲で検出します。1 時間あたり ${String(RATE_LIMIT_ANON)} リクエストまで。`,
   };
 }
 

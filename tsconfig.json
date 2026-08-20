@@ -16,7 +16,7 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["chrome", "vitest/globals"]
+    "types": ["chrome", "vitest/globals", "vite/client"]
   },
   "include": ["src", "manifest.config.ts", "vite.config.ts"]
 }

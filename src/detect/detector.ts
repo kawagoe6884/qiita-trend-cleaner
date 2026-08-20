@@ -32,7 +32,6 @@ export function detectCandidates(index: LikeIndex, settings: Settings, now: Date
     burstScore: burstScore(scoped, hit),
     emptyAccountRatio: emptyAccountRatio(scoped, hit.clusterAccounts),
     detectedAt,
-    verdict: null,
   }));
 
   // 怪しい順に並べる。Phase 6 の一覧はこの順で出す

@@ -11,7 +11,12 @@ import {
   getLastScanResult,
   getCandidates,
   saveCandidates,
+  getSettings,
+  saveSettings,
+  getFeedback,
+  saveVerdict,
 } from './storage';
+import { DEFAULT_SETTINGS } from '../types/domain';
 import type { Candidate, LikeIndex, ScanResult } from '../types/domain';
 
 describe('getToken', () => {
@@ -155,7 +160,6 @@ describe('getCandidates', () => {
     burstScore: 0.75,
     emptyAccountRatio: 1,
     detectedAt: '2026-08-19T03:00:00.000Z',
-    verdict: null,
   };
 
   it('未保存なら空配列を返す', async () => {
@@ -189,5 +193,116 @@ describe('getCandidates', () => {
   it('null が入っていても空配列を返す', async () => {
     await chrome.storage.local.set({ candidates: null });
     await expect(getCandidates()).resolves.toEqual([]);
+  });
+});
+
+/**
+ * 閾値は sync に置く唯一のデータ。壊れた値を通すと findClusters の比較が
+ * すべて false になり、候補が黙ってゼロになる。
+ */
+describe('getSettings', () => {
+  it('未保存なら既定値', async () => {
+    expect(await getSettings()).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('保存した設定を読み戻せる', async () => {
+    const settings = { minClusterSize: 8, minSharedItems: 3, lookbackDays: 5 };
+    await saveSettings(settings);
+    expect(await getSettings()).toEqual(settings);
+  });
+
+  it('local ではなく sync に書く', async () => {
+    // Arrange — インデックスは 10 MB 級なので local、設定だけが sync
+    await saveSettings(DEFAULT_SETTINGS);
+    // Act & Assert
+    expect(await chrome.storage.sync.get('settings')).toHaveProperty('settings');
+    expect(await chrome.storage.local.get('settings')).toEqual({});
+  });
+
+  it('壊れた項目だけを既定値に倒す（他の項目は活かす）', async () => {
+    // Arrange — 数値でない値が 1 つ混ざった状態
+    await chrome.storage.sync.set({
+      settings: { minClusterSize: '8', minSharedItems: 3, lookbackDays: 5 },
+    });
+    // Act & Assert — 全部捨てると、あとで項目を足したとき既存設定を巻き添えにする
+    expect(await getSettings()).toEqual({
+      minClusterSize: DEFAULT_SETTINGS.minClusterSize,
+      minSharedItems: 3,
+      lookbackDays: 5,
+    });
+  });
+
+  it('0 や負数・小数は既定値に倒す', async () => {
+    await chrome.storage.sync.set({
+      settings: { minClusterSize: 0, minSharedItems: -1, lookbackDays: 2.5 },
+    });
+    expect(await getSettings()).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('設定そのものが壊れていても例外を投げない', async () => {
+    await chrome.storage.sync.set({ settings: 'broken' });
+    await expect(getSettings()).resolves.toEqual(DEFAULT_SETTINGS);
+  });
+});
+
+/**
+ * 評価はユーザーが積み上げた資産で、候補と違って再計算では復元できない。
+ * 1 件壊れていても全体を捨てない。
+ */
+describe('getFeedback / saveVerdict', () => {
+  it('未保存なら空オブジェクト', async () => {
+    expect(await getFeedback()).toEqual({});
+  });
+
+  it('判定を保存して読み戻せる', async () => {
+    await saveVerdict('example-author-a', 'valid');
+    expect(await getFeedback()).toEqual({ 'example-author-a': 'valid' });
+  });
+
+  it('既存の判定を消さずに足す', async () => {
+    // Arrange
+    await saveVerdict('example-author-a', 'valid');
+    // Act — ポップアップを 2 枚開いても消し合わないこと
+    await saveVerdict('example-author-b', 'false_positive');
+    // Assert
+    expect(await getFeedback()).toEqual({
+      'example-author-a': 'valid',
+      'example-author-b': 'false_positive',
+    });
+  });
+
+  it('同じ著者は上書きする（二重計上しない）', async () => {
+    await saveVerdict('example-author-a', 'valid');
+    await saveVerdict('example-author-a', 'false_positive');
+    expect(await getFeedback()).toEqual({ 'example-author-a': 'false_positive' });
+  });
+
+  it('知らない値が混ざっていても他の判定は残す', async () => {
+    // Arrange
+    await chrome.storage.local.set({
+      feedback: { 'example-author-a': 'valid', 'example-author-b': 'maybe' },
+    });
+    // Act & Assert
+    expect(await getFeedback()).toEqual({ 'example-author-a': 'valid' });
+  });
+
+  it('配列が入っていても例外を投げず空を返す', async () => {
+    await chrome.storage.local.set({ feedback: ['broken'] });
+    await expect(getFeedback()).resolves.toEqual({});
+  });
+});
+
+describe('saveVerdict の戻り値', () => {
+  it('書いた後の全体を返す（呼び出し側が読み直さずに済む）', async () => {
+    // Arrange
+    await saveVerdict('example-author-a', 'valid');
+    // Act
+    const merged = await saveVerdict('example-author-b', 'false_positive');
+    // Assert — 捨てると 1 クリックあたり storage の往復が 3 回になる
+    expect(merged).toEqual({
+      'example-author-a': 'valid',
+      'example-author-b': 'false_positive',
+    });
+    expect(merged).toEqual(await getFeedback());
   });
 });

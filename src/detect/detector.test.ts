@@ -97,7 +97,6 @@ describe('detectCandidates', () => {
       authorHandle: 'example-author-a',
       clusterSize: 5,
       sharedItemCount: 2,
-      verdict: null,
     });
     expect(candidate?.clusterAccounts).toHaveLength(5);
     expect(candidate?.sharedItemIds).toEqual([itemId(1), itemId(2)]);

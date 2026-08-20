@@ -458,7 +458,7 @@ chrome.storage.sync
 | 4 | ~~データ取得層（Atom フィード版）~~ | ~~Atom フィード解析 ＋ API クライアント~~ | **superseded**（改訂 6 で廃止） | - | 2 | [plan](../plans/completed/data-fetch-layer.plan.md) / [report](../reports/data-fetch-layer-report.md) |
 | **4b** | **データ取得層（DOM 版）** | 表示中ページの DOM 読み取り ＋ API クライアント ＋ 429 ハンドリング | **complete**（実機確認済み 2026-08-20） | - | 2, 5 | [plan](../plans/completed/dom-trend-reader.plan.md) / [report](../reports/dom-trend-reader-report.md) |
 | 5 | 検出エンジン | 逆引きインデックス**蓄積**、共起クラスタ判定、バースト判定 | **complete**（OQ-12 の実データ検証は継続中） | - | 3, 4 | [plan](../plans/completed/detection-engine.plan.md) / [report](../reports/detection-engine-report.md) |
-| 6 | 候補 UI・設定 UI | 候補一覧、スライダー、適合率フィードバック | pending | with 7 | 5 | - |
+| 6 | 候補 UI・設定 UI | 候補一覧、スライダー、適合率フィードバック（**すべてポップアップ**） | **in-progress**（実装完了・**実機確認待ち**） | with 7 | 5 | [plan](../plans/completed/candidate-popup-ui.plan.md) / [report](../reports/candidate-popup-ui-report.md) |
 | 7 | DOM 非表示 | 表示中ページでの非表示と除外件数バッジ（**読み取りは 4b へ移管し、隠す責務だけが残る**） | pending | with 6 | 4b, 5 | - |
 | 8 | 一括ミュート実行 | div ポップアップの自動操作、スロットリング、失敗記録 | pending | - | 6 | - |
 | 9 | 適合率計測・閾値調整 | 実運用して適合率 80% を目指しパラメータを追い込む | pending | - | 8 | - |

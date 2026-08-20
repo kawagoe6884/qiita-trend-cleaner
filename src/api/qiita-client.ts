@@ -144,7 +144,11 @@ async function readArray<T>(
   if (data.length !== body.length) {
     logger.warn('api response had unexpected elements:', context, body.length - data.length);
   }
-  return { data, rate: readRateHeaders(response.headers), totalCount: readTotalCount(response.headers) };
+  return {
+    data,
+    rate: readRateHeaders(response.headers),
+    totalCount: readTotalCount(response.headers),
+  };
 }
 
 /** 記事のいいね一覧。認証不要（トークンがあればレート枠が広がる） */

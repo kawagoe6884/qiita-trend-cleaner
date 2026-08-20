@@ -48,6 +48,18 @@ export type LikeIndex = Record<AccountHandle, AccountIndexEntry>;
 /** 候補に対するユーザーの判定。適合率の計算に使う */
 export type Verdict = 'valid' | 'false_positive';
 
+/**
+ * 著者ハンドル -> 判定。
+ *
+ * **Candidate の中に持たない。** 閾値を動かすと detectCandidates が候補を
+ * 作り直すため、そこに置くとスライダーを 1 つ動かした瞬間に評価が全部消える。
+ * 適合率は評価の蓄積そのものなので、それは指標の破壊にあたる。
+ *
+ * キーを著者だけにするのは、根拠記事の集合は閾値で変わるが
+ * 「この著者は妥当か」というユーザーの判断は変わらないため。
+ */
+export type FeedbackLog = Record<AccountHandle, Verdict>;
+
 /** 検出された組織票の候補 */
 export interface Candidate {
   authorHandle: AccountHandle;
@@ -68,7 +80,6 @@ export interface Candidate {
   /** 0.0-1.0。クラスタのうち記事 0 本・プロフィール空のアカウントの割合 */
   emptyAccountRatio: number;
   detectedAt: IsoDateTime;
-  verdict: Verdict | null;
 }
 
 /** storage.sync に置く設定。アクセストークンは含めない */
@@ -112,6 +123,8 @@ export interface LocalState {
   rateLimitedUntil?: number;
   likeIndex: LikeIndex;
   candidates: Candidate[];
+  /** 候補への判定。適合率の唯一の入力 */
+  feedback?: FeedbackLog;
   /** 保持期間 7 日 */
   purgeAfter?: IsoDateTime;
   /** 最後にスキャンした時刻 */

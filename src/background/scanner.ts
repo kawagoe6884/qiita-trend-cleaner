@@ -27,11 +27,11 @@ import { decideMode } from '../api/rate-budget';
 import { mergeLikeIndex, purgeLikeIndex, countRecords } from '../detect/like-index';
 import { detectCandidates } from '../detect/detector';
 import * as storage from '../lib/storage';
-import { DEFAULT_SETTINGS } from '../types/domain';
 import type { RateState } from '../api/rate-budget';
 import type { QiitaLike } from '../api/qiita-client';
 import type {
   Candidate,
+  Settings,
   IsoDateTime,
   LikeIndex,
   ScanMode,
@@ -224,13 +224,14 @@ async function scanAuthorHistory(
  * ゼロ件が正常であり、「動いていない」と誤認させないため。
  * 想定内の動作なので info に留める（warn はエラー欄に載る）。
  */
-function logCandidates(candidates: Candidate[]): void {
+function logCandidates(candidates: Candidate[], settings: Settings): void {
   logger.info(
     'detected',
     candidates.length,
-    'candidates (N>=' + String(DEFAULT_SETTINGS.minClusterSize),
-    'M>=' + String(DEFAULT_SETTINGS.minSharedItems),
-    'within ' + String(DEFAULT_SETTINGS.lookbackDays) + 'd)',
+    // N / M という略号は当事者にしか読めない。何を数えているかを書く
+    'candidates (accounts>=' + String(settings.minClusterSize),
+    'items>=' + String(settings.minSharedItems),
+    'within ' + String(settings.lookbackDays) + 'd)',
   );
   for (const candidate of candidates) {
     logger.info(
@@ -262,7 +263,7 @@ function logCandidates(candidates: Candidate[]): void {
  * 丸ごと上書きして消す（read-modify-write の lost update）。
  * 読み直しの窓は 1 マイクロタスクに収まる。
  */
-async function persistIndexAndDetect(fresh: LikeIndex): Promise<void> {
+async function persistIndexAndDetect(fresh: LikeIndex): Promise<number> {
   const now = new Date();
   const stored = await storage.getLikeIndex();
   const { index: kept, purgedRecords } = purgeLikeIndex(mergeLikeIndex(stored, fresh), now);
@@ -278,9 +279,30 @@ async function persistIndexAndDetect(fresh: LikeIndex): Promise<void> {
     purgedRecords,
   );
 
-  const candidates = detectCandidates(kept, DEFAULT_SETTINGS, now);
+  // 閾値はユーザーが動かせる（ポップアップのスライダー）。既定値を直接使うと、
+  // スライダーを動かしても次のスキャンが既定値で candidates を上書きしてしまう
+  const settings = await storage.getSettings();
+  const candidates = detectCandidates(kept, settings, now);
   await storage.saveCandidates(candidates);
-  logCandidates(candidates);
+  logCandidates(candidates, settings);
+  return candidates.length;
+}
+
+/**
+ * バッジを更新する。
+ *
+ * バッジは実質 4 文字しか入らない。429 の残り時間（「あと 42 分」）は入らないので
+ * 記号にし、時間はポップアップで伝える。Phase 7 の除外件数バッジもこの優先順位
+ * （429 > 候補件数 > 空）の上に載せる。
+ */
+async function updateBadge(candidateCount: number, rateLimited: boolean): Promise<void> {
+  const text = rateLimited ? '!' : candidateCount > 0 ? String(candidateCount) : '';
+  try {
+    await chrome.action.setBadgeText({ text });
+  } catch (error) {
+    // バッジが出ないだけでスキャンは成立している。想定内なので debug
+    logger.debug('failed to update badge:', error);
+  }
 }
 
 /**
@@ -318,9 +340,10 @@ async function persistScan(input: PersistInput): Promise<ScanResult> {
     finishedAt: new Date().toISOString(),
   };
 
-  await persistIndexAndDetect(input.fresh);
+  const candidateCount = await persistIndexAndDetect(input.fresh);
   await storage.saveScanResult(result);
   await persistRateLimit(progress);
+  await updateBadge(candidateCount, progress.rateLimited);
 
   logger.info(
     'scan finished: mode=' + mode,

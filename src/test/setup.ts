@@ -40,9 +40,15 @@ function createChromeMock() {
       sendMessage: vi.fn(),
       onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
       onInstalled: { addListener: vi.fn() },
+      openOptionsPage: vi.fn(() => Promise.resolve()),
       onStartup: { addListener: vi.fn() },
     },
     storage: { local: createStorageArea(), sync: createStorageArea() },
+    // バッジ。manifest に action があれば権限不要で使える
+    action: {
+      setBadgeText: vi.fn(() => Promise.resolve()),
+      setBadgeBackgroundColor: vi.fn(() => Promise.resolve()),
+    },
     // 拡張はもう alarms を使わない（定期実行を持たない設計）。
     // それでもモックを残すのは番人として。service-worker.test.ts が
     // 「create も onAlarm も呼ばれないこと」を検査しており、

@@ -7,6 +7,7 @@ import {
   saveLikeIndex,
   getCandidates,
   getRateLimitedUntil,
+  saveSettings,
 } from '../lib/storage';
 import { RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
@@ -156,11 +157,11 @@ describe('runScan の既知記事の除外', () => {
     expect(countRecords(await getLikeIndex())).toBe(4);
   });
 
-  it("フルモードでも全件既知なら著者一覧を叩かない", async () => {
+  it('フルモードでも全件既知なら著者一覧を叩かない', async () => {
     // Arrange — 「リロードでは API を 1 度も叩かない」はライトモードだけの
     // 性質であってはならない。fetchUserItems は seen を見る前に呼ばれるため、
     // 著者を items から取ると既知の記事しか無くても著者数ぶん消費する
-    await saveToken("dummy-token-value");
+    await saveToken('dummy-token-value');
     await runScan(TWO_ITEMS);
     vi.clearAllMocks();
     // Act — 同じページをリロードした状況
@@ -454,5 +455,77 @@ describe('runScan の同時実行', () => {
     await first;
     // Assert — 保存の直前に読み直していれば残る
     expect(Object.keys(await getLikeIndex())).toContain('example-outsider');
+  });
+});
+
+/**
+ * 閾値はポップアップのスライダーで動かせる。
+ * scanner が DEFAULT_SETTINGS を直接見ていると、スライダーを動かしても
+ * 次のスキャンが既定値で candidates を上書きしてしまう。
+ */
+describe('runScan の設定とバッジ', () => {
+  /**
+   * chrome API のモックを取り出す。メソッドを直接渡すと unbound-method に
+   * 引っかかるため、持ち主とキーで受け取る。
+   */
+  function mockOf<T extends object, K extends keyof T>(owner: T, key: K) {
+    return vi.mocked(owner[key] as (...args: unknown[]) => unknown);
+  }
+
+  /** 著者 example-author-1 の 2 記事に 2 人が揃う入力 */
+  const SAME_AUTHOR: TrendItem[] = [
+    trendItem(1),
+    { ...trendItem(2), authorHandle: 'example-author-1' },
+  ];
+
+  it('保存された閾値で検出する', async () => {
+    // Arrange — 既定（N=5）では出ないが N=2 なら出る
+    await saveSettings({ minClusterSize: 2, minSharedItems: 2, lookbackDays: 3 });
+    // Act
+    await runScan(SAME_AUTHOR);
+    // Assert
+    const candidates = await getCandidates();
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.authorHandle).toBe('example-author-1');
+  });
+
+  it('設定が無ければ既定値で検出する', async () => {
+    // Act — 2 アカウントしかいないので N=5 に届かない
+    await runScan(SAME_AUTHOR);
+    // Assert
+    expect(await getCandidates()).toEqual([]);
+  });
+
+  it('候補件数をバッジに出す', async () => {
+    // Arrange
+    await saveSettings({ minClusterSize: 2, minSharedItems: 2, lookbackDays: 3 });
+    // Act
+    await runScan(SAME_AUTHOR);
+    // Assert
+    expect(mockOf(chrome.action, 'setBadgeText')).toHaveBeenCalledWith({ text: '1' });
+  });
+
+  it('候補ゼロならバッジを空にする', async () => {
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert — 前回の件数が残り続けると嘘の表示になる
+    expect(mockOf(chrome.action, 'setBadgeText')).toHaveBeenCalledWith({ text: '' });
+  });
+
+  it('429 中はバッジを記号にする', async () => {
+    // Arrange — バッジは 4 文字程度しか入らない。残り時間はポップアップで伝える
+    likesMock.mockRejectedValue(new RateLimitError(1787104432));
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(mockOf(chrome.action, 'setBadgeText')).toHaveBeenCalledWith({ text: '!' });
+  });
+
+  it('バッジの更新に失敗してもスキャンは成立する', async () => {
+    // Arrange
+    mockOf(chrome.action, 'setBadgeText').mockRejectedValue(new Error('boom'));
+    // Act & Assert — バッジが出ないだけで蓄積も検出も終わっている
+    await expect(runScan(TWO_ITEMS)).resolves.not.toBeNull();
+    expect(countRecords(await getLikeIndex())).toBe(4);
   });
 });
