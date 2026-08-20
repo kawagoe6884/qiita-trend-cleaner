@@ -49,12 +49,21 @@ export type Verdict = 'valid' | 'false_positive';
 export interface Candidate {
   authorHandle: AccountHandle;
   clusterAccounts: AccountHandle[];
-  /** M: 共通していいねされた記事数 */
+  /**
+   * M: クラスタが N 人そろって現れた記事の数。
+   * 「誰か 1 人でもいいねした記事の数」ではない。
+   * 同じ顔ぶれが揃っていることが組織票の signature であり、
+   * バラバラの共起を数えると誤検知の入口になる（detect/cluster.ts の手順 4）。
+   */
   sharedItemCount: number;
+  /** 根拠として提示する記事。Phase 6 の一覧で「なぜ」を示すために持つ */
+  sharedItemIds: ItemId[];
   /** N: クラスタを構成するアカウント数 */
   clusterSize: number;
-  /** 0.0-1.0 */
+  /** 0.0-1.0。投稿直後に集中したいいねの割合 */
   burstScore: number;
+  /** 0.0-1.0。クラスタのうち記事 0 本・プロフィール空のアカウントの割合 */
+  emptyAccountRatio: number;
   detectedAt: IsoDateTime;
   verdict: Verdict | null;
 }

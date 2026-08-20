@@ -11,7 +11,7 @@
  * ここが読むのは自分で書いた値なので、API レスポンスほど厳密には検証しない。
  * ただし storage が壊れていても例外で落とさず、既定値へフォールバックする。
  */
-import type { IsoDateTime, LikeIndex, LocalState, ScanResult } from '../types/domain';
+import type { Candidate, IsoDateTime, LikeIndex, LocalState, ScanResult } from '../types/domain';
 
 /** storage が空のときに使う値 */
 const DEFAULT_LIKE_INDEX: LikeIndex = {};
@@ -78,6 +78,21 @@ export async function getLikeIndex(): Promise<LikeIndex> {
 
 export async function saveLikeIndex(likeIndex: LikeIndex): Promise<void> {
   await chrome.storage.local.set({ likeIndex });
+}
+
+/**
+ * 検出された候補。Phase 6 の一覧 UI の入力になる。
+ * getLikeIndex は「配列なら壊れている」と判定するが、こちらは配列が正しい形。
+ */
+export async function getCandidates(): Promise<Candidate[]> {
+  const raw = await readRaw();
+  const list = raw.candidates;
+  if (!Array.isArray(list)) return [];
+  return list as Candidate[];
+}
+
+export async function saveCandidates(candidates: Candidate[]): Promise<void> {
+  await chrome.storage.local.set({ candidates });
 }
 
 export async function saveScanResult(result: ScanResult): Promise<void> {

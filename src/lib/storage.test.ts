@@ -9,8 +9,10 @@ import {
   saveLikeIndex,
   saveScanResult,
   getLastScanResult,
+  getCandidates,
+  saveCandidates,
 } from './storage';
-import type { LikeIndex, ScanResult } from '../types/domain';
+import type { Candidate, LikeIndex, ScanResult } from '../types/domain';
 
 describe('getToken', () => {
   it('未設定なら null を返す', async () => {
@@ -131,5 +133,57 @@ describe('saveScanResult', () => {
 
   it('未保存なら getLastScanResult は null', async () => {
     expect(await getLastScanResult()).toBeNull();
+  });
+});
+
+/**
+ * getLikeIndex は「配列なら壊れている」と判定するが、candidates は配列が正しい形。
+ * 判定の向きが逆なので、同等のフェイルセーフが効いているかを別途固定する。
+ */
+describe('getCandidates', () => {
+  /** 合成の候補。実アカウント名は使わない */
+  const candidate: Candidate = {
+    authorHandle: 'example-author-a',
+    clusterAccounts: ['example-liker-1', 'example-liker-2'],
+    sharedItemCount: 2,
+    sharedItemIds: ['0123456789abcdef0001', '0123456789abcdef0002'],
+    clusterSize: 2,
+    burstScore: 0.75,
+    emptyAccountRatio: 1,
+    detectedAt: '2026-08-19T03:00:00.000Z',
+    verdict: null,
+  };
+
+  it('未保存なら空配列を返す', async () => {
+    // Arrange — setup.ts が beforeEach でストアを新品に差し替える
+    // Act & Assert — undefined ではなく空配列（Phase 6 の UI が map できるように）
+    expect(await getCandidates()).toEqual([]);
+  });
+
+  it('保存した候補を読み戻せる', async () => {
+    // Arrange
+    await saveCandidates([candidate]);
+    // Act
+    const loaded = await getCandidates();
+    // Assert
+    expect(loaded).toEqual([candidate]);
+  });
+
+  it('空配列を保存して読み戻せる（検出ゼロ件が「未保存」と区別できる）', async () => {
+    await saveCandidates([candidate]);
+    await saveCandidates([]);
+    expect(await getCandidates()).toEqual([]);
+  });
+
+  it('配列でない値が入っていても例外を投げず空配列を返す', async () => {
+    // Arrange — storage が壊れているケース
+    await chrome.storage.local.set({ candidates: { broken: true } });
+    // Act & Assert
+    await expect(getCandidates()).resolves.toEqual([]);
+  });
+
+  it('null が入っていても空配列を返す', async () => {
+    await chrome.storage.local.set({ candidates: null });
+    await expect(getCandidates()).resolves.toEqual([]);
   });
 });

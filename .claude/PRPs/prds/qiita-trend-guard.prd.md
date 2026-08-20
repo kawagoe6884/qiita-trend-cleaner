@@ -419,7 +419,7 @@ chrome.storage.sync
 | 2 | 基盤構築 | Vite + TypeScript + MV3 scaffold、DOM セレクタ層の分離 | **complete** | - | - | [plan](../plans/completed/foundation-scaffold.plan.md) / [report](../reports/foundation-scaffold-report.md) |
 | 3 | トークン設定 UI | アクセストークンの入力・検証・保存（**任意設定**。未設定でもライトモードで動く） | **complete** | with 4 | 2 | [plan](../plans/completed/token-settings-ui.plan.md) / [report](../reports/token-settings-ui-report.md) |
 | 4 | データ取得層 | Atom フィード解析 ＋ API クライアント ＋ スロットリング | **complete** | with 3 | 2 | [plan](../plans/completed/data-fetch-layer.plan.md) / [report](../reports/data-fetch-layer-report.md) |
-| 5 | 検出エンジン | 逆引きインデックス構築、共起クラスタ判定、バースト判定 | pending | - | 3, 4 | - |
+| 5 | 検出エンジン | 逆引きインデックス**蓄積**、共起クラスタ判定、バースト判定 | **complete**（OQ-12 の実データ検証は継続中） | - | 3, 4 | [plan](../plans/completed/detection-engine.plan.md) / [report](../reports/detection-engine-report.md) |
 | 6 | 候補 UI・設定 UI | 候補一覧、スライダー、適合率フィードバック | pending | with 7 | 5 | - |
 | 7 | DOM 非表示 | 表示中ページでの非表示と除外件数バッジ | pending | with 6 | 5 | - |
 | 8 | 一括ミュート実行 | div ポップアップの自動操作、スロットリング、失敗記録 | pending | - | 6 | - |

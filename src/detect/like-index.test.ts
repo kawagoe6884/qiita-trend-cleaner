@@ -1,0 +1,185 @@
+import { describe, it, expect } from 'vitest';
+import {
+  mergeLikeIndex,
+  purgeLikeIndex,
+  withinLookback,
+  countRecords,
+  toEpochMs,
+  RETENTION_DAYS,
+} from './like-index';
+import type { LikeIndex, LikeRecord } from '../types/domain';
+
+/** 判定の基準時刻。now を固定しないとテストが実行時刻に依存して壊れる */
+const NOW = new Date('2026-08-19T12:00:00+09:00');
+
+/** NOW から days 日前の ISO 文字列 */
+function daysAgo(days: number): string {
+  return new Date(NOW.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/** フィクスチャはすべて合成値。実アカウント名・実 item_id は使わない */
+function record(itemIndex: number, overrides: Partial<LikeRecord> = {}): LikeRecord {
+  return {
+    itemId: `0123456789abcdef${String(itemIndex).padStart(4, '0')}`,
+    authorHandle: 'example-author-1',
+    likedAt: daysAgo(1),
+    itemPostedAt: daysAgo(1),
+    ...overrides,
+  };
+}
+
+function index(handle: string, likes: LikeRecord[], meta = {}): LikeIndex {
+  return {
+    [handle]: { likes, itemsCount: 0, followersCount: 1, hasDescription: false, ...meta },
+  };
+}
+
+describe('toEpochMs', () => {
+  it('オフセット付き ISO 8601 を解釈する', () => {
+    expect(toEpochMs('2026-08-19T12:00:00+09:00')).toBe(NOW.getTime());
+  });
+
+  it('パースできない文字列は null（NaN を漏らさない）', () => {
+    expect(toEpochMs('not-a-date')).toBeNull();
+  });
+});
+
+describe('mergeLikeIndex', () => {
+  it('空の蓄積に初回分をマージすると全件入る', () => {
+    // Arrange
+    const fresh: LikeIndex = {
+      ...index('example-liker-a', [record(1)]),
+      ...index('example-liker-b', [record(2)]),
+    };
+    // Act
+    const merged = mergeLikeIndex({}, fresh);
+    // Assert
+    expect(Object.keys(merged).sort()).toEqual(['example-liker-a', 'example-liker-b']);
+    expect(countRecords(merged)).toBe(2);
+  });
+
+  it('同じ記事を 2 回スキャンしても重複しない', () => {
+    // Arrange — 同じ itemId を含む 2 回のマージ
+    const first = index('example-liker-a', [record(1)]);
+    const second = index('example-liker-a', [record(1)]);
+    // Act
+    const merged = mergeLikeIndex(first, second);
+    // Assert — アカウントが同じ記事に 2 回いいねすることはない
+    expect(countRecords(merged)).toBe(1);
+  });
+
+  it('別のトレンドセットの記事は追加される', () => {
+    const merged = mergeLikeIndex(
+      index('example-liker-a', [record(1)]),
+      index('example-liker-a', [record(2)]),
+    );
+    expect(countRecords(merged)).toBe(2);
+  });
+
+  it('メタデータは新しい方で上書きされる', () => {
+    // Arrange — アカウントは成長する
+    const stored = index('example-liker-a', [record(1)], { itemsCount: 0 });
+    const fresh = index('example-liker-a', [record(2)], { itemsCount: 3 });
+    // Act
+    const merged = mergeLikeIndex(stored, fresh);
+    // Assert
+    expect(merged['example-liker-a']?.itemsCount).toBe(3);
+  });
+
+  it('元のインデックスを破壊しない', () => {
+    // Arrange — stored は storage から読んだ値。書き換えると呼び出し側の想定が壊れる
+    const stored = index('example-liker-a', [record(1)]);
+    // Act
+    mergeLikeIndex(stored, index('example-liker-a', [record(2)]));
+    // Assert
+    expect(stored['example-liker-a']?.likes).toHaveLength(1);
+  });
+});
+
+describe('purgeLikeIndex', () => {
+  it('保持期間を過ぎたレコードを捨てる', () => {
+    // Arrange — RETENTION_DAYS は 7
+    const stored = index('example-liker-a', [
+      record(1, { itemPostedAt: daysAgo(RETENTION_DAYS + 1) }),
+      record(2, { itemPostedAt: daysAgo(1) }),
+    ]);
+    // Act
+    const { index: kept, purgedRecords } = purgeLikeIndex(stored, NOW);
+    // Assert
+    expect(purgedRecords).toBe(1);
+    expect(countRecords(kept)).toBe(1);
+  });
+
+  it('保持期間ちょうどは残す', () => {
+    const stored = index('example-liker-a', [record(1, { itemPostedAt: daysAgo(RETENTION_DAYS) })]);
+    expect(countRecords(purgeLikeIndex(stored, NOW).index)).toBe(1);
+  });
+
+  it('全レコードが消えたアカウントはエントリごと消える', () => {
+    // Arrange — 10 MB 上限への配慮。空のエントリを残さない
+    const stored = index('example-liker-a', [
+      record(1, { itemPostedAt: daysAgo(RETENTION_DAYS + 5) }),
+    ]);
+    // Act
+    const { index: kept } = purgeLikeIndex(stored, NOW);
+    // Assert
+    expect(kept).not.toHaveProperty('example-liker-a');
+  });
+
+  it('日時がパースできないレコードは捨て、例外は投げない', () => {
+    // Arrange
+    const stored = index('example-liker-a', [record(1, { itemPostedAt: 'not-a-date' }), record(2)]);
+    // Act & Assert
+    expect(() => purgeLikeIndex(stored, NOW)).not.toThrow();
+    const { index: kept, purgedRecords } = purgeLikeIndex(stored, NOW);
+    expect(purgedRecords).toBe(1);
+    expect(countRecords(kept)).toBe(1);
+  });
+
+  it('元のインデックスを破壊しない', () => {
+    const stored = index('example-liker-a', [
+      record(1, { itemPostedAt: daysAgo(RETENTION_DAYS + 1) }),
+      record(2),
+    ]);
+    purgeLikeIndex(stored, NOW);
+    expect(stored['example-liker-a']?.likes).toHaveLength(2);
+  });
+});
+
+describe('withinLookback', () => {
+  it('遡及窓の外のレコードを判定対象から外す', () => {
+    // Arrange — lookbackDays 3 に対して 4 日前
+    const stored = index('example-liker-a', [
+      record(1, { itemPostedAt: daysAgo(4) }),
+      record(2, { itemPostedAt: daysAgo(2) }),
+    ]);
+    // Act
+    const scoped = withinLookback(stored, 3, NOW);
+    // Assert
+    expect(countRecords(scoped)).toBe(1);
+  });
+
+  it('元のインデックスを変えない（保存には影響しない）', () => {
+    // Arrange
+    const stored = index('example-liker-a', [record(1, { itemPostedAt: daysAgo(4) })]);
+    // Act
+    const scoped = withinLookback(stored, 3, NOW);
+    // Assert — 判定の絞り込みが storage の中身を削ってはいけない
+    expect(countRecords(scoped)).toBe(0);
+    expect(countRecords(stored)).toBe(1);
+  });
+});
+
+describe('countRecords', () => {
+  it('空のインデックスは 0', () => {
+    expect(countRecords({})).toBe(0);
+  });
+
+  it('全アカウントのレコード数を合計する', () => {
+    const stored: LikeIndex = {
+      ...index('example-liker-a', [record(1), record(2)]),
+      ...index('example-liker-b', [record(1)]),
+    };
+    expect(countRecords(stored)).toBe(3);
+  });
+});

@@ -2,8 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runScan } from './scanner';
 import { fetchFeedIfChanged } from '../feed/feed-fetcher';
 import { fetchLikes, fetchUserItems } from '../api/qiita-client';
-import { saveToken, getLikeIndex, getFeedCache } from '../lib/storage';
+import { saveToken, getLikeIndex, getFeedCache, getCandidates } from '../lib/storage';
 import { logger } from '../lib/logger';
+import { countRecords } from '../detect/like-index';
 
 vi.mock('../feed/feed-fetcher', () => ({ fetchFeedIfChanged: vi.fn() }));
 vi.mock('../api/qiita-client', () => ({ fetchLikes: vi.fn(), fetchUserItems: vi.fn() }));
@@ -212,6 +213,14 @@ describe('runScan のログ水準', () => {
     expect(debugSpy).toHaveBeenCalledWith('skip author:', expect.any(String), expect.any(Error));
   });
 
+  it('検出はゼロ件でも warn を出さない', async () => {
+    // Arrange — 既定は 2 記事 / 2 アカウントなので閾値（N=5 M=2）に届かない
+    // Act
+    await runScan();
+    // Assert — 「候補なし」は正常。エラー欄に載せない
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
   it('打ち切りは全滅と区別する（warn を出さない）', async () => {
     // Arrange — 1 件目の応答で残量 3（余白 5 未満）にして打ち切らせる
     likesMock.mockResolvedValueOnce(likesResponse(['example-liker-a'], 3));
@@ -220,5 +229,80 @@ describe('runScan のログ水準', () => {
     // Assert — 枠切れは想定内。次回スキャンで再試行される
     expect(result?.truncated).toBe(true);
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 蓄積と検出の配線。detect/ をモックせず実物を通す。
+ * ここをモックすると「配線されているか」が検証できない。
+ */
+describe('runScan の蓄積と検出', () => {
+  /** 著者 A の 2 記事に count 人が揃った likes 応答を作る */
+  function clusterLikes(count: number) {
+    const handles = Array.from({ length: count }, (_, i) => `example-liker-${String(i + 1)}`);
+    return likesResponse(handles);
+  }
+
+  it('2 回スキャンするとインデックスが蓄積される', async () => {
+    // Arrange — 1 回目は記事 1,2
+    await runScan();
+    const afterFirst = countRecords(await getLikeIndex());
+    // 2 回目は別のトレンドセット（記事 3,4）
+    feedMock.mockResolvedValue({
+      kind: 'updated',
+      snapshot: { feedUpdated: '2026-08-19T17:00:00+09:00', items: [trendItem(3), trendItem(4)] },
+      etag: 'W/"fedcba9876543210"',
+    });
+    // Act
+    await runScan();
+    // Assert — 上書きなら afterFirst のままになる
+    expect(countRecords(await getLikeIndex())).toBe(afterFirst * 2);
+  });
+
+  it('同じフィードを 2 回処理しても重複しない', async () => {
+    // Arrange & Act — feedMock は同じ items を返し続ける
+    await runScan();
+    const afterFirst = countRecords(await getLikeIndex());
+    await runScan();
+    // Assert — アカウントが同じ記事に 2 回いいねすることはない
+    expect(countRecords(await getLikeIndex())).toBe(afterFirst);
+  });
+
+  it('検出結果が storage に保存される', async () => {
+    // Arrange — 5 人が著者 1 の 2 記事に揃う（N=5 M=2 を満たす）
+    feedMock.mockResolvedValue({
+      kind: 'updated',
+      snapshot: {
+        feedUpdated: '2026-08-19T05:00:00+09:00',
+        items: [trendItem(1), { ...trendItem(2), authorHandle: 'example-author-1' }],
+      },
+      etag: 'W/"0123456789abcdef"',
+    });
+    likesMock.mockResolvedValue(clusterLikes(5));
+    // Act
+    await runScan();
+    // Assert
+    const candidates = await getCandidates();
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.authorHandle).toBe('example-author-1');
+    expect(candidates[0]?.clusterSize).toBe(5);
+  });
+
+  it('候補ゼロでも空配列が保存される', async () => {
+    // Act — 既定のフィクスチャは 2 アカウントしかいない
+    await runScan();
+    // Assert — 未保存（undefined）ではなく空配列
+    expect(await getCandidates()).toEqual([]);
+  });
+
+  it('打ち切っても蓄積と検出は行う', async () => {
+    // Arrange — 1 件目の応答で残量 3（余白 5 未満）にして打ち切らせる
+    likesMock.mockResolvedValueOnce(likesResponse(['example-liker-a'], 3));
+    // Act
+    const result = await runScan();
+    // Assert — 途中まででも成果は捨てない
+    expect(result?.truncated).toBe(true);
+    expect(countRecords(await getLikeIndex())).toBe(1);
+    expect(await getCandidates()).toEqual([]);
   });
 });

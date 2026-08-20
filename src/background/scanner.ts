@@ -4,7 +4,7 @@
  * 【モードの違いは取得範囲だけ】
  * ライト: トレンド 30 件の likers のみ（約 30 req）
  * フル  : ＋ 著者の過去記事の likers（約 120 req）
- * 判定ロジックは Phase 5 側に 1 本だけ置く。ここで検出は行わない。
+ * 判定ロジックは src/detect/ に 1 本だけ置く。ここは配線するだけ。
  *
  * 【直列に実行する理由】
  * Promise.all で 30 本並べるとレート制限に一気に当たり、
@@ -14,10 +14,20 @@ import { logger } from '../lib/logger';
 import { fetchFeedIfChanged } from '../feed/feed-fetcher';
 import { fetchLikes, fetchUserItems } from '../api/qiita-client';
 import { decideMode, availableRequests, fallbackLimitFor } from '../api/rate-budget';
+import { mergeLikeIndex, purgeLikeIndex, countRecords } from '../detect/like-index';
+import { detectCandidates } from '../detect/detector';
 import * as storage from '../lib/storage';
+import { DEFAULT_SETTINGS } from '../types/domain';
 import type { RateState } from '../api/rate-budget';
 import type { QiitaLike } from '../api/qiita-client';
-import type { IsoDateTime, LikeIndex, ScanMode, ScanResult, TrendItem } from '../types/domain';
+import type {
+  Candidate,
+  IsoDateTime,
+  LikeIndex,
+  ScanMode,
+  ScanResult,
+  TrendItem,
+} from '../types/domain';
 
 /**
  * フルモードで著者 1 人あたり追加取得する過去記事の数。
@@ -180,6 +190,68 @@ async function scanAuthorHistory(
  * 打ち切り時に保存すると、次回スキャンが <updated> 不変でスキップされ、
  * 欠けたインデックスが次のフィード更新（半日後）まで固定される。
  */
+/**
+ * 検出結果をログに出す。Phase 6 の候補一覧 UI ができるまでの唯一の確認手段であり、
+ * OQ-12（ライトモードの射程で捕まえられるか）の検証もここで行う。
+ *
+ * ゼロ件のときも必ず 1 行出す。定期実行を持たない設計では初回スキャン直後の
+ * ゼロ件が正常であり、「動いていない」と誤認させないため。
+ * 想定内の動作なので info に留める（warn はエラー欄に載る）。
+ */
+function logCandidates(candidates: Candidate[]): void {
+  logger.info(
+    'detected',
+    candidates.length,
+    'candidates (N>=' + String(DEFAULT_SETTINGS.minClusterSize),
+    'M>=' + String(DEFAULT_SETTINGS.minSharedItems),
+    'within ' + String(DEFAULT_SETTINGS.lookbackDays) + 'd)',
+  );
+  for (const candidate of candidates) {
+    logger.info(
+      '  candidate: author=' + candidate.authorHandle,
+      'cluster:',
+      candidate.clusterSize,
+      'shared:',
+      candidate.sharedItemCount,
+      'burst:',
+      candidate.burstScore.toFixed(2),
+      'empty:',
+      candidate.emptyAccountRatio.toFixed(2),
+    );
+  }
+}
+
+/**
+ * 今回の取得結果を蓄積へ畳み込み、保持期間を過ぎたものを捨て、検出をかける。
+ *
+ * **上書きではなくマージする。** ライトモードはトレンド 30 件の中に同一著者が
+ * 2 本入ることが稀で、1 スキャン分のスナップショットでは M=2 を満たせない。
+ * 「直近 3 日 = トレンドセット 6 回分」を成立させるには蓄積が要る。
+ *
+ * 打ち切り時も実行する。既存方針（途中まででも成果は捨てない）に合わせ、
+ * 不完全なインデックスでも候補が出るなら出す。次のスキャンで補強される。
+ */
+async function persistIndexAndDetect(fresh: LikeIndex): Promise<void> {
+  const now = new Date();
+  const merged = mergeLikeIndex(await storage.getLikeIndex(), fresh);
+  const { index: kept, purgedRecords } = purgeLikeIndex(merged, now);
+  await storage.saveLikeIndex(kept);
+
+  logger.info(
+    'index merged:',
+    'accounts:',
+    Object.keys(kept).length,
+    'records:',
+    countRecords(kept),
+    'purged:',
+    purgedRecords,
+  );
+
+  const candidates = detectCandidates(kept, DEFAULT_SETTINGS, now);
+  await storage.saveCandidates(candidates);
+  logCandidates(candidates);
+}
+
 async function persistScan(
   mode: ScanMode,
   progress: ScanProgress,
@@ -197,7 +269,7 @@ async function persistScan(
     finishedAt: new Date().toISOString(),
   };
 
-  await storage.saveLikeIndex(index);
+  await persistIndexAndDetect(index);
   await storage.saveScanResult(result);
   // 打ち切ったときは「処理済み」にしない。次回スキャンで再試行できるようにする
   if (!progress.truncated) {
