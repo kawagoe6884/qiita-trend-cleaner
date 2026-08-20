@@ -14,6 +14,7 @@
  * リスナーは消える。一覧のコンテナで受けること。
  */
 import { logger } from '../../lib/logger';
+import { updateBadge } from '../../lib/badge';
 import {
   loadPopupState,
   applySettings,
@@ -21,6 +22,7 @@ import {
   formatJst,
   describeMode,
   describeCall,
+  describeEmpty,
 } from './popup-state';
 import type { CandidateView, Precision } from './popup-state';
 import { DEFAULT_SETTINGS } from '../../types/domain';
@@ -96,7 +98,11 @@ function renderSummary(views: CandidateView[], precision: Precision): void {
   const call = describeCall(views, precision);
   setText(SELECTORS.call, call);
   setHidden(SELECTORS.call, call === '');
+  setText(SELECTORS.empty, describeEmpty(currentHasIndex));
   setHidden(SELECTORS.empty, views.length > 0);
+  // バッジはスキャン時だけでなく、閾値を変えたときも合わせる。
+  // 合わせないと一覧が 5 件を出しているのにバッジは前回の 2 件を出し続ける
+  void updateBadge(views.length, currentRateLimited);
 }
 
 /** 断定しない（設計上の約束 6）。「不正」「スパム」とは書かない */
@@ -243,6 +249,8 @@ const APPLY_DEBOUNCE_MS = 250;
 let currentSettings: Settings = DEFAULT_SETTINGS;
 let currentPrecision: Precision = { valid: 0, falsePositive: 0, ratio: null };
 let currentViews: CandidateView[] = [];
+let currentHasIndex = false;
+let currentRateLimited = false;
 
 /**
  * ドラッグ中に呼ぶ。**同期処理だけ。**
@@ -337,8 +345,31 @@ function resolveVerdictTarget(
  * 一覧のリスナーはコンテナに付ける。候補の要素は再検出のたびに作り直されるため、
  * 個々のボタンに付けると 2 回目以降のクリックが効かなくなる。
  */
+/**
+ * 根拠記事を **背景タブ** に開く。
+ *
+ * ポップアップは他所にフォーカスが移った時点で閉じる。リンクを普通に開くと
+ * 判定ボタンを押す前に閉じてしまい、記事 1 本ごとにポップアップを開き直す
+ * ことになる。背景タブなら開いたままなので、根拠をまとめて開いてから
+ * 読みに行き、戻って判定できる。
+ *
+ * タブを作るだけなら tabs 権限は要らない（URL やタイトルの読み取りには要る）。
+ */
+function openInBackground(url: string): void {
+  chrome.tabs.create({ url, active: false }).catch((error: unknown) => {
+    logger.error('failed to open evidence:', error);
+  });
+}
+
 function attachListeners(): void {
   find(SELECTORS.candidates)?.addEventListener('click', (event) => {
+    const link =
+      event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href]') : null;
+    if (link !== null) {
+      event.preventDefault();
+      openInBackground(link.href);
+      return;
+    }
     const resolved = resolveVerdictTarget(event.target);
     if (resolved === null) return;
     handleVerdict(resolved.handle, resolved.verdict).catch((error: unknown) => {
@@ -376,6 +407,8 @@ export async function init(): Promise<void> {
     currentSettings = state.settings;
     currentPrecision = state.precision;
     currentViews = state.views;
+    currentHasIndex = state.hasIndex;
+    currentRateLimited = state.rateLimitNotice !== null;
     renderMode(state.hasToken);
     renderSliderInputs(state.settings);
     renderSettingLabels(state.settings);

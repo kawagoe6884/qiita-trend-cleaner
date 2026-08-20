@@ -44,6 +44,8 @@ function createChromeMock() {
       onStartup: { addListener: vi.fn() },
     },
     storage: { local: createStorageArea(), sync: createStorageArea() },
+    // タブを作るだけなら tabs 権限は要らない（読み取りには要る）
+    tabs: { create: vi.fn(() => Promise.resolve({ id: 1 })) },
     // バッジ。manifest に action があれば権限不要で使える
     action: {
       setBadgeText: vi.fn(() => Promise.resolve()),

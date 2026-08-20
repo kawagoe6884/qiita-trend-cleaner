@@ -95,6 +95,7 @@ beforeEach(() => {
     rateLimitNotice: null,
     lastScanAt: '2026-08-20T03:00:00.000Z',
     hasToken: false,
+    hasIndex: true,
   });
   applyMock.mockResolvedValue(toViews([candidate()], {}));
   verdictMock.mockResolvedValue({ valid: 1, falsePositive: 0, ratio: 1 });
@@ -120,6 +121,7 @@ describe('init の描画', () => {
       rateLimitNotice: null,
       lastScanAt: null,
       hasToken: false,
+      hasIndex: true,
     });
     await init();
     expect(el('#summary').textContent).toContain('適合率 75%');
@@ -144,6 +146,7 @@ describe('init の描画', () => {
       rateLimitNotice: null,
       lastScanAt: null,
       hasToken: true,
+      hasIndex: true,
     });
     // Act
     await init();
@@ -167,6 +170,7 @@ describe('init の描画', () => {
       rateLimitNotice: null,
       lastScanAt: null,
       hasToken: false,
+      hasIndex: true,
     });
     await expect(init()).resolves.toBeUndefined();
     expect(el('#empty').hidden).toBe(false);
@@ -196,6 +200,7 @@ describe('init の描画', () => {
       rateLimitNotice: 'あと 42 分で再開できます。',
       lastScanAt: null,
       hasToken: false,
+      hasIndex: true,
     });
     await init();
     expect(el('#notice').hidden).toBe(false);
@@ -236,6 +241,7 @@ describe('init の XSS 対策', () => {
       rateLimitNotice: null,
       lastScanAt: null,
       hasToken: false,
+      hasIndex: true,
     });
     // Act
     await init();
@@ -438,6 +444,7 @@ describe('候補一覧への一言', () => {
       rateLimitNotice: null,
       lastScanAt: null,
       hasToken: false,
+      hasIndex: true,
     });
     await init();
     expect(el('#call').hidden).toBe(true);
@@ -568,5 +575,121 @@ describe('スライダーの値の丸め', () => {
         expect.any(Date),
       );
     });
+  });
+});
+
+/**
+ * ポップアップは他所にフォーカスが移った時点で閉じる。根拠リンクを普通に開くと
+ * 判定ボタンを押す前に閉じてしまい、記事 1 本ごとに開き直すことになる。
+ */
+describe('根拠リンク', () => {
+  it('背景タブに開き、ポップアップを閉じさせない', async () => {
+    // Arrange
+    await init();
+    const link = document.querySelector<HTMLAnchorElement>('#candidates a');
+    if (!link) throw new Error('missing evidence link');
+    // Act
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    link.dispatchEvent(event);
+    // Assert — active: false ならフォーカスが移らずポップアップは開いたまま
+    expect(vi.mocked(chrome.tabs.create)).toHaveBeenCalledWith({
+      url: 'https://qiita.com/example-author-a/items/0123456789abcdef0001',
+      active: false,
+    });
+    // 既定の遷移は止める（止めないと二重に開く）
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('リンク以外のクリックはタブを開かない', async () => {
+    await init();
+    clickVerdict('妥当');
+    expect(vi.mocked(chrome.tabs.create)).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 候補ゼロには原因が 2 つある。1 つの文言にすると、スライダーを上げて
+ * ゼロにした人に「トレンドページを開いてください」と的外れな案内を出す。
+ */
+describe('候補ゼロの案内', () => {
+  function emptyState(hasIndex: boolean) {
+    return {
+      views: [],
+      precision: NO_PRECISION,
+      settings: SETTINGS,
+      rateLimitNotice: null,
+      lastScanAt: null,
+      hasToken: false,
+      hasIndex,
+    };
+  }
+
+  it('蓄積が無ければトレンドページを開くよう案内する', async () => {
+    loadMock.mockResolvedValue(emptyState(false));
+    await init();
+    expect(el('#empty').textContent).toContain('トレンドページを開く');
+  });
+
+  it('蓄積があるのにゼロなら条件をゆるめるよう案内する', async () => {
+    loadMock.mockResolvedValue(emptyState(true));
+    await init();
+    expect(el('#empty').textContent).toContain('条件をゆるめる');
+    expect(el('#empty').textContent).not.toContain('トレンドページを開く');
+  });
+
+  it('スライダーでゼロになったときも条件の案内に変わる', async () => {
+    // Arrange — 蓄積はある状態で始める
+    await init();
+    applyMock.mockResolvedValue([]);
+    // Act — 閾値を上げて候補が消えた
+    const slider = el<HTMLInputElement>('#min-cluster');
+    slider.value = '30';
+    slider.dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      expect(el('#empty').hidden).toBe(false);
+    });
+    expect(el('#empty').textContent).toContain('条件をゆるめる');
+  });
+});
+
+/**
+ * バッジはスキャン時だけでなく、閾値を変えたときも合わせる。
+ * 合わせないと一覧が 5 件を出しているのにバッジは前回の 2 件を出し続ける。
+ */
+describe('バッジの追従', () => {
+  it('閾値を変えたら件数をバッジに反映する', async () => {
+    // Arrange
+    await init();
+    vi.mocked(chrome.action.setBadgeText).mockClear();
+    applyMock.mockResolvedValue([]);
+    // Act
+    const slider = el<HTMLInputElement>('#min-cluster');
+    slider.value = '30';
+    slider.dispatchEvent(new Event('change'));
+    // Assert — 候補が消えたのでバッジも空になる
+    await vi.waitFor(() => {
+      expect(vi.mocked(chrome.action.setBadgeText)).toHaveBeenCalledWith({ text: '' });
+    });
+  });
+});
+
+/**
+ * 候補が増えて中身が 600px を超えるとスクロールバーが出る。そのぶん幅が
+ * 変わり、ポップアップ全体が左右にズレる。**出るときだけ場所を作るのではなく、
+ * 最初から空けておく。**jsdom はスクロールバーを再現しないので、
+ * 宣言が消えていないことを実ファイルに対して固定する。
+ */
+describe('スクロールバーによるレイアウトのズレ', () => {
+  it('中身の高さを常に 600px 超にして、窓幅が変わらないようにする', () => {
+    // 実測: 中身が 600px をまたぐと innerWidth が 552 ⇄ 567 で変わり、
+    // 右端固定のポップアップは全体が左へ 15px ずれる。またがせなければ起きない。
+    // html の overflow-y / scrollbar-gutter では直らないことを実測で確認済み
+    const body = indexHtml.slice(indexHtml.indexOf('body {'), indexHtml.indexOf('[hidden]'));
+    const line = body.split('\n').find((row) => row.includes('min-height:'));
+    expect(line).toBeDefined();
+    const value = Number.parseInt(line?.split(':')[1] ?? '', 10);
+    // padding 32px と合わせて 600 を超えること（いまは 569 + 32 = 601）
+    expect(value + 32).toBeGreaterThan(600);
   });
 });

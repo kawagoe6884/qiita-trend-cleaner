@@ -22,6 +22,7 @@
  */
 import { logger } from '../lib/logger';
 import { RateLimitError } from '../lib/errors';
+import { updateBadge } from '../lib/badge';
 import { fetchLikes, fetchUserItems } from '../api/qiita-client';
 import { decideMode } from '../api/rate-budget';
 import { mergeLikeIndex, purgeLikeIndex, countRecords } from '../detect/like-index';
@@ -286,23 +287,6 @@ async function persistIndexAndDetect(fresh: LikeIndex): Promise<number> {
   await storage.saveCandidates(candidates);
   logCandidates(candidates, settings);
   return candidates.length;
-}
-
-/**
- * バッジを更新する。
- *
- * バッジは実質 4 文字しか入らない。429 の残り時間（「あと 42 分」）は入らないので
- * 記号にし、時間はポップアップで伝える。Phase 7 の除外件数バッジもこの優先順位
- * （429 > 候補件数 > 空）の上に載せる。
- */
-async function updateBadge(candidateCount: number, rateLimited: boolean): Promise<void> {
-  const text = rateLimited ? '!' : candidateCount > 0 ? String(candidateCount) : '';
-  try {
-    await chrome.action.setBadgeText({ text });
-  } catch (error) {
-    // バッジが出ないだけでスキャンは成立している。想定内なので debug
-    logger.debug('failed to update badge:', error);
-  }
 }
 
 /**

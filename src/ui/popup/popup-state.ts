@@ -116,6 +116,19 @@ export function describeCall(views: CandidateView[], precision: Precision): stri
   return 'この一覧はすべて評価済みです。';
 }
 
+/**
+ * 候補ゼロのときの案内。**原因が 2 つあるので言い分ける。**
+ *
+ * 蓄積がまだ無いのか、蓄積はあるが条件が厳しいのかで、次にやることが違う。
+ * 1 つの文言にすると、スライダーを上げてゼロになった人に
+ * 「トレンドページを開いてください」と的外れな案内を出すことになる。
+ */
+export function describeEmpty(hasIndex: boolean): string {
+  return hasIndex
+    ? 'いまの条件に当てはまる候補はありません。条件をゆるめると増えます。'
+    : 'まだ何も集めていません。トレンドページを開くと蓄積が始まります。';
+}
+
 export interface ModeCopy {
   title: string;
   detail: string;
@@ -149,17 +162,20 @@ export interface PopupState {
   lastScanAt: IsoDateTime | null;
   /** トークンが設定されているか。**生のトークンは持たない** */
   hasToken: boolean;
+  /** 蓄積があるか。候補ゼロの理由を言い分けるために使う */
+  hasIndex: boolean;
 }
 
 /** 保存済みの状態をまとめて読む */
 export async function loadPopupState(now: Date): Promise<PopupState> {
-  const [candidates, feedback, settings, until, lastScan, hasToken] = await Promise.all([
+  const [candidates, feedback, settings, until, lastScan, hasToken, index] = await Promise.all([
     storage.getCandidates(),
     storage.getFeedback(),
     storage.getSettings(),
     storage.getRateLimitedUntil(),
     storage.getLastScanResult(),
     storage.hasToken(),
+    storage.getLikeIndex(),
   ]);
   return {
     views: toViews(candidates, feedback),
@@ -168,6 +184,7 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
     rateLimitNotice: rateLimitNotice(until, now),
     lastScanAt: lastScan?.finishedAt ?? null,
     hasToken,
+    hasIndex: Object.keys(index).length > 0,
   };
 }
 

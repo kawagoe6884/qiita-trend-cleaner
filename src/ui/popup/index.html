@@ -4,12 +4,32 @@
     <meta charset="UTF-8" />
     <title>Qiita Trend Guard</title>
     <style>
+      /* 【窓の寸法を変えさせる要因を消す】
+
+         実測（DevTools）:
+           候補あり  scrollHeight 623 → innerWidth 567
+           候補なし  scrollHeight 485 → innerWidth 552
+
+         Chrome は窓の幅を body の幅（552）で決め、**中身が 600px を超えたときだけ**
+         スクロールバーぶんの 15px を外側に足す。ポップアップは右端がツールバーの
+         アイコンに固定されているので、窓が広がると全体が左へ 15px ずれる。
+
+         html に overflow-y: scroll や scrollbar-gutter を書いても直らない。
+         溝の確保自体は効く（候補なしで html.offsetWidth が 537 = 552 − 15）が、
+         **Chrome の窓の寸法決めはそれを見ていない**（実測で確認）。
+
+         そこで min-height で **常に 600px を超えさせ**、スクロールバーを
+         出しっぱなしにする。またがなければ幅は変わらない。
+
+         569 + padding 32 = **601px**。上限 600 をちょうど 1px だけ超える値に
+         してある。超えれば目的は果たせるので、余分に高くすると候補が少ないときの
+         空白が増えるだけになる。padding を変えたらこの値も変えること。 */
       body {
         font-family: system-ui, sans-serif;
         margin: 0;
         padding: 16px;
-        /* ポップアップの最大は 800x600。超えた分はポップアップ自体がスクロールする */
         width: 520px;
+        min-height: 569px; /* + padding 32px = 601px */
         line-height: 1.6;
       }
       /* display を指定すると hidden 属性（UA の [hidden]{display:none}）が
