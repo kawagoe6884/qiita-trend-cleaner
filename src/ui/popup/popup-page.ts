@@ -23,6 +23,7 @@ import {
   describeMode,
   describeCall,
   describeEmpty,
+  rateLimitNotice,
 } from './popup-state';
 import type { CandidateView, Precision } from './popup-state';
 import { DEFAULT_SETTINGS } from '../../types/domain';
@@ -339,13 +340,6 @@ function resolveVerdictTarget(
 }
 
 /**
- * イベントリスナーを登録する。
- *
- * **storage の読み込みより先に呼ぶこと。**（options-page.ts と同じ理由）
- * 一覧のリスナーはコンテナに付ける。候補の要素は再検出のたびに作り直されるため、
- * 個々のボタンに付けると 2 回目以降のクリックが効かなくなる。
- */
-/**
  * 根拠記事を **背景タブ** に開く。
  *
  * ポップアップは他所にフォーカスが移った時点で閉じる。リンクを普通に開くと
@@ -361,7 +355,40 @@ function openInBackground(url: string): void {
   });
 }
 
+/**
+ * 429 の状態を storage の変更から追う。**init のスナップショットだけでは足りない。**
+ *
+ * ポップアップは開いたまま数分生きる。その間に別タブでトレンドページを開けば
+ * スキャンが走り、429 に達すれば service worker がバッジを「!」にする。
+ * ところがポップアップ側は init 時点の「429 ではない」を握ったままなので、
+ * **スライダーを 1 つ動かした瞬間に候補件数でバッジを上書きし、「!」を消す。**
+ * ユーザーは枠切れに気づく手段を失う。
+ *
+ * storage を読み直すのではなく変更通知を使うのは、getRateLimitedUntil が
+ * storage 全体を読むため。スライダーの操作ごとに呼ぶと Phase 6 で潰した
+ * 描画詰まりが戻る。
+ */
+function watchRateLimit(): void {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !('rateLimitedUntil' in changes)) return;
+    const until: unknown = changes.rateLimitedUntil.newValue;
+    const notice = rateLimitNotice(typeof until === 'number' ? until : null, new Date());
+    currentRateLimited = notice !== null;
+    setText(SELECTORS.notice, notice ?? '');
+    setHidden(SELECTORS.notice, notice === null);
+    void updateBadge(currentViews.length, currentRateLimited);
+  });
+}
+
+/**
+ * イベントリスナーを登録する。
+ *
+ * **storage の読み込みより先に呼ぶこと。**（options-page.ts と同じ理由）
+ * 一覧のリスナーはコンテナに付ける。候補の要素は再検出のたびに作り直されるため、
+ * 個々のボタンに付けると 2 回目以降のクリックが効かなくなる。
+ */
 function attachListeners(): void {
+  watchRateLimit();
   find(SELECTORS.candidates)?.addEventListener('click', (event) => {
     const link =
       event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href]') : null;

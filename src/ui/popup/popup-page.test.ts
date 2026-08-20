@@ -693,3 +693,88 @@ describe('スクロールバーによるレイアウトのズレ', () => {
     expect(value + 32).toBeGreaterThan(600);
   });
 });
+
+/**
+ * ポップアップは開いたまま数分生きる。その間に別タブでトレンドページを開けば
+ * スキャンが走り、429 に達すれば service worker がバッジを「!」にする。
+ *
+ * init のスナップショットだけを握っていると、**スライダーを 1 つ動かした瞬間に
+ * 候補件数でバッジを上書きし、「!」を消してしまう。**
+ */
+describe('開いている間に 429 に達したとき', () => {
+  const badgeMock = () => vi.mocked(chrome.action.setBadgeText);
+
+  /**
+   * 登録された storage のリスナーを取り出す。
+   *
+   * unbound-method は @types/chrome が addListener をメソッドとして宣言して
+   * いるために出る。vi.mocked は受け取った値をそのまま返すだけで、
+   * this を切り離した呼び出しはしていない
+   */
+  function storageListener() {
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const listener = vi.mocked(chrome.storage.onChanged.addListener).mock.calls[0]?.[0];
+    if (!listener) throw new Error('missing storage listener');
+    return listener;
+  }
+
+  /** service worker が rateLimitedUntil を書いた（消した）と見立てて通知する */
+  function notifyRateLimit(newValue: number | undefined): void {
+    storageListener()({ rateLimitedUntil: { newValue } }, 'local');
+  }
+
+  /** いまから n 分後の Unix 秒。storage が持つのはミリ秒ではない */
+  function minutesFromNow(minutes: number): number {
+    return Math.floor(Date.now() / 1000) + minutes * 60;
+  }
+
+  it('案内とバッジがその場で追従する（開き直さなくても分かる）', async () => {
+    // Arrange — 開いた時点では枠に余裕がある
+    await init();
+    badgeMock().mockClear();
+    // Act
+    notifyRateLimit(minutesFromNow(42));
+    // Assert
+    expect(el('#notice').hidden).toBe(false);
+    expect(el('#notice').textContent).toContain('42 分');
+    expect(badgeMock()).toHaveBeenCalledWith({ text: '!' });
+  });
+
+  it('そのあとスライダーを動かしても「!」を消さない', async () => {
+    // Arrange
+    await init();
+    notifyRateLimit(minutesFromNow(42));
+    badgeMock().mockClear();
+    // Act — 閾値を変えて再描画させる
+    const slider = el<HTMLInputElement>('#min-cluster');
+    slider.value = '3';
+    slider.dispatchEvent(new Event('change'));
+    // Assert — 候補件数で上書きしない
+    await vi.waitFor(() => {
+      expect(badgeMock()).toHaveBeenCalled();
+    });
+    expect(badgeMock()).toHaveBeenLastCalledWith({ text: '!' });
+  });
+
+  it('枠が戻ったら案内を消す', async () => {
+    // Arrange
+    await init();
+    notifyRateLimit(minutesFromNow(42));
+    // Act — スキャンが 429 なしで終わるとキーごと消える
+    notifyRateLimit(undefined);
+    // Assert
+    expect(el('#notice').hidden).toBe(true);
+    expect(badgeMock()).toHaveBeenLastCalledWith({ text: '1' });
+  });
+
+  it('関係のないキーの変更では何もしない', async () => {
+    // Arrange
+    await init();
+    badgeMock().mockClear();
+    // Act — 候補の保存など、スキャンのたびに起きる書き込み
+    storageListener()({ candidates: { newValue: [] } }, 'local');
+    // Assert
+    expect(badgeMock()).not.toHaveBeenCalled();
+    expect(el('#notice').hidden).toBe(true);
+  });
+});
