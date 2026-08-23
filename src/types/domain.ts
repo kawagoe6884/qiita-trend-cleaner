@@ -80,6 +80,11 @@ export interface Candidate {
    * 「誰か 1 人でもいいねした記事の数」ではない。
    * 同じ顔ぶれが揃っていることが組織票の signature であり、
    * バラバラの共起を数えると誤検知の入口になる（detect/cluster.ts の手順 4）。
+   *
+   * **著者をまたぐ共起では 1 になりうる。** そちらは「別々の著者の記事に
+   * 同じ顔ぶれが揃う」判定なので、記事の本数はクラスタ全体で満たせばよく、
+   * 著者ごとには課さない（detect/cross-cluster.ts）。記事 1 本の著者を
+   * 捕まえるための判定なので、この非対称は意図的なもの。
    */
   sharedItemCount: number;
   /** 根拠として提示する記事。Phase 6 の一覧で「なぜ」を示すために持つ */
@@ -91,6 +96,14 @@ export interface Candidate {
   /** 0.0-1.0。クラスタのうち記事 0 本・プロフィール空のアカウントの割合 */
   emptyAccountRatio: number;
   detectedAt: IsoDateTime;
+  /**
+   * 同じクラスタが現れた他の著者。**著者をまたぐ共起のときだけ入る。**
+   *
+   * 根拠記事（sharedItemIds）はこの著者のぶんしか持たない — popup-state.ts が
+   * 根拠 URL を authorHandle から組み立てるため、他著者の記事 ID を混ぜると
+   * 誤った記事を表示してしまう。UI はここを見て「他にも居る」ことを示す。
+   */
+  coAuthors?: AccountHandle[];
 }
 
 /** storage.sync に置く設定。アクセストークンは含めない */

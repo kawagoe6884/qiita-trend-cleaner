@@ -6,6 +6,7 @@ import {
   countRecords,
   toEpochMs,
   RETENTION_DAYS,
+  isWithinRetention,
 } from './like-index';
 import type { LikeIndex, LikeRecord } from '../types/domain';
 
@@ -181,5 +182,66 @@ describe('countRecords', () => {
       ...index('example-liker-b', [record(1)]),
     };
     expect(countRecords(stored)).toBe(3);
+  });
+});
+
+/**
+ * 取りに行く前の絞り込み（OQ-19）。
+ *
+ * **経路は scanner.test.ts が検査している**（「保持期間より古い記事は
+ * 取りに行かない」「絞ってから件数で切る」）。ここは境界だけを固定する。
+ * 境界を経路のテストで確かめようとすると、フィクスチャの日付を細かく
+ * 動かすことになり、何を検査しているのか読めなくなる。
+ */
+describe('isWithinRetention', () => {
+  it('今日の記事は含む', () => {
+    expect(isWithinRetention(daysAgo(0), NOW)).toBe(true);
+  });
+
+  it('保持期間の内側なら含む', () => {
+    expect(isWithinRetention(daysAgo(RETENTION_DAYS - 1), NOW)).toBe(true);
+  });
+
+  it('ちょうど RETENTION_DAYS 前は含む（境界は内側）', () => {
+    // purgeLikeIndex の filterByCutoff が posted < cutoff で落とすのに合わせる。
+    // ずれると「取ったのに保存されない」1 日ぶんの隙間ができる
+    expect(isWithinRetention(daysAgo(RETENTION_DAYS), NOW)).toBe(true);
+  });
+
+  it('1 日でも超えたら含まない', () => {
+    expect(isWithinRetention(daysAgo(RETENTION_DAYS + 1), NOW)).toBe(false);
+  });
+
+  it('パースできない日付は含まない', () => {
+    // 「期間内」と誤判定すると、消える運命の記事に枠を使う
+    expect(isWithinRetention('not-a-date', NOW)).toBe(false);
+  });
+
+  it('空文字は含まない', () => {
+    expect(isWithinRetention('', NOW)).toBe(false);
+  });
+
+  it('purgeLikeIndex と同じ境界を使う', () => {
+    // Arrange — ちょうど境界の記事を 1 件だけ持つインデックス
+    const index: LikeIndex = {
+      'example-liker-1': {
+        likes: [
+          {
+            itemId: '0123456789abcdef0001',
+            authorHandle: 'example-author-1',
+            likedAt: daysAgo(RETENTION_DAYS),
+            itemPostedAt: daysAgo(RETENTION_DAYS),
+          },
+        ],
+        itemsCount: 3,
+        followersCount: 10,
+        hasDescription: true,
+      },
+    };
+    // Act — 取得側で通したものが保存側で落ちないこと
+    const kept = purgeLikeIndex(index, NOW);
+    // Assert
+    expect(isWithinRetention(daysAgo(RETENTION_DAYS), NOW)).toBe(true);
+    expect(countRecords(kept.index)).toBe(1);
   });
 });

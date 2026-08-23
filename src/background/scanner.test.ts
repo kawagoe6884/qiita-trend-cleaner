@@ -32,6 +32,10 @@ function trendItem(index: number): TrendItem {
   };
 }
 
+/** 著者の過去記事。保持期間の内と外を 1 本ずつ用意する（OQ-19 の検査用） */
+const RECENT_PAST_ITEM = '0123456789abcdef0101';
+const OLD_PAST_ITEM = '0123456789abcdef0102';
+
 /** 既定の入力。content script が読んだ 2 件のつもり */
 const TWO_ITEMS: TrendItem[] = [trendItem(1), trendItem(2)];
 
@@ -62,12 +66,14 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-08-19T12:00:00+09:00'));
   vi.clearAllMocks();
   likesMock.mockResolvedValue(likesResponse(['example-liker-a', 'example-liker-b']));
-  // 過去記事は now から 9 日前。RETENTION_DAYS(7) より古いので **取得はされるが
-  // 保存されない**。これは Phase 5b（OQ-17）で扱う挙動そのものなので、
-  // ここで日付を新しくして隠さない。設計を直すときに一緒に決める
+  // 過去記事は 2 本。**保持期間の内と外を 1 本ずつ**置く。
+  // 外の 1 本は取りに行かない（取っても purge で消えるため。OQ-19）
   itemsMock.mockResolvedValue({
-    data: [{ id: 'fedcba9876543210fedc', created_at: '2026-08-10T09:00:00+09:00' }],
-    totalCount: 1,
+    data: [
+      { id: RECENT_PAST_ITEM, created_at: '2026-08-17T09:00:00+09:00' },
+      { id: OLD_PAST_ITEM, created_at: '2026-08-10T09:00:00+09:00' },
+    ],
+    totalCount: 2,
     rate: { limit: 1000, remaining: 990, resetAt: null },
   });
 });
@@ -606,5 +612,61 @@ describe('runScan の設定とバッジ', () => {
     // Act & Assert — バッジが出ないだけで蓄積も検出も終わっている
     await expect(runScan(TWO_ITEMS)).resolves.not.toBeNull();
     expect(countRecords(await getLikeIndex())).toBe(4);
+  });
+});
+
+/**
+ * 取りに行く前に絞る（OQ-19）。
+ *
+ * purgeLikeIndex は保存の直前に itemPostedAt で切るので、保持期間より古い
+ * 記事の likes を取っても必ず消える。実測（2026-08-24）では 45 記事を取得して
+ * 保存されたのは 6 本（13%）だった。
+ */
+describe('runScan の過去記事の絞り込み', () => {
+  function fetchedItemIds(): string[] {
+    return likesMock.mock.calls.map(([itemId]) => itemId);
+  }
+
+  it('保持期間より古い記事は取りに行かない', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert — 期間内の 1 本だけ。古い方は 1 度も叩かない
+    expect(fetchedItemIds()).toContain(RECENT_PAST_ITEM);
+    expect(fetchedItemIds()).not.toContain(OLD_PAST_ITEM);
+  });
+
+  it('絞ってから件数で切る（新しい記事が後ろにあっても取れる）', async () => {
+    // Arrange — 古い記事が先頭に 2 本、期間内は 3 番目。
+    // API は新しい順に返すが、順序に依存しない実装であること
+    await saveToken('dummy-token-value');
+    itemsMock.mockResolvedValue({
+      data: [
+        { id: '0123456789abcdef0201', created_at: '2026-08-01T09:00:00+09:00' },
+        { id: '0123456789abcdef0202', created_at: '2026-08-02T09:00:00+09:00' },
+        { id: RECENT_PAST_ITEM, created_at: '2026-08-17T09:00:00+09:00' },
+      ],
+      totalCount: 3,
+      rate: { limit: 1000, remaining: 990, resetAt: null },
+    });
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert — slice を先にすると古い 2 本で埋まり、結果が 0 本になる
+    expect(fetchedItemIds()).toContain(RECENT_PAST_ITEM);
+  });
+
+  it('パースできない created_at の記事は取りに行かない', async () => {
+    // Arrange — 壊れた日付を「期間内」と誤判定すると、消える記事に枠を使う
+    await saveToken('dummy-token-value');
+    itemsMock.mockResolvedValue({
+      data: [{ id: '0123456789abcdef0301', created_at: 'not-a-date' }],
+      totalCount: 1,
+      rate: { limit: 1000, remaining: 990, resetAt: null },
+    });
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(fetchedItemIds()).not.toContain('0123456789abcdef0301');
   });
 });

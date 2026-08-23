@@ -462,7 +462,7 @@ chrome.storage.sync
 | **4b** | **データ取得層（DOM 版）** | 表示中ページの DOM 読み取り ＋ API クライアント ＋ 429 ハンドリング | **complete**（実機確認済み 2026-08-20） | - | 2, 5 | [plan](../plans/completed/dom-trend-reader.plan.md) / [report](../reports/dom-trend-reader-report.md) |
 | 5 | 検出エンジン | 逆引きインデックス**蓄積**、共起クラスタ判定、バースト判定 | **complete**（OQ-12 の実データ検証は継続中） | - | 3, 4 | [plan](../plans/completed/detection-engine.plan.md) / [report](../reports/detection-engine-report.md) |
 | **5b-1** | **検出の穴を塞ぐ（バグ 2 件）** | 著者巡回の起動条件、判定窓と取得射程の整合 | **complete**（実機確認済み 2026-08-24。**候補 1 件を検出**） | - | 5, 4b | [plan](../plans/completed/detection-gap-fixes.plan.md) / [report](../reports/detection-gap-fixes-report.md) |
-| **5b-2** | **著者をまたぐ共起** | 記事 1 本の著者を捕まえる判定軸（OQ-18）＋ **保存窓と取得射程の整合**（OQ-19） | pending — **5b-1 のリリース後、数日ぶんの実データを見てから閾値を決める** | - | 5b-1 | - |
+| **5b-2** | **著者をまたぐ共起** | 記事 1 本の著者を捕まえる判定軸（OQ-18）＋ **保存窓と取得射程の整合**（OQ-19） | **complete**（実機確認済み 2026-08-24。**記事 1 本の著者を検出**。レビュー指摘 3 件を修正） | - | 5b-1 | [plan](../plans/completed/cross-author-clusters.plan.md) / [report](../reports/cross-author-clusters-report.md) |
 | 6 | 候補 UI・設定 UI | 候補一覧、スライダー、適合率フィードバック（**すべてポップアップ**） | **in-progress**（実装完了・**実機確認待ち**） | with 7 | 5 | [plan](../plans/completed/candidate-popup-ui.plan.md) / [report](../reports/candidate-popup-ui-report.md) |
 | 7 | DOM 非表示 | 表示中ページでの非表示と除外件数バッジ（**読み取りは 4b へ移管し、隠す責務だけが残る**） | pending | with 6 | 4b, 5 | - |
 | 8 | 一括ミュート実行 | div ポップアップの自動操作、スロットリング、失敗記録 | pending | - | 6 | - |

@@ -141,6 +141,22 @@ export function withinLookback(index: LikeIndex, lookbackDays: number, now: Date
   return filterByCutoff(index, cutoffMs).index;
 }
 
+/**
+ * 保持期間内に投稿された記事か。**取りに行く前に捨てるために使う。**
+ *
+ * purgeLikeIndex は保存の直前に同じ基準で切る。それより古い記事の likes を
+ * 取得しても必ず消えるので、リクエストを使うだけ無駄になる。
+ * 実測（2026-08-24）: 45 記事を取得して保存されたのは 6 本（13%）。
+ *
+ * 判定の窓（lookbackDays）ではなく保持期間で切るのは、ユーザーが窓を
+ * 短くしても蓄積は続けるため。窓は後から広げられるが、取らなかった
+ * データは戻らない。
+ */
+export function isWithinRetention(itemPostedAt: IsoDateTime, now: Date): boolean {
+  const posted = toEpochMs(itemPostedAt);
+  return posted !== null && posted >= now.getTime() - RETENTION_DAYS * MS_PER_DAY;
+}
+
 /** 蓄積状況をログに出すための件数。「動いていない」との誤認を防ぐのが目的 */
 export function countRecords(index: LikeIndex): number {
   let total = 0;

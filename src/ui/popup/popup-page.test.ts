@@ -778,3 +778,59 @@ describe('開いている間に 429 に達したとき', () => {
     expect(el('#notice').hidden).toBe(true);
   });
 });
+
+/**
+ * 著者をまたぐ共起（Phase 5b-2）。根拠記事は自分のぶんしか持たないので、
+ * 他の著者が居ることは文言で示す。
+ */
+describe('coAuthors の行', () => {
+  function withCoAuthors(coAuthors: string[] | undefined) {
+    const base = candidate();
+    const target = coAuthors === undefined ? base : { ...base, coAuthors };
+    return {
+      views: toViews([target], {}),
+      precision: NO_PRECISION,
+      settings: SETTINGS,
+      rateLimitNotice: null,
+      lastScanAt: null,
+      hasToken: false,
+      hasIndex: true,
+    };
+  }
+
+  it('他の著者が居れば行を出す', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(withCoAuthors(['example-author-z']));
+    // Act
+    await init();
+    // Assert
+    const line = document.querySelector('#candidates .co-authors');
+    expect(line?.textContent).toContain('example-author-z');
+  });
+
+  it('他の著者が居なければ行ごと出さない', async () => {
+    // Arrange — 著者内クラスタだけで成立した候補
+    loadMock.mockResolvedValue(withCoAuthors(undefined));
+    // Act
+    await init();
+    // Assert — 空の <p> を置くと余白だけが残る
+    expect(document.querySelector('#candidates .co-authors')).toBeNull();
+  });
+
+  it('空配列でも行を出さない', async () => {
+    loadMock.mockResolvedValue(withCoAuthors([]));
+    await init();
+    expect(document.querySelector('#candidates .co-authors')).toBeNull();
+  });
+
+  it('ハンドルを HTML として解釈しない', async () => {
+    // Arrange — 著者ハンドルは Qiita 由来の外部データ
+    loadMock.mockResolvedValue(withCoAuthors(['<img src=x onerror=alert(1)>']));
+    // Act
+    await init();
+    // Assert
+    const line = document.querySelector('#candidates .co-authors');
+    expect(line?.querySelector('img')).toBeNull();
+    expect(line?.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+});

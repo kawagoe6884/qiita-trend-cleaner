@@ -117,6 +117,20 @@ export function describeCall(views: CandidateView[], precision: Precision): stri
 }
 
 /**
+ * 同じクラスタが現れた他の著者の案内。**無ければ空文字を返し、行ごと出さない。**
+ *
+ * 根拠記事はこの著者のぶんしか持たない（popup-state が根拠 URL を
+ * authorHandle から組み立てるため）。他の著者の記事を見たければ、その著者の
+ * 候補を開けば根拠リンクがある。
+ *
+ * **断定しない**（設計上の約束 6）。「組織票」「不正」とは書かない。
+ */
+export function describeCoAuthors(coAuthors: AccountHandle[] | undefined): string {
+  if (coAuthors === undefined || coAuthors.length === 0) return '';
+  return `同じ顔ぶれが ${coAuthors.join('、')} の記事にも現れています。`;
+}
+
+/**
  * 候補ゼロのときの案内。**原因が 2 つあるので言い分ける。**
  *
  * 蓄積がまだ無いのか、蓄積はあるが条件が厳しいのかで、次にやることが違う。

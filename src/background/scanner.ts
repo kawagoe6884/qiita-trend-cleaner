@@ -26,7 +26,12 @@ import { updateBadge } from '../lib/badge';
 import { authorsToVisit, recordVisits, pruneVisits } from './author-visits';
 import { fetchLikes, fetchUserItems } from '../api/qiita-client';
 import { decideMode } from '../api/rate-budget';
-import { mergeLikeIndex, purgeLikeIndex, countRecords } from '../detect/like-index';
+import {
+  mergeLikeIndex,
+  purgeLikeIndex,
+  countRecords,
+  isWithinRetention,
+} from '../detect/like-index';
 import { detectCandidates } from '../detect/detector';
 import * as storage from '../lib/storage';
 import type { RateState } from '../api/rate-budget';
@@ -184,11 +189,15 @@ async function scanAuthor(
   index: LikeIndex,
   seen: Set<string>,
   initial: ScanProgress,
+  now: Date,
 ): Promise<ScanProgress> {
   try {
     const listing = await fetchUserItems(handle, token);
     const extras = listing.data
       .filter((entry) => !seen.has(entry.id))
+      // 保持期間より古い記事は取っても purge で消える。**slice より前に絞る。**
+      // 逆にすると新しい 2 本を取ってからフィルタし、結果が 0 本になりうる
+      .filter((entry) => isWithinRetention(entry.created_at, now))
       .slice(0, MAX_EXTRA_ITEMS_PER_AUTHOR)
       .map((entry) => toTrendItem(handle, entry.id, entry.created_at));
     const afterListing: ScanProgress = { ...initial, rate: listing.rate ?? initial.rate };
@@ -223,12 +232,13 @@ async function scanAuthorHistory(
   index: LikeIndex,
   seen: Set<string>,
   initial: ScanProgress,
+  now: Date,
 ): Promise<AuthorScanResult> {
   let progress = initial;
   const visited: string[] = [];
   for (const handle of handles) {
     if (progress.rateLimited) break;
-    progress = await scanAuthor(handle, token, index, seen, progress);
+    progress = await scanAuthor(handle, token, index, seen, progress, now);
     if (!progress.rateLimited) visited.push(handle);
   }
   return { progress, visited };
@@ -461,7 +471,7 @@ async function scanTrend(items: TrendItem[], startedAt: IsoDateTime): Promise<Sc
       now,
     );
     if (handles.length > 0) {
-      const history = await scanAuthorHistory(handles, token, fresh, seen, progress);
+      const history = await scanAuthorHistory(handles, token, fresh, seen, progress, now);
       progress = history.progress;
       await storage.saveAuthorVisits(recordVisits(visits, history.visited, now));
     }

@@ -48,6 +48,15 @@ function cluster(options: {
   return index;
 }
 
+/** いいね者の名前を差し替える。別グループを作るために使う */
+function renameLikers(index: LikeIndex, prefix: string): LikeIndex {
+  const renamed: LikeIndex = {};
+  for (const [handle, entry] of Object.entries(index)) {
+    renamed[handle.replace('example-liker', prefix)] = entry;
+  }
+  return renamed;
+}
+
 /** 複数のクラスタを 1 つのインデックスに合わせる（同じアカウントの likes は連結する） */
 function mergeIndexes(...parts: LikeIndex[]): LikeIndex {
   const index: LikeIndex = {};
@@ -187,5 +196,134 @@ describe('detectCandidates', () => {
   it('空のインデックスでも例外を投げない', () => {
     expect(() => detectCandidates({}, DEFAULT_SETTINGS, NOW)).not.toThrow();
     expect(detectCandidates({}, DEFAULT_SETTINGS, NOW)).toEqual([]);
+  });
+});
+
+/**
+ * 著者をまたぐ共起（Phase 5b-2）。
+ *
+ * cluster.ts は著者ごとに閉じているので、記事が 1 本しかない著者は
+ * 手順 1 で必ず落ちる。実測（2026-08-23）では、同じ 17 人が 2 人の著者の
+ * 記事に揃って現れていた。
+ */
+describe('detectCandidates の著者をまたぐ共起', () => {
+  /** A は 2 本（著者内でも成立）、B は 1 本（著者間でしか成立しない） */
+  function twoAuthors(): LikeIndex {
+    return mergeIndexes(
+      cluster({ author: 'example-author-a', items: [1, 2], accounts: 5 }),
+      cluster({ author: 'example-author-b', items: [3], accounts: 5 }),
+    );
+  }
+
+  it('記事 1 本の著者も候補になる', () => {
+    // Act
+    const candidates = detectCandidates(twoAuthors(), DEFAULT_SETTINGS, NOW);
+    // Assert — 著者内の判定だけなら B は永久に出ない
+    const b = candidates.find((c) => c.authorHandle === 'example-author-b');
+    expect(b).toBeDefined();
+    expect(b?.sharedItemCount).toBe(1);
+  });
+
+  it('両方の判定で成立した著者は 1 件にまとまる', () => {
+    // Arrange & Act — A は著者内（2 本）でも著者間（B との重なり）でも成立する
+    const candidates = detectCandidates(twoAuthors(), DEFAULT_SETTINGS, NOW);
+    // Assert — 2 件出ると同じ著者に 2 回評価を押させ、適合率の分母が壊れる
+    expect(candidates.filter((c) => c.authorHandle === 'example-author-a')).toHaveLength(1);
+    expect(candidates).toHaveLength(2);
+  });
+
+  it('マージ後の sharedItemIds は和集合になる', () => {
+    // Act
+    const candidates = detectCandidates(twoAuthors(), DEFAULT_SETTINGS, NOW);
+    // Assert — A の 2 本が両方残る（著者間の判定は 1 本しか持たない）
+    const a = candidates.find((c) => c.authorHandle === 'example-author-a');
+    expect(a?.sharedItemIds).toEqual([itemId(1), itemId(2)]);
+  });
+
+  it('coAuthors に相手の著者が入る', () => {
+    // Act
+    const candidates = detectCandidates(twoAuthors(), DEFAULT_SETTINGS, NOW);
+    // Assert — 根拠記事は自分のぶんしか持たないので、UI はここで他を示す
+    const b = candidates.find((c) => c.authorHandle === 'example-author-b');
+    expect(b?.coAuthors).toEqual(['example-author-a']);
+  });
+
+  it('coAuthors に自分は入らない', () => {
+    const candidates = detectCandidates(twoAuthors(), DEFAULT_SETTINGS, NOW);
+    for (const candidate of candidates) {
+      expect(candidate.coAuthors ?? []).not.toContain(candidate.authorHandle);
+    }
+  });
+
+  it('著者内クラスタだけなら coAuthors を持たない', () => {
+    // Arrange — 1 人の著者しかいない
+    const index = cluster({ author: 'example-author-a', items: [1, 2], accounts: 5 });
+    // Act
+    const [candidate] = detectCandidates(index, DEFAULT_SETTINGS, NOW);
+    // Assert — 空配列ではなく未定義（UI が行ごと出さないため）
+    expect(candidate?.coAuthors).toBeUndefined();
+  });
+
+  it('顔ぶれが違う著者どうしは結び付けない', () => {
+    // Arrange — 別々の 5 人がそれぞれ別の著者を押している
+    const index = mergeIndexes(
+      cluster({ author: 'example-author-a', items: [1, 2], accounts: 5 }),
+      renameLikers(cluster({ author: 'example-author-c', items: [4, 5], accounts: 5 }), 'other'),
+    );
+    // Act
+    const candidates = detectCandidates(index, DEFAULT_SETTINGS, NOW);
+    // Assert — どちらも著者内で成立するが、互いの coAuthors にはならない
+    expect(candidates).toHaveLength(2);
+    for (const candidate of candidates) expect(candidate.coAuthors).toBeUndefined();
+  });
+});
+
+/**
+ * 連結成分の分離が detector まで届いているか。
+ * **orch-review の HIGH 指摘（2026-08-24）の番人。**
+ */
+describe('detectCandidates の連結成分', () => {
+  /** 組織 X は全員が空アカウント、組織 Y は全員が中身のあるアカウント */
+  function twoRings(): LikeIndex {
+    return mergeIndexes(
+      cluster({ author: 'example-author-a', items: [1], accounts: 5 }),
+      cluster({ author: 'example-author-b', items: [2], accounts: 5 }),
+      renameLikers(
+        cluster({ author: 'example-author-c', items: [3], accounts: 5, empty: false }),
+        'other',
+      ),
+      renameLikers(
+        cluster({ author: 'example-author-d', items: [4], accounts: 5, empty: false }),
+        'other',
+      ),
+    );
+  }
+
+  it('別の組織のアカウントで emptyAccountRatio が薄まらない', () => {
+    // Act
+    const candidates = detectCandidates(twoRings(), DEFAULT_SETTINGS, NOW);
+    // Assert — 混ざると 1.0 が 0.5 に薄まり、指標として機能しなくなる
+    const a = candidates.find((c) => c.authorHandle === 'example-author-a');
+    expect(a?.emptyAccountRatio).toBe(1);
+  });
+
+  it('別の組織のアカウントで clusterSize が膨らまない', () => {
+    // Act
+    const candidates = detectCandidates(twoRings(), DEFAULT_SETTINGS, NOW);
+    // Assert — clusterSize は並び順の主キー。膨らむと順位が狂う
+    const a = candidates.find((c) => c.authorHandle === 'example-author-a');
+    expect(a?.clusterSize).toBe(5);
+  });
+
+  it('別の組織の著者を coAuthors に入れない', () => {
+    // Act
+    const candidates = detectCandidates(twoRings(), DEFAULT_SETTINGS, NOW);
+    // Assert — UI が事実でないことを述べる経路を塞ぐ
+    const a = candidates.find((c) => c.authorHandle === 'example-author-a');
+    expect(a?.coAuthors).toEqual(['example-author-b']);
+  });
+
+  it('独立した 2 組織の 4 著者すべてが候補になる', () => {
+    expect(detectCandidates(twoRings(), DEFAULT_SETTINGS, NOW)).toHaveLength(4);
   });
 });

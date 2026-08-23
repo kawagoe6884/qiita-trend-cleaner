@@ -23,6 +23,7 @@ import {
   describeMode,
   describeCall,
   describeEmpty,
+  describeCoAuthors,
   rateLimitNotice,
 } from './popup-state';
 import type { CandidateView, Precision } from './popup-state';
@@ -165,10 +166,22 @@ function candidateItem(view: CandidateView): HTMLLIElement {
     paragraph('author', view.candidate.authorHandle),
     paragraph('stats', describeCandidate(view)),
     paragraph('scores', describeScores(view)),
+    ...coAuthorLine(view),
     evidenceLine(view),
     actions,
   );
   return item;
+}
+
+/**
+ * 他の著者の行。**著者をまたぐ共起のときだけ出す。**
+ *
+ * 配列で返して展開するのは、無いときに要素を作らないため。空の <p> を
+ * 置くと余白だけが残る。
+ */
+function coAuthorLine(view: CandidateView): HTMLParagraphElement[] {
+  const text = describeCoAuthors(view.candidate.coAuthors);
+  return text === '' ? [] : [paragraph('co-authors', text)];
 }
 
 function renderCandidates(views: CandidateView[]): void {
