@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runScan } from './scanner';
 import { fetchLikes, fetchUserItems } from '../api/qiita-client';
 import {
@@ -49,14 +49,30 @@ function likesResponse(handles: string[], remaining = 55) {
   };
 }
 
+/**
+ * 判定の窓は **記事の投稿時刻**（`itemPostedAt`）から `lookbackDays` 日で切る。
+ * フィクスチャの日付が固定なのに now が実時刻だと、**日が経つだけでテストが落ちる**。
+ * 実際 2026-08-20 に緑だったものが 8/23 に 3 件落ちた（コードは 1 行も変えていない）。
+ *
+ * Date だけ偽装する。setTimeout まで止めると runScan の非同期が進まなくなる。
+ */
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-08-19T12:00:00+09:00'));
   vi.clearAllMocks();
   likesMock.mockResolvedValue(likesResponse(['example-liker-a', 'example-liker-b']));
+  // 過去記事は now から 9 日前。RETENTION_DAYS(7) より古いので **取得はされるが
+  // 保存されない**。これは Phase 5b（OQ-17）で扱う挙動そのものなので、
+  // ここで日付を新しくして隠さない。設計を直すときに一緒に決める
   itemsMock.mockResolvedValue({
     data: [{ id: 'fedcba9876543210fedc', created_at: '2026-08-10T09:00:00+09:00' }],
     totalCount: 1,
     rate: { limit: 1000, remaining: 990, resetAt: null },
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('runScan', () => {
