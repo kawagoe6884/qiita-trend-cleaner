@@ -78,7 +78,8 @@
 | 4 データ取得層（Atom フィード版） | **superseded** — 取得対象がユーザーの見ている画面と一致しなかった |
 | **4b データ取得層（DOM 版）** | **complete**（実機確認済み） — [report](.claude/PRPs/reports/dom-trend-reader-report.md) |
 | **6 候補 UI** | **UI は動いた**（実機で候補・適合率・バッジを確認）。ただし**検出側の穴 3 件**が露見 — [report](.claude/PRPs/reports/candidate-popup-ui-report.md) |
-| **5b 検出の穴を塞ぐ** | **次はここ** — 著者巡回の起動条件 / 判定窓と取得射程 / **著者をまたぐ共起** — [調査](.claude/PRPs/reports/cross-author-collusion-investigation.md) |
+| **5b-1 検出の穴を塞ぐ（バグ 2 件）** | **次はここ** — 著者巡回の起動条件 / 判定窓と取得射程 — [plan](.claude/PRPs/plans/detection-gap-fixes.plan.md) / [調査](.claude/PRPs/reports/cross-author-collusion-investigation.md) |
+| 5b-2 著者をまたぐ共起 | 5b-1 のリリース後、実データを貯めてから閾値を決める |
 | 7 DOM 非表示 | 5b の後（候補が出なければ隠すものが無い） |
 | 8 一括ミュート / 9 適合率 / 10 記事化 | pending |
 
