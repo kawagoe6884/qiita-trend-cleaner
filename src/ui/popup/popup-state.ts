@@ -147,9 +147,12 @@ export function describeMode(hasToken: boolean): ModeCopy {
       action: 'トークンを変更する',
     };
   }
+  // 枠の広さより先に「判定材料が揃わない」ことを言う。実測では 27 記事中、
+  // 同じ著者の記事に同じ人が重ねていいねした組が上位に 1 つも無かった。
+  // **断定はしない**（約束 6）。ライトでも検出できる場合はある
   return {
     title: 'ライトモードで動作中',
-    detail: `いま画面に出ている記事だけを見ます。トークンを設定すると著者の過去記事まで辿れ、1 時間あたりの枠が ${String(RATE_LIMIT_ANON)} → ${String(RATE_LIMIT_AUTH)} リクエストに広がります。`,
+    detail: `いま画面に出ている記事だけを見ます。同じ著者の記事が複数トレンドに出ていないと判定材料が揃いません。トークンを設定すると著者の過去記事まで辿れ、1 時間あたりの枠も ${String(RATE_LIMIT_ANON)} → ${String(RATE_LIMIT_AUTH)} リクエストに広がります。`,
     action: 'トークンを設定する',
   };
 }

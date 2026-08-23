@@ -60,6 +60,17 @@ export type Verdict = 'valid' | 'false_positive';
  */
 export type FeedbackLog = Record<AccountHandle, Verdict>;
 
+/**
+ * 著者ハンドル -> 最後に過去記事を辿った時刻（フルモードのみ）。
+ *
+ * **「その著者を一度でも訪れたか」は記事 ID からは判定できない。**
+ * 記事が 1 本しか無い著者と、まだ辿っていない著者が同じ見え方になるため。
+ * これを持たずに「新しい記事の著者だけ辿る」形にしていた結果、
+ * ライトモードで蓄積したあとにトークンを設定した人は、その著者の過去記事を
+ * **永久に取りに行かなかった**（2026-08-23 の実機で判明）。
+ */
+export type AuthorVisits = Record<AccountHandle, IsoDateTime>;
+
 /** 検出された組織票の候補 */
 export interface Candidate {
   authorHandle: AccountHandle;
@@ -89,10 +100,21 @@ export interface Settings {
   lookbackDays: number;
 }
 
+/**
+ * 既定値は **フルモード前提**（改訂 6 以降）。
+ *
+ * `lookbackDays` は 3 日だった。だがフルモードが辿る過去記事は定義上「過去」で、
+ * 3 日ではほぼ確実に窓の外に出る。**89 件のいいねを取得して判定に 0 件しか
+ * 使っていなかった**（2026-08-23 実測）。`RETENTION_DAYS` と同値の 7 にして、
+ * 取ったものを捨てないようにする。
+ *
+ * **保存済みの設定は変えない。** `getSettings` は保存値を優先するので、
+ * これは新規インストール時の値でしかない。
+ */
 export const DEFAULT_SETTINGS: Settings = {
   minClusterSize: 5,
   minSharedItems: 2,
-  lookbackDays: 3,
+  lookbackDays: 7,
 };
 
 /** 取得の射程。トークンの有無ではなくレート枠から決まる */
@@ -125,6 +147,8 @@ export interface LocalState {
   candidates: Candidate[];
   /** 候補への判定。適合率の唯一の入力 */
   feedback?: FeedbackLog;
+  /** 著者ごとの過去記事巡回の記録。保持期間 7 日でパージする */
+  authorVisits?: AuthorVisits;
   /** 保持期間 7 日 */
   purgeAfter?: IsoDateTime;
   /** 最後にスキャンした時刻 */

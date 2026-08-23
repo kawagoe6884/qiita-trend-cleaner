@@ -14,6 +14,7 @@
 import { DEFAULT_SETTINGS } from '../types/domain';
 import type {
   AccountHandle,
+  AuthorVisits,
   Candidate,
   FeedbackLog,
   LikeIndex,
@@ -146,6 +147,28 @@ export async function saveVerdict(handle: AccountHandle, verdict: Verdict): Prom
   const feedback = { ...(await getFeedback()), [handle]: verdict };
   await chrome.storage.local.set({ feedback });
   return feedback;
+}
+
+/**
+ * 著者ごとの過去記事巡回の記録。フルモードだけが読み書きする。
+ *
+ * 1 件だけ壊れていても全体を捨てない（getFeedback と同じ扱い）。
+ * 捨てると全著者が「未訪問」になり、次のスキャンで一斉に叩きに行く。
+ */
+export async function getAuthorVisits(): Promise<AuthorVisits> {
+  const raw = await readRaw();
+  const stored = raw.authorVisits;
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {};
+  const visits: AuthorVisits = {};
+  for (const [handle, value] of Object.entries(stored as Record<string, unknown>)) {
+    const at = asNonEmptyString(value);
+    if (at !== null) visits[handle] = at;
+  }
+  return visits;
+}
+
+export async function saveAuthorVisits(authorVisits: AuthorVisits): Promise<void> {
+  await chrome.storage.local.set({ authorVisits });
 }
 
 export async function getLikeIndex(): Promise<LikeIndex> {

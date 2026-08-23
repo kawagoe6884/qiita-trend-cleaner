@@ -59,10 +59,13 @@ describe('readSnackbarMessage', () => {
 
 describe('DEFAULT_SETTINGS', () => {
   it('PRD が定めた既定値と一致する', () => {
+    // lookbackDays は 3 だった。フルモードが辿る過去記事は定義上「過去」で、
+    // 3 日ではほぼ確実に窓の外に出る（2026-08-23 実測）。RETENTION_DAYS と
+    // 同値の 7 にして、取得したものを捨てないようにした
     expect(DEFAULT_SETTINGS).toEqual({
       minClusterSize: 5,
       minSharedItems: 2,
-      lookbackDays: 3,
+      lookbackDays: 7,
     });
   });
 });

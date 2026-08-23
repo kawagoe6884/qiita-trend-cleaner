@@ -15,6 +15,8 @@ import {
   saveSettings,
   getFeedback,
   saveVerdict,
+  getAuthorVisits,
+  saveAuthorVisits,
 } from './storage';
 import { DEFAULT_SETTINGS } from '../types/domain';
 import type { Candidate, LikeIndex, ScanResult } from '../types/domain';
@@ -304,5 +306,49 @@ describe('saveVerdict の戻り値', () => {
       'example-author-b': 'false_positive',
     });
     expect(merged).toEqual(await getFeedback());
+  });
+});
+
+/**
+ * 著者の巡回記録。**1 件壊れていても全体を捨てない。**
+ * 捨てると全著者が「未訪問」になり、次のスキャンで一斉に叩きに行く。
+ */
+describe('getAuthorVisits', () => {
+  it('保存した記録をそのまま返す', async () => {
+    // Arrange
+    const visits = { 'example-author-1': '2026-08-19T12:00:00.000Z' };
+    await saveAuthorVisits(visits);
+    // Act & Assert
+    expect(await getAuthorVisits()).toEqual(visits);
+  });
+
+  it('未保存なら空を返す', async () => {
+    expect(await getAuthorVisits()).toEqual({});
+  });
+
+  it('オブジェクトでない値は空に倒す', async () => {
+    // Arrange
+    await chrome.storage.local.set({ authorVisits: 'broken' });
+    // Act & Assert
+    expect(await getAuthorVisits()).toEqual({});
+  });
+
+  it('配列は空に倒す（キーが数字の記録になってしまう）', async () => {
+    await chrome.storage.local.set({ authorVisits: ['2026-08-19T12:00:00.000Z'] });
+    expect(await getAuthorVisits()).toEqual({});
+  });
+
+  it('壊れた 1 件だけを落として残りは返す', async () => {
+    // Arrange — 文字列でない値が混ざった
+    await chrome.storage.local.set({
+      authorVisits: { 'example-author-1': '2026-08-19T12:00:00.000Z', 'example-author-2': 42 },
+    });
+    // Act & Assert
+    expect(await getAuthorVisits()).toEqual({ 'example-author-1': '2026-08-19T12:00:00.000Z' });
+  });
+
+  it('空文字は落とす（時刻として使えない）', async () => {
+    await chrome.storage.local.set({ authorVisits: { 'example-author-1': '' } });
+    expect(await getAuthorVisits()).toEqual({});
   });
 });

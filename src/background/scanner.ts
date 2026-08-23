@@ -23,6 +23,7 @@
 import { logger } from '../lib/logger';
 import { RateLimitError } from '../lib/errors';
 import { updateBadge } from '../lib/badge';
+import { authorsToVisit, recordVisits, pruneVisits } from './author-visits';
 import { fetchLikes, fetchUserItems } from '../api/qiita-client';
 import { decideMode } from '../api/rate-budget';
 import { mergeLikeIndex, purgeLikeIndex, countRecords } from '../detect/like-index';
@@ -202,19 +203,35 @@ async function scanAuthor(
 }
 
 /** 著者を順に巡回する */
+interface AuthorScanResult {
+  progress: ScanProgress;
+  /**
+   * 実際に辿り終えた著者。**429 で止まった著者は含めない。**
+   *
+   * 含めると訪問済みとして記録され、AUTHOR_REVISIT_HOURS のあいだ飛ばされる。
+   * 枠切れは毎回同じ順序で起きるので、末尾の著者を永久に取りこぼす。
+   *
+   * 429 以外の失敗（存在しない著者・非公開）は含める。scanAuthor が握りつぶす
+   * ので成否は見えないが、毎回叩き直すより 24 時間待つ方が枠に優しい。
+   */
+  visited: string[];
+}
+
 async function scanAuthorHistory(
   handles: string[],
   token: string | null,
   index: LikeIndex,
   seen: Set<string>,
   initial: ScanProgress,
-): Promise<ScanProgress> {
+): Promise<AuthorScanResult> {
   let progress = initial;
+  const visited: string[] = [];
   for (const handle of handles) {
-    if (progress.rateLimited) return progress;
+    if (progress.rateLimited) break;
     progress = await scanAuthor(handle, token, index, seen, progress);
+    if (!progress.rateLimited) visited.push(handle);
   }
-  return progress;
+  return { progress, visited };
 }
 
 /**
@@ -269,6 +286,14 @@ async function persistIndexAndDetect(fresh: LikeIndex): Promise<number> {
   const stored = await storage.getLikeIndex();
   const { index: kept, purgedRecords } = purgeLikeIndex(mergeLikeIndex(stored, fresh), now);
   await storage.saveLikeIndex(kept);
+
+  // 訪問記録も同じタイミングで掃除する。記録だけが残ると、保持期間を過ぎて
+  // インデックスから消えた著者を「訪問済み」として飛ばし続けることになる
+  const visits = await storage.getAuthorVisits();
+  const prunedVisits = pruneVisits(visits, kept);
+  if (Object.keys(prunedVisits).length !== Object.keys(visits).length) {
+    await storage.saveAuthorVisits(prunedVisits);
+  }
 
   logger.info(
     'index merged:',
@@ -388,6 +413,9 @@ async function scanTrend(items: TrendItem[], startedAt: IsoDateTime): Promise<Sc
   const token = await storage.getToken();
   const mode = decideMode(token !== null);
   const fresh: LikeIndex = {};
+  // 訪問記録の時刻は startedAt に揃える。スキャン中に日付が変わっても、
+  // 「このスキャンで辿った」ことを 1 つの時刻で表す
+  const now = new Date(startedAt);
 
   const stored = await storage.getLikeIndex();
   const known = collectKnownItemIds(stored);
@@ -415,16 +443,28 @@ async function scanTrend(items: TrendItem[], startedAt: IsoDateTime): Promise<Sc
     logger.warn('scan produced no data: all', newItems.length, 'items failed');
   }
 
-  // 著者は items ではなく newItems から取る。
+  // 著者は **items（トレンド全件）から取る。newItems ではない。**
   //
-  // fetchUserItems は seen を見る **前** に呼ばれるため、items から取ると
-  // 全件既知でも著者数ぶん（トレンド 1 ページで最大 30 req）を消費する。
-  // 「リロードでは API を 1 度も叩かない」はライトモードだけの性質であっては
-  // ならない。既知の著者を再訪する頻度は OQ-14（再取得の間隔）の領域で、
-  // Phase 4b の射程外。
+  // newItems から取っていたせいで、ライトモードで蓄積したあとにトークンを
+  // 設定した人は、その著者の過去記事を **永久に** 取りに行かなかった
+  // （2026-08-23 の実機で判明）。トレンドの記事が全件既知なら handles が
+  // 空になり、著者巡回が 1 度も走らない。
+  //
+  // 「リロードでは API を 1 度も叩かない」は訪問記録の側で守る。
+  // fetchUserItems は seen を見る **前** に呼ばれるので、対象を絞らないと
+  // 全件既知でも著者数ぶん（最大 30 req）を消費してしまう。
   if (mode === 'full' && !progress.rateLimited) {
-    const handles = [...new Set(newItems.map((item) => item.authorHandle))];
-    progress = await scanAuthorHistory(handles, token, fresh, seen, progress);
+    const visits = await storage.getAuthorVisits();
+    const handles = authorsToVisit(
+      items.map((item) => item.authorHandle),
+      visits,
+      now,
+    );
+    if (handles.length > 0) {
+      const history = await scanAuthorHistory(handles, token, fresh, seen, progress);
+      progress = history.progress;
+      await storage.saveAuthorVisits(recordVisits(visits, history.visited, now));
+    }
   }
 
   return persistScan({ mode, progress, startedAt, fresh, newItemCount: newItems.length });

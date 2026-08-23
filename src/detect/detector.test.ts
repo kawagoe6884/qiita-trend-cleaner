@@ -76,15 +76,32 @@ describe('detectCandidates', () => {
   });
 
   it('遡及窓の外の記事は判定に入らない', () => {
-    // Arrange — lookbackDays 3 に対して 4 日前の記事
+    // Arrange — lookbackDays 7 に対して 8 日前の記事
     const index = cluster({
       author: 'example-author-a',
       items: [1, 2],
       accounts: 5,
-      postedHoursAgo: 24 * 4,
+      postedHoursAgo: 24 * 8,
     });
     // Act & Assert
     expect(detectCandidates(index, DEFAULT_SETTINGS, NOW)).toEqual([]);
+  });
+
+  /**
+   * フルモードが辿る過去記事は定義上「過去」で、窓が短いとここで落ちる。
+   * 既定が 3 日だったとき、**89 件のいいねを取得して判定に 0 件しか
+   * 使っていなかった**（2026-08-23 実測）。既定を 7 日にした番人。
+   */
+  it('6 日前の記事は判定に入る（フルモードの過去記事を捨てない）', () => {
+    // Arrange
+    const index = cluster({
+      author: 'example-author-a',
+      items: [1, 2],
+      accounts: 5,
+      postedHoursAgo: 24 * 6,
+    });
+    // Act & Assert
+    expect(detectCandidates(index, DEFAULT_SETTINGS, NOW)).toHaveLength(1);
   });
 
   it('Candidate の全フィールドが埋まる', () => {

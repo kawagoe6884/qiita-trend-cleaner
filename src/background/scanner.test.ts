@@ -8,6 +8,7 @@ import {
   getCandidates,
   getRateLimitedUntil,
   saveSettings,
+  getAuthorVisits,
 } from '../lib/storage';
 import { RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
@@ -175,8 +176,8 @@ describe('runScan の既知記事の除外', () => {
 
   it('フルモードでも全件既知なら著者一覧を叩かない', async () => {
     // Arrange — 「リロードでは API を 1 度も叩かない」はライトモードだけの
-    // 性質であってはならない。fetchUserItems は seen を見る前に呼ばれるため、
-    // 著者を items から取ると既知の記事しか無くても著者数ぶん消費する
+    // 性質であってはならない。**これは訪問記録が守っている**（著者を
+    // newItems から取ることで守るのは行きすぎで、欠陥 1 を生んだ）
     await saveToken('dummy-token-value');
     await runScan(TWO_ITEMS);
     vi.clearAllMocks();
@@ -185,6 +186,68 @@ describe('runScan の既知記事の除外', () => {
     // Assert
     expect(likesMock).not.toHaveBeenCalled();
     expect(itemsMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 著者巡回の起動条件。**2026-08-23 のリグレッションの番人。**
+ *
+ * 著者を newItems から取っていたせいで、ライトモードで蓄積したあとに
+ * トークンを設定した人は、その著者の過去記事を永久に取りに行かなかった。
+ * 「リロードで 30 req 使う」を直した修正が、反対側の端に振り切れた形。
+ */
+describe('runScan の著者巡回', () => {
+  it('トークンを後から設定したら、全件既知でも著者を辿る', async () => {
+    // Arrange — ライトモードで蓄積してからトークンを設定する
+    await runScan(TWO_ITEMS);
+    await saveToken('dummy-token-value');
+    vi.clearAllMocks();
+    // Act — 記事は全件既知（new: 0）だが、著者はまだ 1 人も辿っていない
+    await runScan(TWO_ITEMS);
+    // Assert — 著者を items から取っていないと、ここが 0 になる
+    expect(itemsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('24 時間経ったら著者を再訪する', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    await runScan(TWO_ITEMS);
+    vi.clearAllMocks();
+    // Act — 25 時間後。過去記事は 1 回の訪問で 2 本ずつ遡る
+    vi.setSystemTime(new Date('2026-08-20T13:00:00+09:00'));
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(itemsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('429 で辿れなかった著者は訪問済みにしない', async () => {
+    // Arrange — 1 人目の著者一覧で枠切れ。2 人目には到達しない
+    await saveToken('dummy-token-value');
+    itemsMock.mockRejectedValueOnce(new RateLimitError(1787104432));
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert — 1 人も辿れていないので記録は空
+    expect(await getAuthorVisits()).toEqual({});
+  });
+
+  it('429 のあと、同じ著者をもう一度辿りに行く', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    itemsMock.mockRejectedValueOnce(new RateLimitError(1787104432));
+    await runScan(TWO_ITEMS);
+    vi.clearAllMocks();
+    // Act — 枠が戻った想定で再スキャン
+    await runScan(TWO_ITEMS);
+    // Assert — 2 人とも辿る。1 人でも記録していたらここが 1 になり、
+    // 枠切れは毎回同じ順序で起きるので末尾の著者を永久に取りこぼす
+    expect(itemsMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('ライトモードでは訪問記録を作らない', async () => {
+    // Arrange & Act — トークン未設定
+    await runScan(TWO_ITEMS);
+    // Assert — 辿っていないのに記録すると、トークン設定後に飛ばされる
+    expect(await getAuthorVisits()).toEqual({});
   });
 });
 

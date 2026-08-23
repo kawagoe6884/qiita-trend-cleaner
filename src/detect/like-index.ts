@@ -21,7 +21,11 @@ import type { AccountIndexEntry, IsoDateTime, LikeIndex, LikeRecord } from '../t
  *
  * PRD の法務上の判断（利用規約第 11 条 5 項 1 号との距離を取るため、
  * ローカル完結・外部送信なし・保持期間 7 日・共有配布なし）に由来する。
- * 判定に使う遡及窓（Settings.lookbackDays）より必ず長くすること。
+ *
+ * 判定に使う遡及窓（Settings.lookbackDays）と **同値でよい**。
+ * 避けるのは逆転（lookback > RETENTION）だけで、判定に入らないレコードを
+ * 保存し続けることになるため。改訂 6 以降はフルモードを主軸にするので、
+ * 既定は同値（7 日）に置く。
  */
 export const RETENTION_DAYS = 7;
 
@@ -126,7 +130,11 @@ export function purgeLikeIndex(
 
 /**
  * 判定に使う範囲へ絞った**新しい**インデックスを返す。保存はしない。
- * purgeLikeIndex より短い窓（既定 3 日 = トレンドセット 6 回分）になる。
+ *
+ * 既定は purgeLikeIndex と同じ 7 日。**基準は `itemPostedAt`（記事の投稿時刻）**
+ * であって、いいねが押された時刻ではない。フルモードが辿る過去記事は
+ * 定義上「過去」なので、窓を短くするとここで落ちる。ユーザーが対象を
+ * 絞りたいときだけ短くする値になっている。
  */
 export function withinLookback(index: LikeIndex, lookbackDays: number, now: Date): LikeIndex {
   const cutoffMs = now.getTime() - lookbackDays * MS_PER_DAY;
