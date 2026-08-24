@@ -39,8 +39,19 @@ export const SELECTORS = {
   cardMenuButton: '[aria-haspopup="dialog"][aria-label="ユーザーを管理"]',
   /** 開いたメニュー本体。aria-controls の id と突き合わせて特定する */
   cardMenu: '[role="menu"]',
-  /** メニューの項目。**どれを押すかはテキスト完全一致だけで決める**（MENU_TEXT 参照） */
+  /** メニューの項目。**どれを押すかはテキストだけで決める**（MENU_TEXT 参照） */
   menuItem: '[role="menuitem"]',
+  /**
+   * 項目の中で実際に押す要素。
+   *
+   * ⚠️ **`[role="menuitem"]` は器で、ハンドラは中の `<button>` にある**（2026-08-24 実測）。
+   * イベントは下へ伝播しないので、`<li>` を押しても何も起きない。実測の形:
+   * `<li role="menuitem"><button type="button"><span aria-hidden>icon</span>ラベル</button></li>`
+   *
+   * どの項目かは器のテキストで決め、押すのはその中身。**器の外には出ない**ので、
+   * 隣の項目（ブロック）を踏むことは起きない。
+   */
+  menuItemAction: 'button',
 } as const;
 
 /** Snackbar が表示する完了メッセージ。Phase 8 の完了検知に使う */

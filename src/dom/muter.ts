@@ -182,6 +182,22 @@ export function findMuteItem(menu: ParentNode): HTMLElement | null {
   return null;
 }
 
+/**
+ * 項目の中で実際に押す要素を返す。
+ *
+ * **`[role="menuitem"]` は器で、ハンドラは中の `<button>` にある**（2026-08-24 実測）。
+ * イベントは下へ伝播しないため、器を押しても何も起きない。**実機ではこれで
+ * 「押したのに何も起きない」（timeout）になっていた。**
+ *
+ * 中に button が無ければ器そのものを返す。器自体が押せる形に変わっても動き、
+ * どちらでもなければ何も起きない（フェイルセーフ）。
+ *
+ * **探索は器の中に閉じている**ので、隣の項目（ブロック）を踏むことは起きない。
+ */
+export function actionOf(item: HTMLElement): HTMLElement {
+  return item.querySelector<HTMLElement>(SELECTORS.menuItemAction) ?? item;
+}
+
 /** Snackbar に指定のメッセージが出るまで待つ。出れば true、時間切れなら false */
 export async function waitForSnackbar(
   expected: string,
@@ -220,7 +236,8 @@ export async function muteAuthor(
     // 一致しなければ何も押さない。既にミュート済みならここに来る
     if (item === null) return 'menu-unavailable';
 
-    item.click();
+    // **器ではなく中身を押す。**li を押しても何も起きない（actionOf の理由）
+    actionOf(item).click();
     const done = await waitForSnackbar(SNACKBAR_TEXT.muteCompleted, root, timeoutMs);
     return done ? 'muted' : 'timeout';
   } finally {

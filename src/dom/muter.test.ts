@@ -17,20 +17,27 @@ const ICON = {
 
 interface MenuItemSpec {
   key: string;
-  text: string;
+  /** アイコンのリガチャ。空文字ならアイコン無し */
+  icon: string;
+  label: string;
 }
 
 const ITEM = {
-  follow: { key: 'follow', text: `${ICON.follow}投稿ユーザーをフォロー` },
-  block: { key: 'block', text: `${ICON.block}${MENU_TEXT.block}` },
-  mute: { key: 'mute', text: `${ICON.mute}${MENU_TEXT.mute}` },
+  follow: { key: 'follow', icon: ICON.follow, label: '投稿ユーザーをフォロー' },
+  block: { key: 'block', icon: ICON.block, label: MENU_TEXT.block },
+  mute: { key: 'mute', icon: ICON.mute, label: MENU_TEXT.mute },
   /** アイコンが無い素のラベル。将来アイコンを外されても動くこと */
-  mutePlain: { key: 'mute-plain', text: MENU_TEXT.mute },
+  mutePlain: { key: 'mute-plain', icon: '', label: MENU_TEXT.mute },
   /** 既にミュート済みのときに出る側。**実装は知らないが、テストは知っていてよい** */
-  unmute: { key: 'unmute', text: `${ICON.unmute}投稿ユーザーのミュートを解除` },
+  unmute: { key: 'unmute', icon: ICON.unmute, label: '投稿ユーザーのミュートを解除' },
   /** 接尾辞が付いた形。**includes で選ぶ実装はここで解除を押す** */
-  muteSuffixed: { key: 'mute-suffixed', text: `${ICON.unmute}${MENU_TEXT.mute}を解除` },
+  muteSuffixed: { key: 'mute-suffixed', icon: ICON.unmute, label: `${MENU_TEXT.mute}を解除` },
 } as const satisfies Record<string, MenuItemSpec>;
+
+/** 実測の textContent。アイコンのリガチャがラベルの前に付く */
+function textOf(spec: MenuItemSpec): string {
+  return `${spec.icon}${spec.label}`;
+}
 
 /** 実測どおりの並び。**ブロックがミュートの直上**にある */
 const DEFAULT_ITEMS: MenuItemSpec[] = [ITEM.follow, ITEM.block, ITEM.mute];
@@ -72,6 +79,8 @@ interface CardOptions {
   eager?: boolean;
   /** ミュートを押しても Snackbar を出さない */
   noSnackbar?: boolean;
+  /** 項目に button を入れず、器そのものを押せる形にする（フォールバックの検査用） */
+  noActionButton?: boolean;
 }
 
 /**
@@ -94,6 +103,7 @@ function mountCard(n: number, options: CardOptions = {}): HTMLElement {
     menuDelayMs = 0,
     eager = false,
     noSnackbar = false,
+    noActionButton = false,
   } = options;
 
   const itemId = `0123456789abcdef${String(n).padStart(4, '0')}`;
@@ -122,8 +132,8 @@ function mountCard(n: number, options: CardOptions = {}): HTMLElement {
       const entry = document.createElement('li');
       entry.setAttribute('role', 'menuitem');
       entry.dataset.key = spec.key;
-      entry.textContent = spec.text;
-      entry.addEventListener('click', () => {
+
+      const onClick = (): void => {
         clicks.push(`${spec.key}-${String(n)}`);
         // Qiita は完了を Snackbar で知らせる。**遅らせるのが要点** —
         // 同期で出すと waitForDom の事前チェックで拾われ、待つ経路を通らない
@@ -132,7 +142,29 @@ function mountCard(n: number, options: CardOptions = {}): HTMLElement {
             showSnackbar();
           }, 0);
         }
-      });
+      };
+
+      if (noActionButton) {
+        // 器そのものが押せる形。actionOf のフォールバック経路
+        entry.textContent = textOf(spec);
+        entry.addEventListener('click', onClick);
+      } else {
+        // 実測の形: <li role="menuitem"><button type="button"><span aria-hidden>icon</span>ラベル</button></li>
+        // **リスナーは button に付ける。**器に付けると、器を押しても動く
+        // 実装が通ってしまい、実機の不具合を再現できない
+        const action = document.createElement('button');
+        action.type = 'button';
+        if (spec.icon !== '') {
+          const icon = document.createElement('span');
+          icon.setAttribute('aria-hidden', 'true');
+          icon.textContent = spec.icon;
+          action.append(icon);
+        }
+        action.append(spec.label);
+        action.addEventListener('click', onClick);
+        entry.append(action);
+      }
+
       menu.append(entry);
     }
     card.append(menu);
@@ -312,6 +344,47 @@ describe('muteAuthor とメニューの非同期描画', () => {
 });
 
 /**
+ * ★ **2026-08-24 の実機で見つかった 2 つめの不具合の番人。**
+ *
+ * `[role="menuitem"]` は器で、ハンドラは中の `<button>` にある。
+ * イベントは下へ伝播しないので、器を押しても何も起きない。
+ * 実機では「押したのに Snackbar が出ない」（timeout）になっていた。
+ */
+describe('muteAuthor が押す要素', () => {
+  it('器（li）ではなく中の button を押す', async () => {
+    // Arrange
+    const card = mountCard(1);
+    // Act
+    const outcome = await muteAuthor('example-author-1', document, TIMEOUT_MS);
+    // Assert — 押された要素が BUTTON であること
+    expect(outcome).toBe('muted');
+    const pressed = card.querySelector<HTMLElement>('[role="menuitem"] button');
+    expect(pressed?.tagName).toBe('BUTTON');
+    expect(itemClicks()).toEqual(['mute-1']);
+  });
+
+  it('器を押しても何も起きない（フィクスチャ自身の確認）', async () => {
+    // Arrange — メニューを開いておく
+    const card = mountCard(1);
+    card.querySelector<HTMLElement>(SELECTORS.cardMenuButton)?.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const item = card.querySelector<HTMLElement>('[role="menuitem"][data-key="mute"]');
+    // Act — 器を直接押す（実機で失敗していた実装と同じこと）
+    item?.click();
+    // Assert — ここが反応してしまうと、この不具合を再現できない
+    expect(itemClicks()).toEqual([]);
+  });
+
+  it('button が無ければ器そのものを押す', async () => {
+    // Arrange — 器自体が押せる形に変わっても動くこと
+    mountCard(1, { noActionButton: true });
+    // Act & Assert
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('muted');
+    expect(itemClicks()).toEqual(['mute-1']);
+  });
+});
+
+/**
  * Phase 7 の非表示と競合する。「妥当」を押すと非表示とミュートが同時に走り、
  * **順序が保証されない**。カードが display:none のまま操作すると、
  * 実機でしか出ない不具合の温床になる。
@@ -426,9 +499,9 @@ describe('findMuteItem', () => {
 
   it('アイコンのリガチャが前に付いていても選ぶ', () => {
     // Arrange — 実測の textContent
-    menuWith(ITEM.mute.text);
+    menuWith(textOf(ITEM.mute));
     // Act & Assert
-    expect(findMuteItem(document)?.textContent).toBe(ITEM.mute.text);
+    expect(findMuteItem(document)?.textContent).toBe(textOf(ITEM.mute));
   });
 
   it('前後の空白を無視する', () => {
@@ -437,12 +510,12 @@ describe('findMuteItem', () => {
   });
 
   it('後置きが付いた項目は選ばない', () => {
-    menuWith(ITEM.muteSuffixed.text);
+    menuWith(textOf(ITEM.muteSuffixed));
     expect(findMuteItem(document)).toBeNull();
   });
 
   it('ブロックの項目は選ばない', () => {
-    menuWith(ITEM.block.text);
+    menuWith(textOf(ITEM.block));
     expect(findMuteItem(document)).toBeNull();
   });
 

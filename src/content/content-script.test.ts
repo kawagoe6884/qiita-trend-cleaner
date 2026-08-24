@@ -54,9 +54,9 @@ function mountCardWithMenu(n: number, author = `example-author-${String(n)}`): v
   document.body.append(card);
 
   const entries = [
-    { key: 'follow', text: 'add_circle投稿ユーザーをフォロー' },
-    { key: 'OTHER', text: `block${MENU_TEXT.block}` },
-    { key: 'mute', text: `volume_off${MENU_TEXT.mute}` },
+    { key: 'follow', icon: 'add_circle', label: '投稿ユーザーをフォロー' },
+    { key: 'OTHER', icon: 'block', label: MENU_TEXT.block },
+    { key: 'mute', icon: 'volume_off', label: MENU_TEXT.mute },
   ];
 
   card.querySelector(SELECTORS.cardMenuButton)?.addEventListener('click', () => {
@@ -69,8 +69,16 @@ function mountCardWithMenu(n: number, author = `example-author-${String(n)}`): v
       for (const spec of entries) {
         const entry = document.createElement('li');
         entry.setAttribute('role', 'menuitem');
-        entry.textContent = spec.text;
-        entry.addEventListener('click', () => {
+        // 実測の形: <li role="menuitem"><button type="button"><span aria-hidden>icon</span>ラベル</button></li>
+        // **リスナーは button に付ける。**器に付けると、器を押しても動く実装が
+        // 通ってしまい、実機の不具合を再現できない
+        const action = document.createElement('button');
+        action.type = 'button';
+        const icon = document.createElement('span');
+        icon.setAttribute('aria-hidden', 'true');
+        icon.textContent = spec.icon;
+        action.append(icon, spec.label);
+        action.addEventListener('click', () => {
           sequence.push(`${spec.key}-${String(n)}`);
           // Qiita は完了を Snackbar で知らせる。**遅らせるのが要点** —
           // 同期で出すと待つ経路を通らず、直列化していない実装でも同じ順序になる
@@ -81,6 +89,7 @@ function mountCardWithMenu(n: number, author = `example-author-${String(n)}`): v
             );
           }, 0);
         });
+        entry.append(action);
         menu.append(entry);
       }
       card.append(menu);
