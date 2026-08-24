@@ -360,11 +360,30 @@ export async function requestMute(handle: AccountHandle, now: Date): Promise<Mut
 }
 
 /**
- * ミュートの結果の文言。**断定しない**（設計上の約束 6）。
+ * 記録 1 件の文言。**成功したことがあるかどうかで言い方を変える。**
  *
- * menu-unavailable は「既にミュート済み」と「Qiita の画面が変わった」の両方を
- * 含む。**見分けられないことを隠さずに書く** — 見分けようとすると解除の文言を
- * 実装に持ち込むことになり、それを押す経路ができる。
+ * 【なぜ outcome だけでは足りないのか】
+ * **ミュートすると Qiita がその著者の記事をトレンドから外す**（2026-08-24 実機）。
+ * そのあと同じ候補で「妥当」を押し直すと、カードが無いので `not-on-page` になる。
+ * outcome だけを見ると「次に出てきたときに押し直してください」と案内してしまうが、
+ * **ミュート済みの著者はもう出てこない。**起こり得ないことを促す文言だった。
+ *
+ * `menu-unavailable` も同じで、成功の記録があるなら「既にミュート済み」と
+ * 言い切ってよい（推測混じりの「〜か、画面構造が変わった可能性」にしない）。
+ */
+export function describeMuteRecord(record: MuteRecord): string {
+  if (record.mutedAt === undefined) return describeMuteOutcome(record.outcome);
+  if (record.outcome === 'not-on-page' || record.outcome === 'menu-unavailable') {
+    return 'ミュート済みです。ミュートした著者の記事はトレンドから外れるので、ここには出てきません。設定 > ミュート で確認・解除できます。';
+  }
+  return describeMuteOutcome(record.outcome);
+}
+
+/**
+ * 結果ごとの文言。**断定しない**（設計上の約束 6）。
+ *
+ * 成功の記録がある場合の言い換えは describeMuteRecord が行う。ここは
+ * 「その試行で何が起きたか」だけを言う。
  *
  * default を書かないこと。MuteOutcome に値を足したとき、TypeScript が漏れを教える。
  */

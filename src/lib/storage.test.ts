@@ -392,9 +392,14 @@ describe('getMuteLog / recordMuteOutcome', () => {
   it('記録して、書いた後の全体を返す', async () => {
     // Arrange & Act
     const log = await storage.recordMuteOutcome('example-author-a', 'muted', NOW);
-    // Assert — 呼び出し側が読み直さずに済む（saveVerdict と同じ形）
+    // Assert — 呼び出し側が読み直さずに済む（saveVerdict と同じ形）。
+    // 成功したときは mutedAt も立つ（そのあと not-on-page になっても消えない）
     expect(log).toEqual({
-      'example-author-a': { outcome: 'muted', at: '2026-08-24T12:00:00.000Z' },
+      'example-author-a': {
+        outcome: 'muted',
+        at: '2026-08-24T12:00:00.000Z',
+        mutedAt: '2026-08-24T12:00:00.000Z',
+      },
     });
     await expect(storage.getMuteLog()).resolves.toEqual(log);
   });
@@ -433,5 +438,51 @@ describe('getMuteLog / recordMuteOutcome', () => {
   it('配列が入っていても例外を投げない', async () => {
     await chrome.storage.local.set({ muteLog: [] });
     await expect(storage.getMuteLog()).resolves.toEqual({});
+  });
+});
+
+/**
+ * ミュートに成功した事実は、そのあと not-on-page になっても取り消されない。
+ * ミュートすると Qiita が記事をトレンドから外すので、押し直すと必ず
+ * not-on-page になる。上書きすると UI が誤って案内する。
+ */
+describe('recordMuteOutcome の mutedAt', () => {
+  const FIRST = new Date('2026-08-24T12:00:00.000Z');
+  const SECOND = new Date('2026-08-24T13:00:00.000Z');
+
+  it('成功したときに立つ', async () => {
+    const log = await storage.recordMuteOutcome('example-author-a', 'muted', FIRST);
+    expect(log['example-author-a']?.mutedAt).toBe('2026-08-24T12:00:00.000Z');
+  });
+
+  it('そのあと not-on-page になっても消えない', async () => {
+    // Arrange
+    await storage.recordMuteOutcome('example-author-a', 'muted', FIRST);
+    // Act — ミュート済みなのでカードがトレンドから消えている
+    const log = await storage.recordMuteOutcome('example-author-a', 'not-on-page', SECOND);
+    // Assert
+    expect(log['example-author-a']).toEqual({
+      outcome: 'not-on-page',
+      at: '2026-08-24T13:00:00.000Z',
+      mutedAt: '2026-08-24T12:00:00.000Z',
+    });
+  });
+
+  it('一度も成功していなければ立たない', async () => {
+    const log = await storage.recordMuteOutcome('example-author-a', 'no-trend-tab', FIRST);
+    expect(log['example-author-a']?.mutedAt).toBeUndefined();
+  });
+
+  it('成功し直したら更新する', async () => {
+    await storage.recordMuteOutcome('example-author-a', 'muted', FIRST);
+    const log = await storage.recordMuteOutcome('example-author-a', 'muted', SECOND);
+    expect(log['example-author-a']?.mutedAt).toBe('2026-08-24T13:00:00.000Z');
+  });
+
+  it('storage から読み直しても残る', async () => {
+    await storage.recordMuteOutcome('example-author-a', 'muted', FIRST);
+    await storage.recordMuteOutcome('example-author-a', 'not-on-page', SECOND);
+    const log = await storage.getMuteLog();
+    expect(log['example-author-a']?.mutedAt).toBe('2026-08-24T12:00:00.000Z');
   });
 });

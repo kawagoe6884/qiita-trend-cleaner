@@ -118,6 +118,18 @@ export function isMuteOutcome(value: unknown): value is MuteOutcome {
 export interface MuteRecord {
   outcome: MuteOutcome;
   at: IsoDateTime;
+  /**
+   * 最後にミュートに **成功** した時刻。一度立ったら消えない。
+   *
+   * 【なぜ outcome と別に持つのか】
+   * **ミュートすると Qiita がその著者の記事をトレンドから外す**（2026-08-24 実機）。
+   * そのあと同じ候補で「妥当」を押し直すと、カードが無いので `not-on-page` になる。
+   * outcome だけだと「まだミュートできていない」と読めてしまい、UI が
+   * 「次に出てきたときに押し直してください」と**起こり得ないこと**を案内する。
+   *
+   * 成功したという事実は取り消されないので、上書きせずに積む。
+   */
+  mutedAt?: IsoDateTime;
 }
 
 /** 著者ハンドル -> 最後にミュートを試みた結果。UI に出すためだけに持つ */

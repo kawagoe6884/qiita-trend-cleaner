@@ -185,7 +185,9 @@ export async function getMuteLog(): Promise<MuteLog> {
     const record = value as Partial<Record<keyof MuteRecord, unknown>>;
     const at = asNonEmptyString(record.at);
     if (at === null || !isMuteOutcome(record.outcome)) continue;
-    log[handle] = { outcome: record.outcome, at };
+    const mutedAt = asNonEmptyString(record.mutedAt);
+    log[handle] =
+      mutedAt === null ? { outcome: record.outcome, at } : { outcome: record.outcome, at, mutedAt };
   }
   return log;
 }
@@ -193,15 +195,23 @@ export async function getMuteLog(): Promise<MuteLog> {
 /**
  * 結果を 1 件記録し、**書いた後の全体を返す**（saveVerdict と同じ形）。
  * now を引数に取るのは、テストが時刻を固定できるようにするため。
+ *
+ * **mutedAt は消さない。**成功したという事実は、そのあと `not-on-page` に
+ * なっても取り消されない（ミュートすると Qiita が記事をトレンドから外すので、
+ * 押し直すと必ず `not-on-page` になる）。上書きすると UI が
+ * 「まだミュートできていない」と誤って案内する。
  */
 export async function recordMuteOutcome(
   handle: AccountHandle,
   outcome: MuteOutcome,
   now: Date,
 ): Promise<MuteLog> {
+  const at = now.toISOString();
+  const previous = await getMuteLog();
+  const mutedAt = outcome === 'muted' ? at : previous[handle]?.mutedAt;
   const muteLog: MuteLog = {
-    ...(await getMuteLog()),
-    [handle]: { outcome, at: now.toISOString() },
+    ...previous,
+    [handle]: mutedAt === undefined ? { outcome, at } : { outcome, at, mutedAt },
   };
   await chrome.storage.local.set({ muteLog });
   return muteLog;

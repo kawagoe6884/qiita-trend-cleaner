@@ -25,7 +25,7 @@ import {
   describeCall,
   describeEmpty,
   describeCoAuthors,
-  describeMuteOutcome,
+  describeMuteRecord,
   rateLimitNotice,
 } from './popup-state';
 import type { CandidateView, Precision } from './popup-state';
@@ -193,9 +193,7 @@ function candidateItem(view: CandidateView): HTMLLIElement {
  * （coAuthorLine と同じ扱い。空の <p> を置くと余白だけが残る）。
  */
 function muteStatusLine(view: CandidateView): HTMLParagraphElement[] {
-  return view.mute === null
-    ? []
-    : [paragraph('mute-status', describeMuteOutcome(view.mute.outcome))];
+  return view.mute === null ? [] : [paragraph('mute-status', describeMuteRecord(view.mute))];
 }
 
 /**

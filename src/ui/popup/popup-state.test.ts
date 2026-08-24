@@ -10,6 +10,7 @@ import {
   describeMode,
   describeCall,
   describeMuteOutcome,
+  describeMuteRecord,
   requestMute,
 } from './popup-state';
 import * as storage from '../../lib/storage';
@@ -527,5 +528,54 @@ describe('toViews のミュート結果', () => {
   it('記録が無ければ null（「まだ試していない」と「失敗した」を区別する）', () => {
     const [view] = toViews([candidate('a')], {});
     expect(view?.mute).toBeNull();
+  });
+});
+
+/**
+ * ★ 2026-08-24 の実機で見つかった文言の誤りの番人。
+ *
+ * ミュートすると Qiita がその著者の記事をトレンドから外す。そのあと同じ候補で
+ * 「妥当」を押し直すと not-on-page になるが、outcome だけを見て
+ * 「次に出てきたときに押し直してください」と案内していた。
+ * ミュート済みの著者はもう出てこないので、起こり得ないことを促していた。
+ */
+describe('describeMuteRecord', () => {
+  const AT = '2026-08-24T12:00:00.000Z';
+
+  it('成功の記録があれば、not-on-page でも「ミュート済み」と言う', () => {
+    // Arrange — ミュートしたあと押し直した状態
+    const record = { outcome: 'not-on-page' as const, at: AT, mutedAt: AT };
+    // Act
+    const text = describeMuteRecord(record);
+    // Assert
+    expect(text).toContain('ミュート済み');
+    expect(text).not.toContain('押し直して');
+  });
+
+  it('成功の記録があれば、menu-unavailable でも言い切る', () => {
+    // Arrange — 推測混じりの「〜か、画面構造が変わった可能性」にしない
+    const record = { outcome: 'menu-unavailable' as const, at: AT, mutedAt: AT };
+    // Act & Assert
+    expect(describeMuteRecord(record)).toContain('ミュート済み');
+    expect(describeMuteRecord(record)).not.toContain('画面構造');
+  });
+
+  it('成功の記録が無ければ、従来どおり押し直しを促す', () => {
+    // Arrange — 一度も成功していない
+    const record = { outcome: 'not-on-page' as const, at: AT };
+    // Act & Assert
+    expect(describeMuteRecord(record)).toContain('押し直して');
+  });
+
+  it('成功そのものは成功の文言のまま', () => {
+    const record = { outcome: 'muted' as const, at: AT, mutedAt: AT };
+    expect(describeMuteRecord(record)).toBe(describeMuteOutcome('muted'));
+  });
+
+  it('成功の記録があっても、届かなかったときは押し直しを促す', () => {
+    // Arrange — unreachable は再試行で直る類の失敗
+    const record = { outcome: 'unreachable' as const, at: AT, mutedAt: AT };
+    // Act & Assert
+    expect(describeMuteRecord(record)).toBe(describeMuteOutcome('unreachable'));
   });
 });
