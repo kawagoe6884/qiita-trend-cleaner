@@ -40,6 +40,18 @@ export const MUTE_INTERVAL_MS = 1000;
 export const SNACKBAR_TIMEOUT_MS = 5000;
 
 /**
+ * メニューが描画されるのを待つ上限。
+ *
+ * **React は状態更新を同期で描画しない。**2026-08-24 の実機で、ボタンを押した
+ * 直後の `[role="menu"]` は **0 件**、300ms 後に 1 件だった。押した直後に読む
+ * 実装では永久に見つからない。
+ *
+ * Snackbar より短くしてあるのは、メニューが出ないのは通信の遅延ではなく
+ * **画面構造の変化**であり、待っても状況が変わらないため。
+ */
+export const MENU_TIMEOUT_MS = 2000;
+
+/**
  * 著者のカードを 1 枚返す。**隠れているカードも対象。**
  *
  * 同じ著者の記事が 2 本トレンドに出ていても、ミュートは 1 回で足りるので
@@ -53,81 +65,38 @@ export function findAuthorCard(
 }
 
 /**
- * 三点メニューを開き、開いたメニュー要素を返す。
+ * 条件が満たされるまで DOM の変化を待つ。満たされれば値、時間切れなら null。
  *
- * **aria-controls はクリックしたあとに読む。**React は開いたときに初めて
- * 属性を設定することがある。
- *
- * **`#id` のセレクタを組み立てない。**React の生成 ID は `:r1:` のように
- * コロンを含み、CSS セレクタとしては不正で SyntaxError になる。
- * [role="menu"] を列挙して id を比較すれば、文字列のエスケープが要らず壊れようが無い。
- *
- * aria-controls が無ければ null。**カード内の [role="menu"] を代わりに探すような
- * 当て推量はしない** — 実測されているのは aria-controls 経由の 1 本だけ。
- */
-function openMenu(card: HTMLElement, root: ParentNode): HTMLElement | null {
-  const button = card.querySelector<HTMLElement>(SELECTORS.cardMenuButton);
-  if (button === null) return null;
-
-  button.click();
-
-  const menuId = button.getAttribute('aria-controls');
-  if (menuId === null || menuId === '') return null;
-  for (const menu of root.querySelectorAll<HTMLElement>(SELECTORS.cardMenu)) {
-    if (menu.id === menuId) return menu;
-  }
-  return null;
-}
-
-/**
- * 「投稿ユーザーをミュート」に **完全一致** する項目だけを返す。
- * 一致しなければ null。**ここが誤爆を止める唯一の砦。**
- *
- * includes や startsWith にしないこと。ミュート済みのときに出る解除側の文言も
- * 「ミュート」を含むため、部分一致にすると解除を押してしまう。
- */
-export function findMuteItem(menu: ParentNode): HTMLElement | null {
-  for (const item of menu.querySelectorAll<HTMLElement>(SELECTORS.menuItem)) {
-    if (item.textContent?.trim() === MENU_TEXT.mute) return item;
-  }
-  return null;
-}
-
-/**
- * Snackbar に指定のメッセージが出るまで待つ。出れば true、時間切れなら false。
- *
- * **固定 sleep を使わない。**1 件ごとに成功を確認してから次へ進めるので、
- * 連続実行が堅牢になる。
+ * **固定 sleep を使わない。**メニューの描画も Snackbar の完了通知も、
+ * 出るまで待って次へ進む。
  *
  * 観測対象は常に document.documentElement — Snackbar はカードの外
  * （body 直下）にマウントされる。読む側は root を尊重する（テストのため）。
  */
-export function waitForSnackbar(
-  expected: string,
-  root: ParentNode = document,
-  timeoutMs: number = SNACKBAR_TIMEOUT_MS,
-): Promise<boolean> {
+function waitForDom<T>(read: () => T | null, timeoutMs: number): Promise<T | null> {
   return new Promise((resolve) => {
-    // クリックが同期的に Snackbar を出すこともありうる。先に見る
-    if (readSnackbarMessage(root) === expected) {
-      resolve(true);
+    // 同期で現れることもありうる。先に見る
+    const immediate = read();
+    if (immediate !== null) {
+      resolve(immediate);
       return;
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null;
     let observer: MutationObserver | null = null;
 
-    const finish = (found: boolean): void => {
+    const finish = (value: T | null): void => {
       observer?.disconnect();
       if (timer !== null) clearTimeout(timer);
-      resolve(found);
+      resolve(value);
     };
 
     observer = new MutationObserver(() => {
-      if (readSnackbarMessage(root) === expected) finish(true);
+      const value = read();
+      if (value !== null) finish(value);
     });
     timer = setTimeout(() => {
-      finish(false);
+      finish(null);
     }, timeoutMs);
     observer.observe(document.documentElement, {
       childList: true,
@@ -135,6 +104,95 @@ export function waitForSnackbar(
       characterData: true,
     });
   });
+}
+
+/**
+ * aria-controls が指すメニューを探す。
+ *
+ * **`#id` のセレクタを組み立てない。**React の生成 ID は `:Relbk39a:` のように
+ * コロンを含み、CSS セレクタとしては不正で SyntaxError になる（2026-08-24 実測）。
+ * [role="menu"] を列挙して id を比較すれば、文字列のエスケープが要らず壊れようが無い。
+ */
+function findMenuById(menuId: string, root: ParentNode): HTMLElement | null {
+  for (const menu of root.querySelectorAll<HTMLElement>(SELECTORS.cardMenu)) {
+    if (menu.id === menuId) return menu;
+  }
+  return null;
+}
+
+/**
+ * 三点メニューを開き、**描画されるのを待って**メニュー要素を返す。
+ *
+ * 【押した直後に読んではいけない】
+ * React は状態更新を同期で描画しない。2026-08-24 の実機では、click 直後の
+ * `[role="menu"]` が **0 件**、300ms 後に 1 件だった。**同期で読む実装は
+ * 実機で必ず失敗する。**テストのフィクスチャがメニューを最初から DOM に
+ * 置いていたため、この穴は実機に出るまで一度も検査されていなかった。
+ *
+ * aria-controls はクリックの前後どちらでも取れる（実測）が、**あとで読む**。
+ * 開いたときに初めて設定する実装に変わっても動くため。
+ *
+ * aria-controls が無ければ null。**カード内の [role="menu"] を代わりに探すような
+ * 当て推量はしない** — 実測されているのは aria-controls 経由の 1 本だけ。
+ */
+async function openMenu(
+  card: HTMLElement,
+  root: ParentNode,
+  timeoutMs: number,
+): Promise<HTMLElement | null> {
+  const button = card.querySelector<HTMLElement>(SELECTORS.cardMenuButton);
+  if (button === null) return null;
+
+  button.click();
+
+  const menuId = button.getAttribute('aria-controls');
+  if (menuId === null || menuId === '') return null;
+  return waitForDom(() => findMenuById(menuId, root), timeoutMs);
+}
+
+/**
+ * ラベルが「投稿ユーザーをミュート」**で終わる**か。
+ *
+ * 【なぜ完全一致ではないのか】
+ * 実測の textContent は **`volume_off投稿ユーザーをミュート`** だった
+ * （2026-08-24）。Material Symbols のアイコンはリガチャ、つまり**テキスト**として
+ * 項目の先頭に入るため、完全一致は成立しない。
+ *
+ * 【なぜ includes ではないのか】
+ * **接尾辞が付いたら意味が変わる。**「〜を解除」が付けば逆の操作になり、
+ * includes だと解除を押してしまう。アイコンは必ず前に付くので、
+ * **前は許して後ろは許さない**という規則がちょうど手口に合う。
+ *
+ * これが誤爆を止める砦。ブロックは「投稿ユーザーをブロック」なので当然一致しない。
+ */
+function isMuteLabel(text: string | null): boolean {
+  return (text ?? '').trim().endsWith(MENU_TEXT.mute);
+}
+
+/**
+ * ミュートの項目だけを返す。一致しなければ null。
+ *
+ * 既にミュート済みなら文言が解除側に変わって一致せず、**何も押さない。**
+ * 解除の文言は実装に持ち込まない（持ち込むとそれを押す経路ができる）。
+ */
+export function findMuteItem(menu: ParentNode): HTMLElement | null {
+  for (const item of menu.querySelectorAll<HTMLElement>(SELECTORS.menuItem)) {
+    if (isMuteLabel(item.textContent)) return item;
+  }
+  return null;
+}
+
+/** Snackbar に指定のメッセージが出るまで待つ。出れば true、時間切れなら false */
+export async function waitForSnackbar(
+  expected: string,
+  root: ParentNode = document,
+  timeoutMs: number = SNACKBAR_TIMEOUT_MS,
+): Promise<boolean> {
+  const found = await waitForDom(
+    () => (readSnackbarMessage(root) === expected ? true : null),
+    timeoutMs,
+  );
+  return found === true;
 }
 
 /**
@@ -153,7 +211,9 @@ export async function muteAuthor(
 
   const restored = revealCard(card);
   try {
-    const menu = openMenu(card, root);
+    // メニューは Snackbar より短く打ち切る。出ないのは通信ではなく構造の変化で、
+    // 待っても状況が変わらない。テストが短い上限を渡したときはそちらに従う
+    const menu = await openMenu(card, root, Math.min(timeoutMs, MENU_TIMEOUT_MS));
     if (menu === null) return 'menu-unavailable';
 
     const item = findMuteItem(menu);

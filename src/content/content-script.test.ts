@@ -24,51 +24,68 @@ function visibleCards(): number {
   ).length;
 }
 
+/** 押した順序。`open-1` / `mute-1` の形で積む。**直列化の検査に使う** */
+const sequence: string[] = [];
+
 /**
- * 三点メニュー付きのカード。実測どおり「フォロー / **ブロック** / ミュート」の順。
- * ブロックがミュートの直上にあることを、ここでも再現しておく。
+ * 三点メニュー付きのカードを 1 枚置く。**メニューは最初 DOM に無い。**
+ *
+ * React は状態更新を同期で描画しないため、ボタンを押した「あと」に現れる
+ * （2026-08-24 実機: click 直後 0 件 → 300ms 後 1 件）。項目のテキストには
+ * Material Symbols のリガチャが**前に**付く（`volume_off投稿ユーザーをミュート`）。
+ * どちらもここで再現しないと、実機で必ず失敗する実装が通ってしまう。
+ *
+ * 実測どおり「フォロー / **ブロック** / ミュート」の順にする。
  */
-function cardWithMenu(n: number, author = `example-author-${String(n)}`): string {
+function mountCardWithMenu(n: number, author = `example-author-${String(n)}`): void {
   const itemId = `0123456789abcdef${String(n).padStart(4, '0')}`;
   const url = `https://qiita.com/${author}/items/${itemId}`;
-  const items = ['投稿ユーザーをフォロー', MENU_TEXT.block, MENU_TEXT.mute]
-    .map((text) => `<li role="menuitem" data-label="${text}">${text}</li>`)
-    .join('');
-  return [
-    `<div class="card" data-n="${String(n)}">`,
+  const menuId = `:R${String(n)}elbk:`;
+
+  const card = document.createElement('article');
+  card.className = 'card';
+  card.dataset.n = String(n);
+  card.innerHTML = [
     `<a href="${url}"></a>`,
     '<time datetime="2026-08-18T10:00:00Z">2026年08月18日</time>',
     `<a href="${url}">タイトル ${String(n)}</a>`,
-    `<button aria-haspopup="dialog" aria-label="ユーザーを管理" aria-controls=":r${String(n)}:"></button>`,
-    `<ul role="menu" id=":r${String(n)}:">${items}</ul>`,
-    '</div>',
+    `<button aria-haspopup="dialog" aria-label="ユーザーを管理" aria-controls="${menuId}"></button>`,
   ].join('');
-}
+  document.body.append(card);
 
-/** 押した順序を記録する。**直列化の検査に使う**（時間そのものは検査しない） */
-function trackSequence(): string[] {
-  const sequence: string[] = [];
-  for (const card of document.querySelectorAll<HTMLElement>('.card')) {
-    const n = card.dataset.n ?? '?';
-    card.querySelector(SELECTORS.cardMenuButton)?.addEventListener('click', () => {
-      sequence.push(`open-${n}`);
-    });
-    for (const item of card.querySelectorAll<HTMLElement>(SELECTORS.menuItem)) {
-      item.addEventListener('click', () => {
-        sequence.push(`${item.dataset.label === MENU_TEXT.mute ? 'mute' : 'OTHER'}-${n}`);
-        // Qiita は完了を Snackbar で知らせる。**遅らせるのが要点** —
-        // 同期で出すと waitForSnackbar が即座に解決し、直列化していない実装でも
-        // 同じ順序になってしまう（muteAuthor は click まで全部同期）
-        setTimeout(() => {
-          document.body.insertAdjacentHTML(
-            'beforeend',
-            `<div id="Snackbar-react-component-abc"><div aria-live="polite" aria-atomic="true"><p>${SNACKBAR_TEXT.muteCompleted}</p></div></div>`,
-          );
-        }, 0);
-      });
-    }
-  }
-  return sequence;
+  const entries = [
+    { key: 'follow', text: 'add_circle投稿ユーザーをフォロー' },
+    { key: 'OTHER', text: `block${MENU_TEXT.block}` },
+    { key: 'mute', text: `volume_off${MENU_TEXT.mute}` },
+  ];
+
+  card.querySelector(SELECTORS.cardMenuButton)?.addEventListener('click', () => {
+    sequence.push(`open-${String(n)}`);
+    if (card.querySelector(SELECTORS.cardMenu) !== null) return;
+    setTimeout(() => {
+      const menu = document.createElement('ul');
+      menu.setAttribute('role', 'menu');
+      menu.id = menuId;
+      for (const spec of entries) {
+        const entry = document.createElement('li');
+        entry.setAttribute('role', 'menuitem');
+        entry.textContent = spec.text;
+        entry.addEventListener('click', () => {
+          sequence.push(`${spec.key}-${String(n)}`);
+          // Qiita は完了を Snackbar で知らせる。**遅らせるのが要点** —
+          // 同期で出すと待つ経路を通らず、直列化していない実装でも同じ順序になる
+          setTimeout(() => {
+            document.body.insertAdjacentHTML(
+              'beforeend',
+              `<div id="Snackbar-react-component-abc"><div aria-live="polite" aria-atomic="true"><p>${SNACKBAR_TEXT.muteCompleted}</p></div></div>`,
+            );
+          }, 0);
+        });
+        menu.append(entry);
+      }
+      card.append(menu);
+    }, 0);
+  });
 }
 
 /** onMessage に登録されたリスナーを取り出す */
@@ -116,6 +133,7 @@ async function bootContentScript(pathname = '/trend'): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.innerHTML = '';
+  sequence.length = 0;
   // @types/chrome の sendMessage は 5 つのオーバーロードを持ち、vi.mocked が
   // void を返すシグネチャを拾う。実行時には正しい応答が返るので、ここだけ型を黙らせる
   sendMessageMock().mockResolvedValue({ type: 'PONG', version: '0.0.0-test' } as never);
@@ -350,9 +368,8 @@ describe('content script の背景の目印', () => {
 describe('content script のミュート受信', () => {
   it('MUTE_AUTHOR を受けるとミュートの項目だけを押す', async () => {
     // Arrange
-    document.body.innerHTML = cardWithMenu(1);
+    mountCardWithMenu(1);
     await bootContentScript();
-    const sequence = trackSequence();
     // Act
     const { sendResponse, returned } = requestMute('example-author-1');
     // Assert — 非同期で応答するので true を返している必要がある
@@ -370,9 +387,8 @@ describe('content script のミュート受信', () => {
 
   it('トレンド以外のページでは操作せず not-on-page を返す', async () => {
     // Arrange — プロフィールページにも記事一覧と <time> が揃っている
-    document.body.innerHTML = cardWithMenu(1);
+    mountCardWithMenu(1);
     await bootContentScript('/example-author-1');
-    const sequence = trackSequence();
     // Act
     const { sendResponse, returned } = requestMute('example-author-1');
     // Assert — 同期で応答するのでチャネルは開かない
@@ -387,7 +403,7 @@ describe('content script のミュート受信', () => {
 
   it('関係のないメッセージには応答せず、チャネルも開かない', async () => {
     // Arrange
-    document.body.innerHTML = cardWithMenu(1);
+    mountCardWithMenu(1);
     await bootContentScript();
     const sendResponse = vi.fn();
     // Act — service worker 宛ての PING が届くことがある
@@ -398,7 +414,7 @@ describe('content script のミュート受信', () => {
   });
 
   it('handle が無いメッセージには応答しない', async () => {
-    document.body.innerHTML = cardWithMenu(1);
+    mountCardWithMenu(1);
     await bootContentScript();
     const sendResponse = vi.fn();
     const returned = messageListener()({ type: 'MUTE_AUTHOR' }, {}, sendResponse);
@@ -408,9 +424,9 @@ describe('content script のミュート受信', () => {
 
   it('2 件続けて依頼しても重ならない', async () => {
     // Arrange — 別々の著者のカードを 2 枚
-    document.body.innerHTML = cardWithMenu(1) + cardWithMenu(2);
+    mountCardWithMenu(1);
+    mountCardWithMenu(2);
     await bootContentScript();
-    const sequence = trackSequence();
     // Act — 続けざまに 2 件
     const first = requestMute('example-author-1');
     const second = requestMute('example-author-2');
@@ -439,7 +455,7 @@ describe('content script のミュート受信', () => {
 
   it('カードが無ければ not-on-page を返し、エラーにしない', async () => {
     // Arrange — トレンドが入れ替わったあと
-    document.body.innerHTML = cardWithMenu(2);
+    mountCardWithMenu(2);
     await bootContentScript();
     // Act
     const { sendResponse } = requestMute('example-author-1');

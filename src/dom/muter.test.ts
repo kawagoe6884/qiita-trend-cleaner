@@ -3,95 +3,166 @@ import { muteAuthor, findAuthorCard, findMuteItem, waitForSnackbar } from './mut
 import { concealCard } from './hider';
 import { SELECTORS, MENU_TEXT, SNACKBAR_TEXT } from './selectors';
 
+/**
+ * Material Symbols のリガチャ。**アイコンはテキストとして項目の先頭に入る。**
+ * 2026-08-24 の実機で textContent が `volume_off投稿ユーザーをミュート` だった。
+ * ここを再現しないと、完全一致で書いた実装が実機で必ず失敗するのに気づけない。
+ */
+const ICON = {
+  follow: 'add_circle',
+  block: 'block',
+  mute: 'volume_off',
+  unmute: 'volume_up',
+} as const;
+
+interface MenuItemSpec {
+  key: string;
+  text: string;
+}
+
+const ITEM = {
+  follow: { key: 'follow', text: `${ICON.follow}投稿ユーザーをフォロー` },
+  block: { key: 'block', text: `${ICON.block}${MENU_TEXT.block}` },
+  mute: { key: 'mute', text: `${ICON.mute}${MENU_TEXT.mute}` },
+  /** アイコンが無い素のラベル。将来アイコンを外されても動くこと */
+  mutePlain: { key: 'mute-plain', text: MENU_TEXT.mute },
+  /** 既にミュート済みのときに出る側。**実装は知らないが、テストは知っていてよい** */
+  unmute: { key: 'unmute', text: `${ICON.unmute}投稿ユーザーのミュートを解除` },
+  /** 接尾辞が付いた形。**includes で選ぶ実装はここで解除を押す** */
+  muteSuffixed: { key: 'mute-suffixed', text: `${ICON.unmute}${MENU_TEXT.mute}を解除` },
+} as const satisfies Record<string, MenuItemSpec>;
+
 /** 実測どおりの並び。**ブロックがミュートの直上**にある */
-const DEFAULT_ITEMS = ['投稿ユーザーをフォロー', MENU_TEXT.block, MENU_TEXT.mute];
+const DEFAULT_ITEMS: MenuItemSpec[] = [ITEM.follow, ITEM.block, ITEM.mute];
 
-/** 既にミュート済みのときに出る側の文言。**実装は知らないが、テストは知っていてよい** */
-const UNMUTE_TEXT = '投稿ユーザーのミュートを解除';
+/** ミュートを押したときに Snackbar を出す項目 */
+const SNACKBAR_KEYS = new Set(['mute', 'mute-plain']);
 
-/** 待たされたくないテスト用の短い上限（ミリ秒） */
-const FAST_TIMEOUT_MS = 10;
+/** メニューや Snackbar が現れるのを待つぶん */
+const TIMEOUT_MS = 200;
+/** 現れないことを確かめるぶん */
+const GIVE_UP_MS = 20;
+
+/** 押された順序。`open-1` / `mute-1` の形で積む */
+const clicks: string[] = [];
+
+/** メニュー項目のクリックだけ（メニューを開いた操作は除く） */
+function itemClicks(): string[] {
+  return clicks.filter((entry) => !entry.startsWith('open-'));
+}
+
+function showSnackbar(text: string = SNACKBAR_TEXT.muteCompleted): void {
+  document.body.insertAdjacentHTML(
+    'beforeend',
+    `<div id="Snackbar-react-component-abc"><div aria-live="polite" aria-atomic="true"><p>${text}</p></div></div>`,
+  );
+}
+
+interface CardOptions {
+  author?: string;
+  items?: MenuItemSpec[];
+  menuId?: string;
+  /** aria-controls に入れる値。null なら属性ごと付けない */
+  controls?: string | null;
+  /** 三点メニューのボタンを付けない */
+  noButton?: boolean;
+  /** メニューが現れるまでの遅延（ミリ秒）。null なら押しても現れない */
+  menuDelayMs?: number | null;
+  /** 最初からメニューを DOM に置く（当て推量をしないことの検査用） */
+  eager?: boolean;
+  /** ミュートを押しても Snackbar を出さない */
+  noSnackbar?: boolean;
+}
 
 /**
- * メニュー付きのカード 1 枚分。実測どおり **記事リンクを 2 本** 持たせ、
- * メニューは既定で「フォロー / ブロック / ミュート」の順にする。
+ * トレンドカード 1 枚を実測どおりに組み立てる。
  *
- * menuId に既定でコロンを入れるのは、React の生成 ID（`:r1:` 形式）を模すため。
- * `#id` のセレクタを組み立てる実装だと SyntaxError で落ちる。
+ * **メニューは最初 DOM に無い。**React は状態更新を同期で描画しないため、
+ * ボタンを押した「あと」に現れる（実機: click 直後 0 件 → 300ms 後 1 件）。
+ * ここを再現しないと、同期で読む実装が通ってしまう。
  *
- * フィクスチャは合成値のみ。実アカウント名・実 item_id は使わない。
+ * 記事リンクは実測どおり 2 本。フィクスチャは合成値のみで、
+ * 実アカウント名・実 item_id は使わない。
  */
-function cardWithMenu(
-  n: number,
-  items: string[] = DEFAULT_ITEMS,
-  menuId = `:r${String(n)}:`,
-  author = `example-author-${String(n)}`,
-): string {
+function mountCard(n: number, options: CardOptions = {}): HTMLElement {
+  const {
+    author = `example-author-${String(n)}`,
+    items = DEFAULT_ITEMS,
+    menuId = `:R${String(n)}elbk:`,
+    controls = menuId,
+    noButton = false,
+    menuDelayMs = 0,
+    eager = false,
+    noSnackbar = false,
+  } = options;
+
   const itemId = `0123456789abcdef${String(n).padStart(4, '0')}`;
   const url = `https://qiita.com/${author}/items/${itemId}`;
-  const menuItems = items
-    .map((text) => `<li role="menuitem" data-label="${text}">${text}</li>`)
-    .join('');
-  return [
-    '<div class="card">',
+
+  const card = document.createElement('article');
+  card.className = 'card';
+  card.dataset.n = String(n);
+  const controlsAttr = controls === null ? '' : ` aria-controls="${controls}"`;
+  card.innerHTML = [
     `<a href="${url}"></a>`,
     '<time datetime="2026-08-18T10:00:00Z">2026年08月18日</time>',
     `<a href="${url}">タイトル ${String(n)}</a>`,
-    `<button aria-haspopup="dialog" aria-label="ユーザーを管理" aria-controls="${menuId}"></button>`,
-    `<ul role="menu" id="${menuId}">${menuItems}</ul>`,
-    '</div>',
+    noButton
+      ? ''
+      : `<button aria-haspopup="dialog" aria-label="ユーザーを管理"${controlsAttr}></button>`,
   ].join('');
-}
+  document.body.append(card);
 
-/** メニュー項目ごとのクリック回数を記録する。**誤爆の検査に使う** */
-function trackClicks(): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const item of document.querySelectorAll<HTMLElement>(SELECTORS.menuItem)) {
-    const label = item.dataset.label ?? '';
-    counts.set(label, 0);
-    item.addEventListener('click', () => {
-      counts.set(label, (counts.get(label) ?? 0) + 1);
-    });
-  }
-  return counts;
-}
+  const buildMenu = (): void => {
+    if (card.querySelector(SELECTORS.cardMenu) !== null) return;
+    const menu = document.createElement('ul');
+    menu.setAttribute('role', 'menu');
+    menu.id = menuId;
+    for (const spec of items) {
+      const entry = document.createElement('li');
+      entry.setAttribute('role', 'menuitem');
+      entry.dataset.key = spec.key;
+      entry.textContent = spec.text;
+      entry.addEventListener('click', () => {
+        clicks.push(`${spec.key}-${String(n)}`);
+        // Qiita は完了を Snackbar で知らせる。**遅らせるのが要点** —
+        // 同期で出すと waitForDom の事前チェックで拾われ、待つ経路を通らない
+        if (SNACKBAR_KEYS.has(spec.key) && !noSnackbar) {
+          setTimeout(() => {
+            showSnackbar();
+          }, 0);
+        }
+      });
+      menu.append(entry);
+    }
+    card.append(menu);
+  };
 
-/** クリックされた項目のうち回数が 1 以上のものだけ */
-function clicked(counts: Map<string, number>): string[] {
-  return [...counts.entries()].filter(([, n]) => n > 0).map(([label]) => label);
-}
+  if (eager) buildMenu();
 
-/** ミュート項目を押したら Snackbar が出る、という Qiita 側の挙動を再現する */
-function snackbarOnMuteClick(delayed = false): void {
-  const item = findMuteItem(document);
-  item?.addEventListener('click', () => {
-    const insert = (): void => {
-      document.body.insertAdjacentHTML(
-        'beforeend',
-        `<div id="Snackbar-react-component-abc"><div aria-live="polite" aria-atomic="true"><p>${SNACKBAR_TEXT.muteCompleted}</p></div></div>`,
-      );
-    };
-    // 遅らせると MutationObserver の経路を通る。同期だと事前チェックで拾われる
-    if (delayed) setTimeout(insert, 0);
-    else insert();
+  card.querySelector(SELECTORS.cardMenuButton)?.addEventListener('click', () => {
+    clicks.push(`open-${String(n)}`);
+    if (menuDelayMs === null) return;
+    setTimeout(buildMenu, menuDelayMs);
   });
+
+  return card;
 }
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  clicks.length = 0;
 });
 
 describe('muteAuthor', () => {
   it('「投稿ユーザーをミュート」だけをクリックする', async () => {
-    // Arrange
-    document.body.innerHTML = cardWithMenu(1);
-    const counts = trackClicks();
-    snackbarOnMuteClick();
+    // Arrange — 項目のテキストにはアイコンのリガチャが前に付く
+    mountCard(1);
     // Act
-    const outcome = await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    const outcome = await muteAuthor('example-author-1', document, TIMEOUT_MS);
     // Assert
     expect(outcome).toBe('muted');
-    expect(clicked(counts)).toEqual([MENU_TEXT.mute]);
+    expect(itemClicks()).toEqual(['mute-1']);
   });
 
   /**
@@ -100,136 +171,143 @@ describe('muteAuthor', () => {
    */
   it('ブロックの項目を絶対にクリックしない', async () => {
     // Arrange
-    document.body.innerHTML = cardWithMenu(1);
-    const counts = trackClicks();
-    snackbarOnMuteClick();
+    mountCard(1);
     // Act
-    await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    await muteAuthor('example-author-1', document, TIMEOUT_MS);
     // Assert
-    expect(counts.get(MENU_TEXT.block)).toBe(0);
+    expect(itemClicks()).not.toContain('block-1');
   });
 
   it('項目の順序が違ってもミュートを選ぶ', async () => {
     // Arrange — ミュートを先頭、ブロックを末尾にする。
     // インデックスで選ぶ実装（items[2] 等）はここで落ちる
-    document.body.innerHTML = cardWithMenu(1, [
-      MENU_TEXT.mute,
-      '投稿ユーザーをフォロー',
-      MENU_TEXT.block,
-    ]);
-    const counts = trackClicks();
-    snackbarOnMuteClick();
+    mountCard(1, { items: [ITEM.mute, ITEM.follow, ITEM.block] });
     // Act
-    const outcome = await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    const outcome = await muteAuthor('example-author-1', document, TIMEOUT_MS);
     // Assert
     expect(outcome).toBe('muted');
-    expect(clicked(counts)).toEqual([MENU_TEXT.mute]);
+    expect(itemClicks()).toEqual(['mute-1']);
+  });
+
+  it('アイコンが無い素のラベルでも選ぶ', async () => {
+    // Arrange — 将来アイコンを外されても動くこと
+    mountCard(1, { items: [ITEM.follow, ITEM.block, ITEM.mutePlain] });
+    // Act & Assert
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('muted');
+    expect(itemClicks()).toEqual(['mute-plain-1']);
   });
 
   it('「ミュートを解除」しか無ければ何もクリックしない', async () => {
-    // Arrange — 既にミュート済みの状態。**解除の文言も「ミュート」を含む**ので、
-    // includes で選ぶ実装はここで解除を押してしまう
-    document.body.innerHTML = cardWithMenu(1, [
-      '投稿ユーザーをフォロー',
-      MENU_TEXT.block,
-      UNMUTE_TEXT,
-    ]);
-    const counts = trackClicks();
+    // Arrange — 既にミュート済みの状態
+    mountCard(1, { items: [ITEM.follow, ITEM.block, ITEM.unmute] });
     // Act
-    const outcome = await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    const outcome = await muteAuthor('example-author-1', document, TIMEOUT_MS);
     // Assert
     expect(outcome).toBe('menu-unavailable');
-    expect(clicked(counts)).toEqual([]);
+    expect(itemClicks()).toEqual([]);
   });
 
-  it('ミュートの文言を「含むだけ」の項目は押さない', async () => {
-    // Arrange — 完全一致であることを直接固定する。
-    //
-    // 上の「ミュートを解除」テストだけでは足りない。**解除の実際の文言は
-    // 意図的に測っていない**（知ると押す経路ができる）ため、あのフィクスチャは
-    // 推測でしかなく、たまたま MENU_TEXT.mute を部分文字列として含まない。
-    // ここは推測に依存せず、「含むだけの項目は押さない」という性質を固定する
-    document.body.innerHTML = cardWithMenu(1, [MENU_TEXT.block, `${MENU_TEXT.mute}を解除`]);
-    const counts = trackClicks();
+  it('ミュートの文言に後置きがあれば押さない', async () => {
+    // Arrange — アイコンは **前** に付く。後ろに付くものは意味が変わっている。
+    // includes で選ぶ実装はここで解除を押してしまう
+    mountCard(1, { items: [ITEM.block, ITEM.muteSuffixed] });
     // Act
-    const outcome = await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    const outcome = await muteAuthor('example-author-1', document, TIMEOUT_MS);
     // Assert
     expect(outcome).toBe('menu-unavailable');
-    expect(clicked(counts)).toEqual([]);
+    expect(itemClicks()).toEqual([]);
   });
 
   it('カードが無ければ not-on-page を返す', async () => {
-    document.body.innerHTML = '';
-    await expect(muteAuthor('example-author-1', document, FAST_TIMEOUT_MS)).resolves.toBe(
-      'not-on-page',
-    );
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('not-on-page');
   });
 
   it('別の著者のカードしか無ければ not-on-page を返す', async () => {
-    document.body.innerHTML = cardWithMenu(2);
-    await expect(muteAuthor('example-author-1', document, FAST_TIMEOUT_MS)).resolves.toBe(
-      'not-on-page',
-    );
+    mountCard(2);
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('not-on-page');
   });
 
   it('三点メニューのボタンが無ければ menu-unavailable を返す', async () => {
-    // Arrange — ボタンだけ抜いたカード
-    document.body.innerHTML = cardWithMenu(1).replace(/<button[^>]*><\/button>/, '');
-    // Act & Assert
-    await expect(muteAuthor('example-author-1', document, FAST_TIMEOUT_MS)).resolves.toBe(
+    mountCard(1, { noButton: true });
+    await expect(muteAuthor('example-author-1', document, GIVE_UP_MS)).resolves.toBe(
       'menu-unavailable',
     );
   });
 
   it('aria-controls が無ければ、カード内にメニューがあっても掴まない', async () => {
     // Arrange — 当て推量で [role="menu"] を探す実装だと、ここでミュートを押してしまう
-    document.body.innerHTML = cardWithMenu(1).replace(/ aria-controls="[^"]*"/, '');
-    const counts = trackClicks();
+    mountCard(1, { controls: null, eager: true });
     // Act
-    const outcome = await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    const outcome = await muteAuthor('example-author-1', document, GIVE_UP_MS);
     // Assert
     expect(outcome).toBe('menu-unavailable');
-    expect(clicked(counts)).toEqual([]);
+    expect(itemClicks()).toEqual([]);
   });
 
   it('aria-controls の id にコロンが含まれていても辿れる', async () => {
-    // Arrange — React の useId は `:r1:` 形式。`#${id}` は SyntaxError になる
-    document.body.innerHTML = cardWithMenu(1, DEFAULT_ITEMS, ':r42:');
-    snackbarOnMuteClick();
+    // Arrange — React の生成 ID は `:Relbk39a:` 形式。`#${id}` は SyntaxError になる
+    mountCard(1, { menuId: ':Relbk39a:' });
     // Act & Assert
-    await expect(muteAuthor('example-author-1', document, FAST_TIMEOUT_MS)).resolves.toBe('muted');
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('muted');
   });
 
-  it('aria-controls の指す id が存在しなければ menu-unavailable を返す', async () => {
-    // Arrange — 属性はあるが、その id のメニューが描画されていない
-    document.body.innerHTML = cardWithMenu(1).replace(
-      'aria-controls=":r1:"',
-      'aria-controls=":r9:"',
-    );
-    const counts = trackClicks();
+  it('aria-controls の指す id のメニューが現れなければ menu-unavailable を返す', async () => {
+    // Arrange — 属性はあるが、別の id のメニューしか出てこない
+    mountCard(1, { menuId: ':R1elbk:', controls: ':R9nope:' });
     // Act
-    const outcome = await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    const outcome = await muteAuthor('example-author-1', document, GIVE_UP_MS);
     // Assert — 別のメニューを掴んで押したりしない
     expect(outcome).toBe('menu-unavailable');
-    expect(clicked(counts)).toEqual([]);
+    expect(itemClicks()).toEqual([]);
   });
 
   it('同じ著者の記事が 2 本あってもメニューは 1 度しか開かない', async () => {
     // Arrange — 同じ著者の 2 枚。ミュートは 1 回で足りる
-    document.body.innerHTML =
-      cardWithMenu(1, DEFAULT_ITEMS, ':r1:', 'example-author-1') +
-      cardWithMenu(2, DEFAULT_ITEMS, ':r2:', 'example-author-1');
-    let opened = 0;
-    for (const button of document.querySelectorAll<HTMLElement>(SELECTORS.cardMenuButton)) {
-      button.addEventListener('click', () => {
-        opened += 1;
-      });
-    }
-    snackbarOnMuteClick();
+    mountCard(1, { author: 'example-author-1' });
+    mountCard(2, { author: 'example-author-1' });
     // Act
-    await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    await muteAuthor('example-author-1', document, TIMEOUT_MS);
     // Assert
-    expect(opened).toBe(1);
+    expect(clicks.filter((entry) => entry.startsWith('open-'))).toEqual(['open-1']);
+  });
+});
+
+/**
+ * ★ **2026-08-24 の実機で見つかった不具合の番人。**
+ *
+ * React は状態更新を同期で描画しない。ボタンを押した直後の [role="menu"] は
+ * 0 件で、300ms 後に 1 件になる。**同期で読む実装は実機で必ず失敗する。**
+ *
+ * それまでのフィクスチャはメニューを最初から DOM に置いていたため、
+ * この経路は一度も検査されていなかった。
+ */
+describe('muteAuthor とメニューの非同期描画', () => {
+  it('押した直後には無くても、現れたら掴む', async () => {
+    // Arrange — 実機と同じく、押したあとに描画される
+    mountCard(1, { menuDelayMs: 10 });
+    // Act
+    const outcome = await muteAuthor('example-author-1', document, TIMEOUT_MS);
+    // Assert
+    expect(outcome).toBe('muted');
+    expect(itemClicks()).toEqual(['mute-1']);
+  });
+
+  it('押した瞬間はまだメニューが DOM に無い（フィクスチャ自身の確認）', () => {
+    // Arrange & Act — フィクスチャが実機を再現できていることを固定する
+    const card = mountCard(1, { menuDelayMs: 10 });
+    card.querySelector<HTMLElement>(SELECTORS.cardMenuButton)?.click();
+    // Assert — ここが最初から 1 件になっていると、テストが実機と別物になる
+    expect(document.querySelectorAll(SELECTORS.cardMenu)).toHaveLength(0);
+  });
+
+  it('時間内に現れなければ menu-unavailable を返す', async () => {
+    // Arrange — 押しても開かない（Qiita の画面構造が変わった等）
+    mountCard(1, { menuDelayMs: null });
+    // Act & Assert
+    await expect(muteAuthor('example-author-1', document, GIVE_UP_MS)).resolves.toBe(
+      'menu-unavailable',
+    );
+    expect(itemClicks()).toEqual([]);
   });
 });
 
@@ -241,30 +319,24 @@ describe('muteAuthor', () => {
 describe('muteAuthor と Phase 7 の非表示', () => {
   it('隠れているカードでも、メニューを開く瞬間は表示に戻っている', async () => {
     // Arrange — Phase 7 が隠したあとの状態を作る
-    document.body.innerHTML = cardWithMenu(1);
-    const card = document.querySelector<HTMLElement>('.card');
-    if (!card) throw new Error('card not found');
+    const card = mountCard(1);
     concealCard(card);
     const displayAtClick: string[] = [];
     card.querySelector(SELECTORS.cardMenuButton)?.addEventListener('click', () => {
       displayAtClick.push(card.style.display);
     });
-    snackbarOnMuteClick();
     // Act
-    await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    await muteAuthor('example-author-1', document, TIMEOUT_MS);
     // Assert — display:none のまま操作していたら '' にならない
     expect(displayAtClick).toEqual(['']);
   });
 
   it('ミュートのあとカードは隠れた状態に戻る', async () => {
     // Arrange
-    document.body.innerHTML = cardWithMenu(1);
-    const card = document.querySelector<HTMLElement>('.card');
-    if (!card) throw new Error('card not found');
+    const card = mountCard(1);
     concealCard(card);
-    snackbarOnMuteClick();
     // Act
-    await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    await muteAuthor('example-author-1', document, TIMEOUT_MS);
     // Assert
     expect(card.style.display).toBe('none');
     expect(card.dataset.qtgHidden).toBe('true');
@@ -272,24 +344,19 @@ describe('muteAuthor と Phase 7 の非表示', () => {
 
   it('失敗しても隠れた状態に戻る', async () => {
     // Arrange — メニューが取れない状態。finally が無いと表示されたままになる
-    document.body.innerHTML = cardWithMenu(1).replace(/<button[^>]*><\/button>/, '');
-    const card = document.querySelector<HTMLElement>('.card');
-    if (!card) throw new Error('card not found');
+    const card = mountCard(1, { noButton: true });
     concealCard(card);
     // Act
-    await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    await muteAuthor('example-author-1', document, GIVE_UP_MS);
     // Assert
     expect(card.style.display).toBe('none');
   });
 
   it('隠れていなかったカードは、そのまま表示のままにする', async () => {
     // Arrange
-    document.body.innerHTML = cardWithMenu(1);
-    const card = document.querySelector<HTMLElement>('.card');
-    if (!card) throw new Error('card not found');
-    snackbarOnMuteClick();
+    const card = mountCard(1);
     // Act
-    await muteAuthor('example-author-1', document, FAST_TIMEOUT_MS);
+    await muteAuthor('example-author-1', document, TIMEOUT_MS);
     // Assert — 拡張が隠していないものを隠してはいけない
     expect(card.style.display).toBe('');
     expect(card.dataset.qtgHidden).toBeUndefined();
@@ -299,80 +366,84 @@ describe('muteAuthor と Phase 7 の非表示', () => {
 describe('waitForSnackbar', () => {
   it('あとから現れた Snackbar を検知する', async () => {
     // Arrange & Act — MutationObserver の経路
-    const waiting = waitForSnackbar(SNACKBAR_TEXT.muteCompleted, document, 1000);
-    document.body.insertAdjacentHTML(
-      'beforeend',
-      `<div id="Snackbar-react-component-abc"><div aria-live="polite" aria-atomic="true"><p>${SNACKBAR_TEXT.muteCompleted}</p></div></div>`,
-    );
+    const waiting = waitForSnackbar(SNACKBAR_TEXT.muteCompleted, document, TIMEOUT_MS);
+    showSnackbar();
     // Assert
     await expect(waiting).resolves.toBe(true);
   });
 
   it('既に出ていれば待たずに true を返す', async () => {
-    document.body.innerHTML = `<div id="Snackbar-react-component-abc"><div aria-live="polite" aria-atomic="true"><p>${SNACKBAR_TEXT.muteCompleted}</p></div></div>`;
-    await expect(waitForSnackbar(SNACKBAR_TEXT.muteCompleted, document, 1000)).resolves.toBe(true);
+    showSnackbar();
+    await expect(waitForSnackbar(SNACKBAR_TEXT.muteCompleted, document, TIMEOUT_MS)).resolves.toBe(
+      true,
+    );
   });
 
   it('時間内に出なければ false を返す', async () => {
-    await expect(
-      waitForSnackbar(SNACKBAR_TEXT.muteCompleted, document, FAST_TIMEOUT_MS),
-    ).resolves.toBe(false);
+    await expect(waitForSnackbar(SNACKBAR_TEXT.muteCompleted, document, GIVE_UP_MS)).resolves.toBe(
+      false,
+    );
   });
 
   it('別のメッセージでは反応しない', async () => {
     // Arrange — 解除の Snackbar が出ても、ミュート完了とは見なさない
-    const waiting = waitForSnackbar(SNACKBAR_TEXT.muteCompleted, document, FAST_TIMEOUT_MS);
-    document.body.insertAdjacentHTML(
-      'beforeend',
-      `<div id="Snackbar-react-component-abc"><div aria-live="polite" aria-atomic="true"><p>${SNACKBAR_TEXT.unmuteCompleted}</p></div></div>`,
-    );
+    const waiting = waitForSnackbar(SNACKBAR_TEXT.muteCompleted, document, GIVE_UP_MS);
+    showSnackbar(SNACKBAR_TEXT.unmuteCompleted);
     await expect(waiting).resolves.toBe(false);
   });
 });
 
 describe('muteAuthor の完了検知', () => {
-  it('Snackbar があとから出れば muted を返す', async () => {
-    // Arrange — MutationObserver の経路を通す
-    document.body.innerHTML = cardWithMenu(1);
-    snackbarOnMuteClick(true);
-    // Act & Assert
-    await expect(muteAuthor('example-author-1', document, 1000)).resolves.toBe('muted');
-  });
-
   it('Snackbar が出なければ timeout を返す', async () => {
-    // Arrange — クリックしても何も起きない（Qiita 側の変更や通信失敗）
-    document.body.innerHTML = cardWithMenu(1);
-    // Act & Assert — 押してはいるので、成功したかどうかは分からない
-    await expect(muteAuthor('example-author-1', document, FAST_TIMEOUT_MS)).resolves.toBe(
-      'timeout',
-    );
+    // Arrange — 押してはいるので、成功したかどうかは分からない
+    mountCard(1, { noSnackbar: true });
+    // Act & Assert
+    await expect(muteAuthor('example-author-1', document, GIVE_UP_MS)).resolves.toBe('timeout');
+    expect(itemClicks()).toEqual(['mute-1']);
   });
 });
 
 describe('findAuthorCard', () => {
   it('隠れているカードも返す', () => {
     // Arrange — Phase 7 が隠したあとでもミュートできなければならない
-    document.body.innerHTML = cardWithMenu(1);
-    const card = document.querySelector<HTMLElement>('.card');
-    if (!card) throw new Error('card not found');
+    const card = mountCard(1);
     concealCard(card);
     // Act & Assert
     expect(findAuthorCard('example-author-1')).toBe(card);
   });
 
   it('居なければ null を返し、例外を投げない', () => {
-    document.body.innerHTML = '';
     expect(() => findAuthorCard('example-author-1')).not.toThrow();
     expect(findAuthorCard('example-author-1')).toBeNull();
   });
 });
 
 describe('findMuteItem', () => {
-  it('前後の空白を無視して完全一致する', () => {
-    // Arrange — React の改行込みのテキストを模す
-    document.body.innerHTML = `<ul role="menu"><li role="menuitem">\n  ${MENU_TEXT.mute}\n</li></ul>`;
+  function menuWith(...texts: string[]): void {
+    const entries = texts.map((text) => `<li role="menuitem">${text}</li>`).join('');
+    document.body.innerHTML = `<ul role="menu">${entries}</ul>`;
+  }
+
+  it('アイコンのリガチャが前に付いていても選ぶ', () => {
+    // Arrange — 実測の textContent
+    menuWith(ITEM.mute.text);
     // Act & Assert
+    expect(findMuteItem(document)?.textContent).toBe(ITEM.mute.text);
+  });
+
+  it('前後の空白を無視する', () => {
+    menuWith(`\n  ${MENU_TEXT.mute}\n`);
     expect(findMuteItem(document)?.textContent?.trim()).toBe(MENU_TEXT.mute);
+  });
+
+  it('後置きが付いた項目は選ばない', () => {
+    menuWith(ITEM.muteSuffixed.text);
+    expect(findMuteItem(document)).toBeNull();
+  });
+
+  it('ブロックの項目は選ばない', () => {
+    menuWith(ITEM.block.text);
+    expect(findMuteItem(document)).toBeNull();
   });
 
   it('項目が 1 つも無ければ null を返す', () => {
