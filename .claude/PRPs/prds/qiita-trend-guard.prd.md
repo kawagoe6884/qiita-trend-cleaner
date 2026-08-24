@@ -476,7 +476,7 @@ chrome.storage.sync
 | **5b-2** | **著者をまたぐ共起** | 記事 1 本の著者を捕まえる判定軸（OQ-18）＋ **保存窓と取得射程の整合**（OQ-19） | **complete**（実機確認済み 2026-08-24。**記事 1 本の著者を検出**。レビュー指摘 3 件を修正） | - | 5b-1 | [plan](../plans/completed/cross-author-clusters.plan.md) / [report](../reports/cross-author-clusters-report.md) |
 | 6 | 候補 UI・設定 UI | 候補一覧、スライダー、適合率フィードバック（**すべてポップアップ**） | **in-progress**（実装完了・**実機確認待ち**） | with 7 | 5 | [plan](../plans/completed/candidate-popup-ui.plan.md) / [report](../reports/candidate-popup-ui-report.md) |
 | 7 | DOM 非表示 | 表示中ページでの非表示（**除外件数バッジは載せない** — 下記 Scope 参照） | **complete**（実機確認済み 2026-08-24。トグルと背景色は実機フィードバックで追加） | with 6 | 4b, 5, 5b-2 | [plan](../plans/completed/dom-hiding.plan.md) / [report](../reports/dom-hiding-report.md) |
-| 8 | ミュート実行（「妥当」と同時） | 三点メニューの自動操作、Snackbar による完了検知、直列化、失敗記録 | **in-progress**（実装完了・**実機確認待ち**。変異 17 件すべて捕捉） | - | 6, 7 | [plan](../plans/completed/mute-on-valid.plan.md) / [report](../reports/mute-on-valid-report.md) |
+| 8 | ミュート実行（「妥当」と同時） | 三点メニューの自動操作、Snackbar による完了検知、直列化、失敗記録 | **complete**（実機確認済み 2026-08-25。**実測 → 修正を 3 周**して初めて動いた） | - | 6, 7 | [plan](../plans/completed/mute-on-valid.plan.md) / [report](../reports/mute-on-valid-report.md) |
 | 9 | 適合率計測・閾値調整 | 実運用して適合率 80% を目指しパラメータを追い込む | pending | - | 8 | - |
 | 10 | 記事化 | Qiita 記事の執筆と投稿 | pending | - | 9 | - |
 
@@ -574,6 +574,8 @@ chrome.storage.sync
 - **決定 B（2026-08-24・ユーザー確定）**: 候補の著者が**いま開いているトレンドページに居なければスキップ**し、結果に出す。`qiita.com/{handle}` を開きに行かない。**追加リクエストがゼロのままなら、スクレイピング禁止（約束 1）の解釈が一切不要**という性質を保つため
 - **決定 C（実装方針）**: ミュートの起動は **message passing**（`chrome.tabs.sendMessage`）で行い、`chrome.storage.onChanged` にぶら下げない。**評価が既に valid なら値が変わらず通知が発火せず、押し直しでのやり直しができなくなる**（Phase 7 の実機バグから得た「storage の変更通知は操作の通知ではない」がそのまま当たる）。**この選択がリトライ機構を持たずに済ませる根拠でもある** — 失敗したらもう一度「妥当」を押せばよい
 - **OQ-16 は崩れない**: 評価を押してからミュートする順序は構造的に保たれる（「妥当」が先）。既定オフなので、適合率を測る段階では発動しない。解除一覧（`settings/mutes`）があるので誤検知は回収できる
+- **実機で通した経路（2026-08-25）**: ①チェックオフでは Qiita 側を変えない ②チェックオンで「妥当」→ ミュートされ `settings/mutes` に反映 ③同じ候補を押し直しても**消えない**（解除されない） ④フォロー / ブロックが増えない ⑤トレンドタブが無いと `no-trend-tab` で何もしない ⑥拡張リロード後の孤児タブは `unreachable` で何もしない ⑦**トレンドタブ 2 枚でも二重実行しない**（`settings/mutes` に残っている＝解除されていない）
+- **実機で通していない経路（正直に記録）**: ⓐ**「既にミュート済み → 文言が違う → 何も押さない」というテキスト一致の砦。**ミュートすると記事がトレンドから消えるため、実機ではその手前の `not-on-page` で止まり到達しない（ユニット＋変異テストでのみ固定） ⓑ「表示する」で戻した状態からの「妥当」 ⓒ候補 2 件を連続で「妥当」（直列化）
 - **スコープ外**: ブロックの一括実行（native `alert()` により自動化不可）／**複数件の一括実行**（案 C）／**ミュートの解除**（`settings/mutes` でユーザーが行う。拡張は解除側の文言を実装に持ち込まない — 持ち込むと誤って押す経路ができる）／`tabs` 権限・`scripting` 権限の追加
 
 **Phase 9: 適合率計測・閾値調整**
