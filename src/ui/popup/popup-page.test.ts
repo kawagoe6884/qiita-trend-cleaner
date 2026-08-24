@@ -1074,3 +1074,77 @@ describe('「妥当」と同時のミュート', () => {
     });
   });
 });
+
+/**
+ * ★ orch-review（2026-08-24）が見つけた欠陥の番人。
+ *
+ * recordMuteOutcome は「成功したという事実は取り消されない」と書いてあるのに、
+ * 評価を押し直しただけで「ミュート済み」の表示が消えていた。
+ * ミュート済みの候補は、再検出されるまで一覧に残り続ける（ミュートしても
+ * candidates は消えない）ので、これは普通に踏む経路。
+ */
+describe('既にミュート済みの候補の表示', () => {
+  /**
+   * **他のテストが触らないハンドルを使う。**
+   *
+   * popup-page.ts はこのファイルで 1 度だけ import されるので、モジュール変数は
+   * テスト間で残る。`example-author-a` を使うと、先行するテストが requestMute で
+   * 埋めた値を拾ってしまい、**バグがあっても通る**（最初にそう書いて素通りした）。
+   */
+  const HANDLE = 'example-author-muted';
+  const MUTED = {
+    [HANDLE]: {
+      outcome: 'muted' as const,
+      at: '2026-08-24T12:00:00.000Z',
+      mutedAt: '2026-08-24T12:00:00.000Z',
+    },
+  };
+
+  function stateWithMuted(muteOnValid: boolean) {
+    return {
+      views: toViews([candidate(HANDLE)], {}, MUTED),
+      precision: NO_PRECISION,
+      settings: SETTINGS,
+      rateLimitNotice: null,
+      lastScanAt: null,
+      hasToken: false,
+      hasIndex: true,
+      muteOnValid,
+    };
+  }
+
+  /** 評価が描き直されるまで待つ（handleVerdict の末尾） */
+  async function waitForRerender(): Promise<void> {
+    await vi.waitFor(() => {
+      expect(document.querySelector('#candidates button[aria-pressed="true"]')).not.toBeNull();
+    });
+  }
+
+  it('開いた直後は結果が出ている', async () => {
+    loadMock.mockResolvedValue(stateWithMuted(false));
+    await init();
+    expect(el('#candidates .mute-status').textContent).toContain('ミュートしました');
+  });
+
+  it('「誤り」を押しても結果表示は消えない', async () => {
+    // Arrange — 前のセッションでミュート済み
+    loadMock.mockResolvedValue(stateWithMuted(false));
+    await init();
+    // Act — 評価を訂正しただけ。ミュートの成否とは無関係
+    clickVerdict('誤り');
+    await waitForRerender();
+    // Assert
+    expect(document.querySelector('#candidates .mute-status')).not.toBeNull();
+  });
+
+  it('チェックがオフのまま「妥当」を押しても結果表示は消えない', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithMuted(false));
+    await init();
+    // Act — ミュートは依頼していないので、結果を上書きする理由が無い
+    clickVerdict('妥当');
+    await waitForRerender();
+    // Assert
+    expect(document.querySelector('#candidates .mute-status')).not.toBeNull();
+  });
+});

@@ -31,7 +31,7 @@ import {
 import type { CandidateView, Precision } from './popup-state';
 import { saveMuteOnValid } from '../../lib/storage';
 import { DEFAULT_SETTINGS } from '../../types/domain';
-import type { MuteLog, Settings, Verdict } from '../../types/domain';
+import type { MuteRecord, Settings, Verdict } from '../../types/domain';
 
 const SELECTORS = {
   notice: '#notice',
@@ -290,7 +290,6 @@ let currentHasIndex = false;
 let currentRateLimited = false;
 /** 「妥当」と同時に Qiita 側でもミュートするか。**既定は false** */
 let currentMuteOnValid = false;
-let currentMuteLog: MuteLog = {};
 
 /**
  * ドラッグ中に呼ぶ。**同期処理だけ。**
@@ -355,17 +354,26 @@ async function handleVerdict(handle: string, verdict: Verdict): Promise<void> {
   busy = true;
   try {
     currentPrecision = await recordVerdict(handle, verdict);
+
     // 「妥当」かつ設定がオンのときだけ Qiita 側を変更する。
     // **storage の変更を待つのではなく、ここから送る** — 既に valid のものを
-    // 押し直したときも実行できる。これがリトライ手段でもある
+    // 押し直したときも実行できる。これがリトライ手段でもある。
+    //
+    // undefined は「今回は試していない」。**null（試したが記録が無い）と区別する。**
+    let muteResult: MuteRecord | null | undefined;
     if (verdict === 'valid' && currentMuteOnValid) {
       // 数秒かかる。busy で他のボタンも効かないので、何が起きているか出す
       showMutePending(handle);
-      currentMuteLog = await requestMute(handle, new Date());
+      muteResult = (await requestMute(handle, new Date()))[handle] ?? null;
     }
+
+    // **試していないなら据え置く。**ここを無条件に差し替えると、
+    // 「誤り」を押しただけで「ミュート済み」の表示が消える
+    // （成功したという事実は取り消されない — recordMuteOutcome の JSDoc）。
+    // 結果の置き場を view.mute の 1 つに絞ってあるので、seed 忘れが起きようが無い
     currentViews = currentViews.map((view) =>
       view.candidate.authorHandle === handle
-        ? { ...view, verdict, mute: currentMuteLog[handle] ?? null }
+        ? { ...view, verdict, mute: muteResult === undefined ? view.mute : muteResult }
         : view,
     );
     renderCandidates(currentViews);
