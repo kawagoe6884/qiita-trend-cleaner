@@ -80,7 +80,7 @@
 
 ## 現在地
 
-**Phase 2〜7 complete（4 を除く）。検出も非表示も実機で動いている。次は Phase 8（一括ミュート）。**
+**Phase 2〜7 complete（4 を除く）。検出も非表示も実機で動いている。Phase 8（ミュート実行）は計画済み・実装未着手。**
 
 - 設計: [PRD](.claude/PRPs/prds/qiita-trend-guard.prd.md) — **改訂 6**。意思決定ログと未解決事項はここ
 - 完了した計画: `.claude/PRPs/plans/completed/`
@@ -95,7 +95,7 @@
 | **5b-1 検出の穴を塞ぐ（バグ 2 件）** | **complete**（実機確認済み・**候補 1 件を検出**） — [report](.claude/PRPs/reports/detection-gap-fixes-report.md) / [調査](.claude/PRPs/reports/cross-author-collusion-investigation.md) |
 | **5b-2 著者をまたぐ共起** | **complete**（実機で記事 1 本の著者を検出） — [report](.claude/PRPs/reports/cross-author-clusters-report.md) |
 | **7 DOM 非表示** | **complete**（実機確認済み） — 評価済みを隠す / トグルで戻す / 妥当なカードに色 — [report](.claude/PRPs/reports/dom-hiding-report.md) |
-| **8 一括ミュート** | **次はここ** — OQ-9 解決済みで着手条件は揃っている。**ミュートを「妥当」と同時に実行するかは未確定**（PRD の Phase 8） |
+| **8 ミュート実行（「妥当」と同時）** | **計画済み・実装未着手** — [plan](.claude/PRPs/plans/mute-on-valid.plan.md)。**案 A に確定**（既定オフのチェックで「妥当」と同時実行。一括は作らない）。**起動は message passing**（`storage.onChanged` では押し直しが効かない）。**ブロックがミュートの直上にあるので、テキスト完全一致でのみ特定する** |
 | 9 適合率 / 10 記事化 | pending |
 
 **検出エンジン（`src/detect/`）は 4b の影響を受けない。** インデックスを受け取るだけで出所を問わない設計にしてあるため。
