@@ -80,7 +80,7 @@
 
 ## 現在地
 
-**Phase 2・3・4b・5・5b-1・5b-2 complete。記事 1 本の著者も検出できるようになった。次は Phase 7（DOM 非表示）。**
+**Phase 2〜7 complete（4 を除く）。検出も非表示も実機で動いている。次は Phase 8（一括ミュート）。**
 
 - 設計: [PRD](.claude/PRPs/prds/qiita-trend-guard.prd.md) — **改訂 6**。意思決定ログと未解決事項はここ
 - 完了した計画: `.claude/PRPs/plans/completed/`
@@ -94,8 +94,9 @@
 | **6 候補 UI** | **UI は動いた**（実機で候補・適合率・バッジを確認）。ただし**検出側の穴 3 件**が露見 — [report](.claude/PRPs/reports/candidate-popup-ui-report.md) |
 | **5b-1 検出の穴を塞ぐ（バグ 2 件）** | **complete**（実機確認済み・**候補 1 件を検出**） — [report](.claude/PRPs/reports/detection-gap-fixes-report.md) / [調査](.claude/PRPs/reports/cross-author-collusion-investigation.md) |
 | **5b-2 著者をまたぐ共起** | **complete**（実機で記事 1 本の著者を検出） — [report](.claude/PRPs/reports/cross-author-clusters-report.md) |
-| **7 DOM 非表示** | **実装完了・実機で通知トグルのバグを 1 件修正。再確認待ち** — [report](.claude/PRPs/reports/dom-hiding-report.md) |
-| 8 一括ミュート / 9 適合率 / 10 記事化 | pending |
+| **7 DOM 非表示** | **complete**（実機確認済み） — 評価済みを隠す / トグルで戻す / 妥当なカードに色 — [report](.claude/PRPs/reports/dom-hiding-report.md) |
+| **8 一括ミュート** | **次はここ** — OQ-9 解決済みで着手条件は揃っている。**ミュートを「妥当」と同時に実行するかは未確定**（PRD の Phase 8） |
+| 9 適合率 / 10 記事化 | pending |
 
 **検出エンジン（`src/detect/`）は 4b の影響を受けない。** インデックスを受け取るだけで出所を問わない設計にしてあるため。
 
