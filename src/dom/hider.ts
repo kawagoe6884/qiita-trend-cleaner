@@ -21,12 +21,24 @@
  * カードが特定できなければ黙って諦める（設計上の約束 3）。
  * 誤った対象を隠すより、何もしない方が無害。
  */
-import { SELECTORS, HIDDEN_MARKER, NOTICE_ID } from './selectors';
+import { SELECTORS, HIDDEN_MARKER, HIGHLIGHT_MARKER, NOTICE_ID } from './selectors';
 import { readTrendItems, findCard } from './trend-reader';
 import type { AccountHandle, FeedbackLog } from '../types/domain';
 
 /** dataset のキー（qtgHidden）に対応する属性セレクタ */
 const HIDDEN_ATTR_SELECTOR = '[data-qtg-hidden="true"]';
+
+/** dataset のキー（qtgJudged）に対応する属性セレクタ */
+const HIGHLIGHT_ATTR_SELECTOR = '[data-qtg-judged="true"]';
+
+/**
+ * 「妥当」と判断されたカードの背景。
+ *
+ * **半透明にするのは Qiita のライト / ダークの両方で機能させるため。**
+ * 赤は使わない — 「不正」と断定しないという設計上の約束 6 は、文言だけでなく
+ * 見た目にも及ぶ。控えめな琥珀に留める。
+ */
+const HIGHLIGHT_BACKGROUND = 'rgba(255, 170, 0, 0.12)';
 
 /** 隠した結果。呼び出し側がログと通知に使う */
 export interface HideResult {
@@ -69,6 +81,10 @@ export function hideJudgedAuthors(feedback: FeedbackLog, root: ParentNode = docu
 
     card.style.display = 'none';
     card.dataset[HIDDEN_MARKER] = 'true';
+    // 背景の目印は「表示する」で戻したときに残る。どのカードが該当かが
+    // 分からないと、誤検知の確認ができない
+    card.style.backgroundColor = HIGHLIGHT_BACKGROUND;
+    card.dataset[HIGHLIGHT_MARKER] = 'true';
     hiddenAuthors.add(item.authorHandle);
     hidden += 1;
   }
@@ -101,6 +117,22 @@ export function unhideAll(root: ParentNode = document): number {
   return cards.length;
 }
 
+/**
+ * 背景の目印を消す。**評価が変わったときに呼ぶ。**
+ *
+ * unhideAll は display だけを戻し、背景は残す（「表示する」で戻したときに
+ * どのカードが該当かを示すため）。評価そのものが変わったときは、
+ * ここで消してから付け直す。
+ */
+export function clearHighlights(root: ParentNode = document): number {
+  const cards = [...root.querySelectorAll<HTMLElement>(HIGHLIGHT_ATTR_SELECTOR)];
+  for (const card of cards) {
+    card.style.removeProperty('background-color');
+    delete card.dataset[HIGHLIGHT_MARKER];
+  }
+  return cards.length;
+}
+
 /** 通知の状態。隠れているか、手で表示中か */
 export type NoticeMode = 'hidden' | 'shown';
 
@@ -109,9 +141,14 @@ export function describeHidden(count: number, mode: NoticeMode = 'hidden'): stri
   return mode === 'hidden' ? `${String(count)} 件を非表示中` : `${String(count)} 件を表示中`;
 }
 
-/** ボタンの文言。**押した後どうなるか**を書く */
+/**
+ * ボタンの文言。**押した後どうなるか**を書く。
+ *
+ * 「隠す」を全角スペースで挟んで「表示する」と同じ 4 文字幅にする。
+ * **押すたびにボタンの幅が変わると、通知そのものが動いて目で追えない。**
+ */
 export function noticeAction(mode: NoticeMode): string {
-  return mode === 'hidden' ? '表示する' : '隠す';
+  return mode === 'hidden' ? '表示する' : '　隠す　';
 }
 
 /**

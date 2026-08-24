@@ -48,6 +48,16 @@ export const INJECTION_MARKER = 'qtgInjected';
 export const HIDDEN_MARKER = 'qtgHidden';
 
 /**
+ * 「妥当」と判断された著者のカードに付ける目印（dataset のキー名）。
+ *
+ * **`HIDDEN_MARKER` と分けるのは、「表示する」で戻したときに残すため。**
+ * 隠れているかどうか（qtgHidden）と、妥当と判断されたかどうか（qtgJudged）は
+ * 別の情報で、前者だけが「表示する」で消える。色が残るので、戻したときに
+ * どのカードが該当なのかが分かり、誤検知の確認ができる。
+ */
+export const HIGHLIGHT_MARKER = 'qtgJudged';
+
+/**
  * 非表示の件数を知らせる要素の id。**拡張が作る要素なので Qiita の DOM とは無関係。**
  * SELECTORS に入れないのは、あれが Qiita 側の DOM を指すものの置き場だから
  * （ハッシュクラス禁止の検査対象を、拡張自身の要素で薄めない）。

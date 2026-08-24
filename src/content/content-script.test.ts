@@ -190,7 +190,7 @@ describe('content script の通知トグル', () => {
     noticeButton().click();
     // Assert
     expect(visibleCards()).toBe(2);
-    expect(noticeButton().textContent).toBe('隠す');
+    expect(noticeButton().textContent).toBe('　隠す　');
     expect(document.querySelector('#qtg-hidden-notice')?.textContent).toContain('1 件を表示中');
   });
 
@@ -212,7 +212,7 @@ describe('content script の通知トグル', () => {
     // Arrange — 手で戻した状態
     await bootWithOneHidden();
     noticeButton().click();
-    expect(noticeButton().textContent).toBe('隠す');
+    expect(noticeButton().textContent).toBe('　隠す　');
     // Act — 別の著者に「妥当」を押した（評価が変わるので onChanged が発火する）
     await saveVerdict('example-author-2', 'valid');
     storageListener()(
@@ -224,5 +224,55 @@ describe('content script の通知トグル', () => {
       expect(visibleCards()).toBe(0);
     });
     expect(noticeButton().textContent).toBe('表示する');
+  });
+});
+
+/**
+ * 背景の目印は評価に追従する。
+ * **残ると「妥当と判断した」という誤った印を出し続ける。**
+ */
+describe('content script の背景の目印', () => {
+  it('妥当なら背景を付ける', async () => {
+    // Arrange & Act
+    document.body.innerHTML = card(1) + card(2);
+    await saveVerdict('example-author-1', 'valid');
+    await bootContentScript();
+    // Assert
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('[data-qtg-judged="true"]')).toHaveLength(1);
+    });
+  });
+
+  it('誤りに押し直したら背景も消える', async () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    await saveVerdict('example-author-1', 'valid');
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('[data-qtg-judged="true"]')).toHaveLength(1);
+    });
+    // Act — 誤検知だったので押し直す
+    await saveVerdict('example-author-1', 'false_positive');
+    storageListener()({ feedback: { newValue: {} } }, 'local');
+    // Assert — display を戻すだけでは足りない。色が残ると誤った印になる
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(2);
+    });
+    expect(document.querySelector('[data-qtg-judged="true"]')).toBeNull();
+  });
+
+  it('「表示する」で戻しても背景は残る（どれが該当か分かる）', async () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    await saveVerdict('example-author-1', 'valid');
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(1);
+    });
+    // Act
+    document.querySelector<HTMLButtonElement>('#qtg-hidden-notice button')?.click();
+    // Assert
+    expect(visibleCards()).toBe(2);
+    expect(document.querySelectorAll('[data-qtg-judged="true"]')).toHaveLength(1);
   });
 });

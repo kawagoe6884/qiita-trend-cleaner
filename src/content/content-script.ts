@@ -1,7 +1,13 @@
 import { logger } from '../lib/logger';
 import { INJECTION_MARKER } from '../dom/selectors';
 import { readTrendItems, isTrendPage } from '../dom/trend-reader';
-import { hideJudgedAuthors, unhideAll, countHidden, renderNotice } from '../dom/hider';
+import {
+  hideJudgedAuthors,
+  unhideAll,
+  countHidden,
+  renderNotice,
+  clearHighlights,
+} from '../dom/hider';
 import * as storage from '../lib/storage';
 import type { QtgRequest, QtgResponse } from '../types/messages';
 
@@ -72,14 +78,6 @@ async function sendTrendItems(): Promise<void> {
 }
 
 /**
- * 評価済みの候補を隠す。
- *
- * 【差分を追わず、いったん全部戻してから再適用する】
- * 「誤り」に押し直したときに戻す必要がある。どの著者が増減したかを追うより、
- * 全部戻して付け直す方が単純で取りこぼしが無い。件数は 30 件程度で、
- * 表示中の DOM を触るだけなのでコストも小さい。
- */
-/**
  * 「表示する」を押して手で戻した件数。0 なら通常どおり隠れている状態。
  *
  * **この状態を持たないと戻す手段が無くなる。**「表示する」を押したあと
@@ -110,12 +108,23 @@ function onToggleHiding(): void {
   refreshNotice();
 }
 
+/**
+ * 評価済みの候補を隠す。
+ *
+ * 【差分を追わず、いったん全部戻してから再適用する】
+ * 「誤り」に押し直したときに戻す必要がある。どの著者が増減したかを追うより、
+ * 全部戻して付け直す方が単純で取りこぼしが無い。件数は 30 件程度で、
+ * 表示中の DOM を触るだけなのでコストも小さい。
+ */
 async function applyHiding(): Promise<void> {
   if (!isTrendPage(location.pathname)) return;
 
   try {
     const feedback = await storage.getFeedback();
     unhideAll();
+    // 背景の目印もここで消す。評価が false_positive に変わったカードに
+    // 色が残ると、「妥当と判断した」という誤った印を出し続ける
+    clearHighlights();
     const result = hideJudgedAuthors(feedback);
     if (result.hidden > 0) {
       logger.info('hidden:', result.hidden, 'authors:', result.authors.length);

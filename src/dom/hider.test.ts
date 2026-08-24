@@ -6,6 +6,7 @@ import {
   renderNotice,
   describeHidden,
   noticeAction,
+  clearHighlights,
 } from './hider';
 import { NOTICE_ID } from './selectors';
 import type { FeedbackLog } from '../types/domain';
@@ -265,7 +266,7 @@ describe('renderNotice のトグル', () => {
     renderNotice(2, noop, document, 'shown');
     const notice = document.querySelector<HTMLElement>(`#${NOTICE_ID}`);
     expect(notice?.textContent).toContain('2 件を表示中');
-    expect(notice?.querySelector('button')?.textContent).toBe('隠す');
+    expect(notice?.querySelector('button')?.textContent).toBe('　隠す　');
   });
 
   it('モードが変わったらボタンの文言も書き換える', () => {
@@ -277,7 +278,7 @@ describe('renderNotice のトグル', () => {
     // Assert — ラベルだけ変えてボタンを放置すると、押す先が無くなる
     const second = document.querySelector<HTMLElement>(`#${NOTICE_ID}`);
     expect(second).toBe(first);
-    expect(second?.querySelector('button')?.textContent).toBe('隠す');
+    expect(second?.querySelector('button')?.textContent).toBe('　隠す　');
   });
 
   it('既定は hidden（引数を省略しても壊れない）', () => {
@@ -287,7 +288,70 @@ describe('renderNotice のトグル', () => {
 
   it('文言はどちらのモードでも断定しない（約束 6）', () => {
     expect(describeHidden(2, 'shown')).toBe('2 件を表示中');
-    expect(noticeAction('shown')).toBe('隠す');
+    expect(noticeAction('shown')).toBe('　隠す　');
     expect(describeHidden(2, 'shown')).not.toMatch(/ブロック|不正|スパム/);
+  });
+});
+
+/**
+ * 「妥当」と判断したカードには背景の目印を付ける。
+ *
+ * **`unhideAll` では消さない。**「表示する」で戻したときに、どのカードが
+ * 該当なのか分からないと誤検知の確認ができない。消すのは評価が変わったとき
+ * （`clearHighlights`）だけ。
+ */
+describe('背景の目印', () => {
+  it('隠すときに背景を付ける', () => {
+    // Arrange & Act
+    setupCards(card(1), card(2));
+    hideJudgedAuthors({ 'example-author-1': 'valid' });
+    // Assert
+    const marked = document.querySelector<HTMLElement>('[data-qtg-judged="true"]');
+    expect(marked).not.toBeNull();
+    expect(marked?.style.backgroundColor).not.toBe('');
+  });
+
+  it('「表示する」で戻しても背景は残る', () => {
+    // Arrange
+    setupCards(card(1), card(2));
+    hideJudgedAuthors({ 'example-author-1': 'valid' });
+    // Act
+    unhideAll();
+    // Assert — 消えると、戻した後にどれが該当か分からない
+    expect(document.querySelectorAll('[data-qtg-judged="true"]')).toHaveLength(1);
+    expect(visibleCards()).toBe(2);
+  });
+
+  it('clearHighlights で背景を消す', () => {
+    // Arrange
+    setupCards(card(1));
+    hideJudgedAuthors({ 'example-author-1': 'valid' });
+    // Act
+    const cleared = clearHighlights();
+    // Assert
+    expect(cleared).toBe(1);
+    expect(document.querySelector('[data-qtg-judged="true"]')).toBeNull();
+    const cardEl = document.querySelector<HTMLElement>('.card');
+    expect(cardEl?.style.backgroundColor).toBe('');
+  });
+
+  it('隠していないカードには背景を付けない', () => {
+    setupCards(card(1), card(2));
+    hideJudgedAuthors({ 'example-author-1': 'valid' });
+    expect(document.querySelectorAll('[data-qtg-judged="true"]')).toHaveLength(1);
+  });
+
+  it('目印が無ければ clearHighlights は 0 を返す', () => {
+    setupCards(card(1));
+    expect(clearHighlights()).toBe(0);
+  });
+
+  it('赤を使わない（断定しない — 約束 6）', () => {
+    // Arrange & Act
+    setupCards(card(1));
+    hideJudgedAuthors({ 'example-author-1': 'valid' });
+    // Assert — 「不正」と決めつける見た目にしない
+    const marked = document.querySelector<HTMLElement>('[data-qtg-judged="true"]');
+    expect(marked?.style.backgroundColor).not.toMatch(/^rgba?\(2[0-9]{2},\s*[0-5][0-9]?,/);
   });
 });
