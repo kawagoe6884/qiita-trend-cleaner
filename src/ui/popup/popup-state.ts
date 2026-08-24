@@ -13,15 +13,21 @@
 import * as storage from '../../lib/storage';
 import { detectCandidates } from '../../detect/detector';
 import { RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from '../../api/rate-budget';
+import { isTrendPage } from '../../dom/trend-reader';
+import { isMuteOutcome } from '../../types/domain';
 import type {
   AccountHandle,
   Candidate,
   FeedbackLog,
   IsoDateTime,
   ItemId,
+  MuteLog,
+  MuteOutcome,
+  MuteRecord,
   Settings,
   Verdict,
 } from '../../types/domain';
+import type { QtgRequest, QtgResponse } from '../../types/messages';
 
 /** 端数は切り上げる。「あと 0 分」と出さないため */
 const SECONDS_PER_MINUTE = 60;
@@ -66,10 +72,26 @@ export interface CandidateView {
    * 当てずっぽうから出る適合率は指標として無価値なので、リンクは飾りではない。
    */
   evidence: Evidence[];
+  /**
+   * 最後にミュートを試みた結果。**試していなければ null。**
+   *
+   * 「まだ試していない」と「試して失敗した」を取り違えると、ユーザーは
+   * 押し直すべきかどうかが分からなくなる（適合率の分母 0 を 0% にしないのと同じ話）。
+   */
+  mute: MuteRecord | null;
 }
 
-/** 候補に判定と根拠リンクを重ねる。Candidate 自体は変更しない */
-export function toViews(candidates: Candidate[], feedback: FeedbackLog): CandidateView[] {
+/**
+ * 候補に判定・根拠リンク・ミュートの結果を重ねる。Candidate 自体は変更しない。
+ *
+ * muteLog を省略できるようにしてあるのは、ミュートを使わない呼び出し
+ * （Phase 6 からの経路）を書き換えずに済ませるため。
+ */
+export function toViews(
+  candidates: Candidate[],
+  feedback: FeedbackLog,
+  muteLog: MuteLog = {},
+): CandidateView[] {
   return candidates.map((candidate) => ({
     candidate,
     verdict: feedback[candidate.authorHandle] ?? null,
@@ -77,6 +99,7 @@ export function toViews(candidates: Candidate[], feedback: FeedbackLog): Candida
       itemId,
       url: `https://qiita.com/${candidate.authorHandle}/items/${itemId}`,
     })),
+    mute: muteLog[candidate.authorHandle] ?? null,
   }));
 }
 
@@ -181,27 +204,33 @@ export interface PopupState {
   hasToken: boolean;
   /** 蓄積があるか。候補ゼロの理由を言い分けるために使う */
   hasIndex: boolean;
+  /** 「妥当」と同時に Qiita 側でもミュートするか。**既定は false** */
+  muteOnValid: boolean;
 }
 
 /** 保存済みの状態をまとめて読む */
 export async function loadPopupState(now: Date): Promise<PopupState> {
-  const [candidates, feedback, settings, until, lastScan, hasToken, index] = await Promise.all([
-    storage.getCandidates(),
-    storage.getFeedback(),
-    storage.getSettings(),
-    storage.getRateLimitedUntil(),
-    storage.getLastScanResult(),
-    storage.hasToken(),
-    storage.getLikeIndex(),
-  ]);
+  const [candidates, feedback, settings, until, lastScan, hasToken, index, muteOnValid, muteLog] =
+    await Promise.all([
+      storage.getCandidates(),
+      storage.getFeedback(),
+      storage.getSettings(),
+      storage.getRateLimitedUntil(),
+      storage.getLastScanResult(),
+      storage.hasToken(),
+      storage.getLikeIndex(),
+      storage.getMuteOnValid(),
+      storage.getMuteLog(),
+    ]);
   return {
-    views: toViews(candidates, feedback),
+    views: toViews(candidates, feedback, muteLog),
     precision: precisionOf(feedback),
     settings,
     rateLimitNotice: rateLimitNotice(until, now),
     lastScanAt: lastScan?.finishedAt ?? null,
     hasToken,
     hasIndex: Object.keys(index).length > 0,
+    muteOnValid,
   };
 }
 
@@ -220,11 +249,17 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
  * 画面に出ている候補と隠す対象がずれないようにする。
  */
 export async function applySettings(settings: Settings, now: Date): Promise<CandidateView[]> {
-  const [index, feedback] = await Promise.all([storage.getLikeIndex(), storage.getFeedback()]);
+  // muteLog も読む。読まないと、**つまみを 1 つ動かした瞬間にミュートの結果表示が
+  // 消える**（Candidate.verdict を持たせなかったのと同じ形の失敗）
+  const [index, feedback, muteLog] = await Promise.all([
+    storage.getLikeIndex(),
+    storage.getFeedback(),
+    storage.getMuteLog(),
+  ]);
   const candidates = detectCandidates(index, settings, now);
   await storage.saveSettings(settings);
   await storage.saveCandidates(candidates);
-  return toViews(candidates, feedback);
+  return toViews(candidates, feedback, muteLog);
 }
 
 /**
@@ -247,4 +282,105 @@ export function formatJst(iso: IsoDateTime): string {
 /** 判定を記録し、更新後の適合率を返す。saveVerdict の戻り値を使い、読み直さない */
 export async function recordVerdict(handle: AccountHandle, verdict: Verdict): Promise<Precision> {
   return precisionOf(await storage.saveVerdict(handle, verdict));
+}
+
+/** タブを探す範囲。manifest の host_permissions と同じ */
+const QIITA_TAB_PATTERN = 'https://qiita.com/*';
+
+/** タブの URL がトレンドページか。パスの判定は trend-reader に任せ、2 箇所に書かない */
+function isTrendTabUrl(url: string | undefined): boolean {
+  if (url === undefined || url === '') return false;
+  try {
+    return isTrendPage(new URL(url).pathname);
+  } catch {
+    // 解析できない URL は対象外。例外は投げない
+    return false;
+  }
+}
+
+/**
+ * トレンドページを開いているタブを **1 枚だけ** 選ぶ。アクティブなものを優先する
+ * （ユーザーが見ている画面で操作が起きる方が、何が起きたか分かる）。
+ *
+ * 【なぜ全タブに送らないのか】
+ * 2 枚に送ると、片方がミュートした直後にもう片方が古い DOM で同じ項目を押す。
+ * **項目はトグルなので解除される。**1 枚に限定すればこの経路が原理的に消える。
+ *
+ * chrome.tabs.query の url フィルタは tabs 権限を必要としない。
+ * host_permissions が一致していれば効き、tab.url も返る。
+ */
+async function findTrendTabId(): Promise<number | null> {
+  const tabs = await chrome.tabs.query({ url: QIITA_TAB_PATTERN });
+  const trend = tabs.filter((tab) => tab.id !== undefined && isTrendTabUrl(tab.url));
+  return (trend.find((tab) => tab.active) ?? trend[0])?.id ?? null;
+}
+
+/**
+ * 別コンテキストから来る値。型アサーションではなく型ガードで受ける
+ * （content-script の isPongResponse と同じ思想）。
+ * handle まで照合するのは、別の依頼の応答を取り違えないため。
+ */
+function isMuteResult(
+  value: unknown,
+  handle: AccountHandle,
+): value is Extract<QtgResponse, { type: 'MUTE_RESULT' }> {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Partial<{ type: unknown; handle: unknown; outcome: unknown }>;
+  return (
+    candidate.type === 'MUTE_RESULT' &&
+    candidate.handle === handle &&
+    isMuteOutcome(candidate.outcome)
+  );
+}
+
+async function sendMuteRequest(handle: AccountHandle): Promise<MuteOutcome> {
+  const tabId = await findTrendTabId();
+  if (tabId === null) return 'no-trend-tab';
+  try {
+    const request: QtgRequest = { type: 'MUTE_AUTHOR', handle };
+    const response: unknown = await chrome.tabs.sendMessage(tabId, request);
+    return isMuteResult(response, handle) ? response.outcome : 'unreachable';
+  } catch {
+    // 拡張をリロードすると、開きっぱなしのタブの content script が孤児になる。
+    // ユーザーの操作どおりの結果であって不具合ではない
+    return 'unreachable';
+  }
+}
+
+/**
+ * ミュートを依頼し、結果を記録して **更新後の全体を返す**（saveVerdict と同じ形）。
+ *
+ * **storage.onChanged で起動しない。**評価が既に valid なら値が変わらず通知が
+ * 発火せず、押し直しでのやり直しができなくなる。ミュートは状態ではなく操作である。
+ * この経路にしてあるおかげで、**失敗したらもう一度「妥当」を押せばやり直せる** —
+ * 専用のリトライ機構を持たずに済む。
+ */
+export async function requestMute(handle: AccountHandle, now: Date): Promise<MuteLog> {
+  return storage.recordMuteOutcome(handle, await sendMuteRequest(handle), now);
+}
+
+/**
+ * ミュートの結果の文言。**断定しない**（設計上の約束 6）。
+ *
+ * menu-unavailable は「既にミュート済み」と「Qiita の画面が変わった」の両方を
+ * 含む。**見分けられないことを隠さずに書く** — 見分けようとすると解除の文言を
+ * 実装に持ち込むことになり、それを押す経路ができる。
+ *
+ * default を書かないこと。MuteOutcome に値を足したとき、TypeScript が漏れを教える。
+ */
+export function describeMuteOutcome(outcome: MuteOutcome): string {
+  switch (outcome) {
+    case 'muted':
+      return 'Qiita 側でミュートしました。';
+    case 'not-on-page':
+      return 'いま開いているトレンドページにこの著者の記事が無いため、ミュートできませんでした。次に出てきたときに押し直してください。';
+    case 'no-trend-tab':
+      return 'トレンドページを開いてから押してください。';
+    case 'menu-unavailable':
+      return 'ミュートのメニューが見つかりませんでした。既にミュート済みか、Qiita の画面構造が変わった可能性があります。';
+    case 'timeout':
+      return '完了の通知を確認できませんでした。設定 > ミュート で結果を確認してください。';
+    case 'unreachable':
+      return 'トレンドページに届きませんでした。ページを再読み込みしてから押し直してください。';
+  }
 }

@@ -169,6 +169,20 @@
         opacity: 0.75;
         margin: 0 0 12px;
       }
+      /* 「妥当」と同時に Qiita 側でもミュートするかの切り替え。
+         **一覧のすぐ上に置く。**下に置くと、押したあとに気づくことになる */
+      .mute-toggle {
+        margin: 0 0 2px;
+        font-size: 0.9rem;
+      }
+      .mute-toggle label {
+        cursor: pointer;
+      }
+      /* ミュートの結果。実行したものにだけ出る。**display は指定しない** —
+         指定すると UA の [hidden]{display:none} に勝ってしまう */
+      .mute-status {
+        font-size: 0.85rem;
+      }
     </style>
   </head>
   <body>
@@ -205,6 +219,21 @@
         条件を変えても Qiita には問い合わせません。すでに集めたデータで判定をやり直すだけです。
       </p>
     </details>
+
+    <p class="mute-toggle">
+      <label for="mute-on-valid">
+        <input type="checkbox" id="mute-on-valid" />
+        「妥当」と同時に Qiita 側でもミュートする
+      </label>
+    </p>
+    <p class="footnote" id="mute-note">
+      ミュートは
+      <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer"
+        >設定 &gt; ミュート</a
+      >
+      から一覧・解除ができます。
+    </p>
+
     <ul id="candidates"></ul>
     <p id="empty" hidden>
       いまの条件に当てはまる候補はありません。トレンドページを開くと蓄積が増えます。

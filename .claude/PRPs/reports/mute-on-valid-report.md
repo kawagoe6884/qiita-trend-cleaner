@@ -1,0 +1,185 @@
+# Implementation Report: 「妥当」と同時にミュートする（Phase 8）
+
+## Summary
+
+ポップアップで「妥当」を押したときに、開いているトレンドページのカードから **Qiita 公式のミュートメニューを自動操作**する機能を実装した。既定はオフで、「「妥当」と同時に Qiita 側でもミュートする」にチェックを入れたときだけ動く。
+
+起動は **`chrome.tabs.sendMessage`**（`storage.onChanged` ではない）。**既に「妥当」を押してある候補をもう一度押してもやり直せる。**
+
+**実機確認はまだ。**ユニットテストと変異テストは全通過している。
+
+## Assessment vs Reality
+
+| 指標 | 計画の予測 | 実際 |
+|---|---|---|
+| Complexity | Large | **Large**（一致） |
+| Confidence | 8/10 | **8 相当** — 設計判断はすべて計画どおりに通った。ずれたのは**テストの強度**（下記） |
+| ファイル数 | 13 | **18**（実装 8 / テスト 6 / HTML 1 / setup 1、＋ 型の整理で domain.ts に guard を 1 つ） |
+| 追加行数 | — | **+1302 / -53**（＋ 新規 `muter.ts` 169 行、`muter.test.ts` 382 行） |
+| テスト数 | — | **445 → 514（+69）** |
+
+## Tasks Completed
+
+| # | Task | 状態 | 備考 |
+|---|---|---|---|
+| 1 | `selectors.ts` にメニューのセレクタと `MENU_TEXT` | 完了 | |
+| 2 | `selectors.test.ts` に文言の検査 | 完了 | |
+| 3 | `trend-reader.ts` に `readTrendCards` | 完了 | |
+| 4 | `hider.ts` を載せ替え、`revealCard` / `concealCard` を export | 完了 | **既存テスト無改変で全通過** |
+| 5 | `types/domain.ts` に `MuteOutcome` 等 | 完了 | **逸脱**: 配列 + `isMuteOutcome` に変更（D-1） |
+| 6 | `types/messages.ts` にメッセージ | 完了 | |
+| 7 | `storage.ts` に 4 つの入口 | 完了 | |
+| 8 | `src/dom/muter.ts` | 完了 | **Statements 100%** |
+| 9 | `src/dom/muter.test.ts` | 完了 | 26 件。変異 8 件すべて捕捉 |
+| 10 | `content-script.ts` にメッセージ受信と直列キュー | 完了 | |
+| 11 | `content-script.test.ts` にミュートのテスト | 完了 | 6 件追加。**1 件が弱く、変異で発覚**（I-1） |
+| 12 | ポップアップ側（setup / html / state / page） | 完了 | **逸脱**: `applySettings` も `muteLog` を読む（D-2） |
+| 13 | ドキュメント更新 | 完了 | PRD / CLAUDE.md |
+
+## Validation Results
+
+| レベル | 状態 | 内容 |
+|---|---|---|
+| 型チェック | **Pass** | `tsc --noEmit` エラー 0 |
+| Lint | **Pass** | `eslint .` エラー 0 |
+| 整形 | **Pass** | `prettier --write .` |
+| ユニットテスト | **Pass** | **514 件 / 21 ファイル**（445 → +69） |
+| カバレッジ | **Pass** | 全体 Statements 96.5% / `muter.ts` **100%** / `storage.ts` 98.85% |
+| ビルド | **Pass** | service worker ローダーと content script ローダーが別々の正しいチャンクを指す |
+| 権限 | **Pass** | `["storage"]` / `["https://qiita.com/*"]` のまま。**`tabs` / `scripting` を追加していない** |
+| ログ水準 | **Pass** | `muter.ts` / `popup-state.ts` に `warn` / `error` 0 件。`content-script.ts` は既存の ping 由来 2 件のみ |
+| 実データ混入 | **Pass** | 実アカウント名・実 item_id は 0 件 |
+| **変異テスト** | **Pass** | **17 変異すべて捕捉** |
+| 実機確認 | **未実施** | チェックリストは計画に記載済み |
+
+### 変異テストの結果
+
+実装を 1 箇所ずつ壊し、狙ったテストが**名指しで落ちる**ことを確認した。
+
+| # | 変異 | 結果 |
+|---|---|---|
+| 1a | 完全一致 → `includes(MENU_TEXT.mute)` | CAUGHT |
+| 1b | 完全一致 → `includes('ミュート')` | CAUGHT |
+| 2 | テキスト一致 → インデックス選択 | CAUGHT |
+| 3 | id 比較 → `#id` セレクタの組み立て | CAUGHT |
+| 4 | 一時的に表示へ戻す処理を外す | CAUGHT |
+| 5 | `finally` で隠し直す処理を外す | CAUGHT |
+| 6 | `aria-controls` が無いときカード内 menu へフォールバック | CAUGHT |
+| 7 | Snackbar を待たずに `muted` を返す | CAUGHT |
+| C1 | トレンドページの判定を外す | CAUGHT |
+| C2 | 扱わないメッセージでも `true` を返す | CAUGHT |
+| C3 | 直列化をやめて即実行 | CAUGHT |
+| P1 | **値が変わったときだけ送る**（`storage.onChanged` 相当） | CAUGHT |
+| P2 | 「誤り」でも送る | CAUGHT |
+| P3 | チェックの状態を見ない | CAUGHT |
+| S1 | トレンドタブで絞らず最初のタブへ送る | CAUGHT |
+| S2 | 応答の `handle` を照合しない | CAUGHT |
+| S3 | 知らない `outcome` を素通し | CAUGHT |
+
+**ハーネス自体の健全性も確認できている。**1 回目の実行で 1 件、2 回目で 3 件が MISSED になった。全件が同じ結論に揃わなかったので、「全部 CAUGHT」が信用できる。
+
+## Files Changed
+
+| ファイル | 操作 | 行数 |
+|---|---|---|
+| `src/dom/muter.ts` | **CREATE** | 169 |
+| `src/dom/muter.test.ts` | **CREATE** | 382 |
+| `src/ui/popup/popup-page.test.ts` | UPDATE | +242 |
+| `src/content/content-script.test.ts` | UPDATE | +177 |
+| `src/ui/popup/popup-state.test.ts` | UPDATE | +166 / -5 |
+| `src/ui/popup/popup-state.ts` | UPDATE | +164 |
+| `src/ui/popup/popup-page.ts` | UPDATE | +114 |
+| `src/lib/storage.test.ts` | UPDATE | +83 |
+| `src/content/content-script.ts` | UPDATE | +82 |
+| `src/types/domain.ts` | UPDATE | +61 |
+| `src/lib/storage.ts` | UPDATE | +60 |
+| `src/dom/hider.ts` | UPDATE | +52 / -21 |
+| `src/dom/trend-reader.ts` | UPDATE | +38 |
+| `src/dom/selectors.ts` | UPDATE | +31 |
+| `src/ui/popup/index.html` | UPDATE | +29 |
+| `src/types/messages.ts` | UPDATE | +24 |
+| `src/dom/selectors.test.ts` | UPDATE | +19 |
+| `src/test/setup.ts` | UPDATE | +13 |
+
+## Deviations from Plan
+
+### D-1: `MuteOutcome` を配列から導出し、型ガードを 1 つ足した
+
+- **WHAT**: 計画では union 型リテラルで書く予定だった。実際は `MUTE_OUTCOMES` 配列 + `(typeof MUTE_OUTCOMES)[number]` + `isMuteOutcome` にした。
+- **WHY**: 妥当性の検査が **`storage.ts`（storage から読んだ値）と `popup-state.ts`（メッセージで届いた値）の 2 箇所**で必要になった。計画どおりに書くと同じ一覧を 2 回持つことになり、値を足したとき片方だけ直す形になる（CLAUDE.md の「同じ形の窓が 3 つあり、1 つ直しても残りが同じことをしていた」）。書く直前に気づいて 1 箇所に寄せた。
+
+### D-2: `applySettings` も `muteLog` を読むようにした
+
+- **WHAT**: 計画には `loadPopupState` だけ書いてあった。実装中に `applySettings`（スライダーを離したときの再検出）も `toViews` を呼ぶことに気づき、そこにも足した。
+- **WHY**: 足さないと **つまみを 1 つ動かした瞬間にミュートの結果表示が全部消える**。`Candidate.verdict` を持たせなかったのと**まったく同じ形の失敗**で、計画がそれを 1 箇所しか見ていなかった。
+
+### D-3: 「既存テストを 1 つも書き換えない」を守れなかった（3 種類）
+
+計画の受け入れ基準は「**既存の 445 件を 1 つも書き換えずに通る**」だった。3 種類の書き換えが発生した。
+
+| 何を | なぜ |
+|---|---|
+| `popup-page.test.ts` の `PopupState` フィクスチャ 9 箇所に `muteOnValid: false` | **型の追加による機械的な変更。**`PopupState` に必須フィールドを足した以上避けられない。任意フィールドにすれば避けられたが、それだと `loadPopupState` が黙って設定し忘れる余地が残る |
+| `setupDom()` にチェックボックスと案内を追加 | 新しい UI 要素をテストから触るため |
+| `popup-page.test.ts` の待機条件を `verdictMock` から再描画へ | **バグではなくテストの弱さ**（I-1） |
+
+**`hider.test.ts` と `content-script.test.ts` の既存分（Phase 6 / 7 の振る舞い）は 1 行も変えていない。**`hider.ts` のリファクタが Phase 7 を壊していないことは、これで確認できている。
+
+## Issues Encountered
+
+### I-1: 変異テストが 4 件の「守っていないテスト」を暴いた
+
+これが今回いちばん価値のあった工程。**書いた直後は全部通っていたテストのうち 4 件が、実装を壊しても落ちなかった。**
+
+| テスト | 落ちなかった理由 | 直し方 |
+|---|---|---|
+| 「ミュートを解除」しか無ければ何もクリックしない | **私が置いた解除の文言が `MENU_TEXT.mute` を部分文字列として含んでいなかった。**「投稿ユーザー**の**ミュートを解除」は「投稿ユーザー**を**ミュート」を含まない。`includes` 変異が等価だった | **解除の実際の文言は意図的に測っていない**ので、推測に依存しない形（`${MENU_TEXT.mute}を解除`）で「含むだけの項目は押さない」性質を固定するテストを追加 |
+| 2 件続けて依頼しても重ならない | `muteAuthor` は `item.click()` まで**全部同期**で、テストの Snackbar も同期に出していた。列を外しても順序が同じになる | Snackbar を `setTimeout` で遅らせ、**依頼直後に「まだ 1 件も走っていない」**ことと、**1 件目が待っている間に 2 件目が開始していない**ことを検査 |
+| 「誤り」では依頼しない | `vi.waitFor(verdictMock が呼ばれた)` が**即座に成立**し、`requestMute` の await 連鎖が始まる前にアサートしていた | 待機条件を「再描画が終わった」（`aria-pressed="true"` が付く）に変更。`handleVerdict` の末尾なので、そこまで来れば全部終わっている |
+| チェックがオフなら依頼しない | 同上 | 同上 |
+
+### I-2: `popup-state.test.ts` に 5 行の JSDoc 重複がコミット済みで残っていた
+
+同一ファイルへの編集で**ゲートが 1 本目を拒否し、再実行したら二重に適用される**という事故を今回 2 回踏んだ（`selectors.test.ts` と `types/domain.ts`）。どちらもその場で気づいて直したが、**`popup-state.test.ts` には過去のセッションで同じ事故が入り、コミットまで通っていた。**今回のついでに削除した。
+
+**JSDoc の孤立・重複が通算 5 回目。**今回は 2 回とも自分で見つけた（テストの失敗と、読み返し）。
+
+### I-3: 型エラーが `@types/chrome` のオーバーロードで 2 度出た
+
+`chrome.tabs.query` と `chrome.tabs.sendMessage` は複数のオーバーロードを持ち、`vi.mocked` が void を返すシグネチャを拾う。Phase 6 の `runtime.sendMessage` とまったく同じ罠。**テスト側のモック取得 1 箇所に理由コメント付きでキャストを寄せて封じ込めた**（`as unknown as X` は eslint の `--fix` がアサーションごと消すので、必要性のある形に留めた）。
+
+## Tests Written
+
+| テストファイル | 追加 | 守っているもの |
+|---|---|---|
+| `src/dom/muter.test.ts` | **26 件（新規）** | **ブロックの誤爆**、既にミュート済みの解除、React の生成 ID、Phase 7 の非表示との競合、Snackbar の完了検知 |
+| `src/ui/popup/popup-page.test.ts` | 12 件 | **押し直しでやり直せること（★ 設計の番人）**、チェックの既定オフ、「誤り」で送らない、タブの選別、結果の表示 |
+| `src/ui/popup/popup-state.test.ts` | 12 件 | 文言の網羅と非断定、タブの選別、応答の検証、storage への記録 |
+| `src/lib/storage.test.ts` | 10 件 | 既定 false、`'false'` を true と読まない、1 件壊れても全体を捨てない |
+| `src/content/content-script.test.ts` | 6 件 | トレンド以外で操作しない、チャネルを塞がない、**直列化** |
+| `src/dom/selectors.test.ts` | 2 件 | ミュートとブロックの文言が互いを含まない |
+
+## Next Steps
+
+- [ ] **実機確認**（計画の実機チェックリストをすべて実施）。とくに:
+  - **同じ候補の「妥当」を 2 回押して `settings/mutes` から消えないこと**（＝ 解除されていない）
+  - **`settings/mutes` にフォロー / ブロックが増えていないこと**
+  - 既に「妥当」を押してある 2 件で、チェックを入れてから押し直す（起動経路の実証）
+  - トレンドタブを 2 枚開いてミュートが 1 回だけであること
+  - `chrome://extensions` のエラー欄が 1 行も増えていないこと
+- [ ] 実機確認後に PRD の Phase 8 を `complete` にする
+- [ ] Phase 9（適合率計測・閾値調整）へ
+
+## 記事の素材として得られたもの
+
+| 素材 | 内容 |
+|---|---|
+| **教訓が先回りで効いた初めての例** | 「storage の変更通知は操作の通知ではない」は Phase 7 の実機バグから得た教訓。今回は**設計の段階で適用**し、`onChanged` にミュートをぶら下げる案を書く前に捨てた。既に「妥当」を押してある 2 件が永久にミュートされない不具合を、実機に出す前に消している。**変異テスト P1 がその番人になっている** |
+| **等価変異が「測っていないこと」を教えた** | 「解除の文言では落ちない」変異が MISSED になり、**自分の置いたフィクスチャが推測でしかない**ことが露見した。解除の文言は意図的に測っていない（知ると押す経路ができる）ので、推測に依存しない形で性質を固定し直した。**測っていないものをテストの前提に使っていた** |
+| **同期処理は直列化のテストを無効にする** | `muteAuthor` は click まで全部同期。Snackbar も同期に出していたため、**列を外しても順序が同じ**になった。非同期の境界を作らないと、直列化しているかどうかは観測できない |
+| **即座に解決する await は待っていない** | `vi.waitFor(モックが呼ばれた)` は、そのモックが同期的に解決するなら**何も待たない**。後続の await 連鎖が始まる前にアサートしてしまう。待つべきは「処理の末尾で起きること」（今回は再描画） |
+| **知らない方が安全な情報がある** | ミュート解除の文言を調べれば「既にミュート済み」を UI で判別できる。**だが調べない** — 実装がその文字列を知った瞬間、それを押す経路が生まれる。完全一致で「一致しなければ何もしない」に閉じる方が強い |
+| **危険な選択肢が安全な選択肢の真上にある** | メニューは「フォロー / **ブロック** / ミュート」。**インデックスをコードのどこにも書かない**という制約が、そこから導かれた。変異テスト 2 番がそれを固定している |
+| **Phase 7 が Phase 8 の敵になった** | 「妥当」で隠す機能が、「妥当」でミュートする機能の邪魔をする。同じトリガーから 2 つの副作用が非同期に走り、順序が保証されない |
+| **同じ計画ミスが 2 回目** | 「閾値を変えると評価が消える」（`Candidate.verdict`）とまったく同じ形の欠陥を、`applySettings` に `muteLog` を渡し忘れる形で作りかけた。**寿命の違うデータを一緒に作り直す経路は 1 つとは限らない** |
+| **ツールの拒否と再実行がコードを二重にする** | 同一ファイルへの並列編集でゲートが 1 本目を弾き、再実行で二重適用される事故を 2 回。**過去のセッションでは同じ事故がコミットまで通っていた**（`popup-state.test.ts` の JSDoc 重複）。書いた直後に読み返す工程が要る |

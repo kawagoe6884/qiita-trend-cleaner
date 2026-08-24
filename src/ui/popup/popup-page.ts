@@ -19,16 +19,19 @@ import {
   loadPopupState,
   applySettings,
   recordVerdict,
+  requestMute,
   formatJst,
   describeMode,
   describeCall,
   describeEmpty,
   describeCoAuthors,
+  describeMuteOutcome,
   rateLimitNotice,
 } from './popup-state';
 import type { CandidateView, Precision } from './popup-state';
+import { saveMuteOnValid } from '../../lib/storage';
 import { DEFAULT_SETTINGS } from '../../types/domain';
-import type { Settings, Verdict } from '../../types/domain';
+import type { MuteLog, Settings, Verdict } from '../../types/domain';
 
 const SELECTORS = {
   notice: '#notice',
@@ -47,7 +50,12 @@ const SELECTORS = {
   lookbackValue: '#lookback-value',
   conditionsSummary: '#conditions-summary',
   openOptions: '#open-options',
+  muteOnValid: '#mute-on-valid',
+  muteNote: '#mute-note',
 } as const;
+
+/** 依頼してから応答が返るまでの表示。数秒かかるので、押した直後に出す */
+const MUTE_PENDING_TEXT = 'ミュートしています…';
 
 /** スライダーの可動域。実測（最大クラスタ 16）と保持期間 7 日に合わせる */
 const RANGES = {
@@ -93,6 +101,12 @@ function renderMode(hasToken: boolean): void {
   setText(SELECTORS.modeTitle, copy.title);
   setText(SELECTORS.modeDetail, copy.detail);
   setText(SELECTORS.openOptions, copy.action);
+}
+
+/** 保存済みの設定をチェックボックスに映す。**init でだけ呼ぶ** */
+function renderMuteToggle(muteOnValid: boolean): void {
+  const input = find<HTMLInputElement>(SELECTORS.muteOnValid);
+  if (input) input.checked = muteOnValid;
 }
 
 function renderSummary(views: CandidateView[], precision: Precision): void {
@@ -168,9 +182,20 @@ function candidateItem(view: CandidateView): HTMLLIElement {
     paragraph('scores', describeScores(view)),
     ...coAuthorLine(view),
     evidenceLine(view),
+    ...muteStatusLine(view),
     actions,
   );
   return item;
+}
+
+/**
+ * ミュートの結果の行。**まだ試していなければ行ごと出さない**
+ * （coAuthorLine と同じ扱い。空の <p> を置くと余白だけが残る）。
+ */
+function muteStatusLine(view: CandidateView): HTMLParagraphElement[] {
+  return view.mute === null
+    ? []
+    : [paragraph('mute-status', describeMuteOutcome(view.mute.outcome))];
 }
 
 /**
@@ -265,6 +290,9 @@ let currentPrecision: Precision = { valid: 0, falsePositive: 0, ratio: null };
 let currentViews: CandidateView[] = [];
 let currentHasIndex = false;
 let currentRateLimited = false;
+/** 「妥当」と同時に Qiita 側でもミュートするか。**既定は false** */
+let currentMuteOnValid = false;
+let currentMuteLog: MuteLog = {};
 
 /**
  * ドラッグ中に呼ぶ。**同期処理だけ。**
@@ -329,14 +357,57 @@ async function handleVerdict(handle: string, verdict: Verdict): Promise<void> {
   busy = true;
   try {
     currentPrecision = await recordVerdict(handle, verdict);
+    // 「妥当」かつ設定がオンのときだけ Qiita 側を変更する。
+    // **storage の変更を待つのではなく、ここから送る** — 既に valid のものを
+    // 押し直したときも実行できる。これがリトライ手段でもある
+    if (verdict === 'valid' && currentMuteOnValid) {
+      // 数秒かかる。busy で他のボタンも効かないので、何が起きているか出す
+      showMutePending(handle);
+      currentMuteLog = await requestMute(handle, new Date());
+    }
     currentViews = currentViews.map((view) =>
-      view.candidate.authorHandle === handle ? { ...view, verdict } : view,
+      view.candidate.authorHandle === handle
+        ? { ...view, verdict, mute: currentMuteLog[handle] ?? null }
+        : view,
     );
     renderCandidates(currentViews);
     renderSummary(currentViews, currentPrecision);
   } finally {
     busy = false;
   }
+}
+
+/**
+ * 候補の行を著者ハンドルで引く。
+ *
+ * **セレクタ文字列を組み立てない。**ハンドルは Qiita 由来の外部データで、
+ * `li[data-handle="..."]` に埋めると別の要素に一致したり例外になったりする。
+ * 列挙して比較すればエスケープの問題が起きようが無い（muter の menu id と同じ手）。
+ */
+function findCandidateItem(handle: string): HTMLLIElement | null {
+  for (const item of document.querySelectorAll<HTMLLIElement>('#candidates li[data-handle]')) {
+    if (item.dataset.handle === handle) return item;
+  }
+  return null;
+}
+
+/**
+ * 依頼中であることを出す。**一覧を作り直さない** — 作り直すと、
+ * 押したボタンが差し替わってフォーカスが飛ぶ。該当の行だけを書き換える。
+ */
+function showMutePending(handle: string): void {
+  const item = findCandidateItem(handle);
+  if (item === null) return;
+  const existing = item.querySelector<HTMLElement>('.mute-status');
+  if (existing !== null) {
+    existing.textContent = MUTE_PENDING_TEXT;
+    return;
+  }
+  const line = paragraph('mute-status', MUTE_PENDING_TEXT);
+  const actions = item.querySelector('.actions');
+  // 結果はボタンの上に出す。下に足すと、行が増えるたびにボタンが動く
+  if (actions === null) item.append(line);
+  else item.insertBefore(line, actions);
 }
 
 /** クリックされたボタンから著者と判定を取り出す。委譲なので自分で辿る */
@@ -394,6 +465,21 @@ function watchRateLimit(): void {
 }
 
 /**
+ * リンクのクリックなら背景タブで開き、true を返す。
+ *
+ * 括り出したのは、候補一覧の外（ミュートの案内文）にもリンクがあるため。
+ * どちらもポップアップを閉じずに開けなければ意味がない。
+ */
+function handleLinkClick(event: MouseEvent): boolean {
+  const link =
+    event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href]') : null;
+  if (link === null) return false;
+  event.preventDefault();
+  openInBackground(link.href);
+  return true;
+}
+
+/**
  * イベントリスナーを登録する。
  *
  * **storage の読み込みより先に呼ぶこと。**（options-page.ts と同じ理由）
@@ -403,13 +489,7 @@ function watchRateLimit(): void {
 function attachListeners(): void {
   watchRateLimit();
   find(SELECTORS.candidates)?.addEventListener('click', (event) => {
-    const link =
-      event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('a[href]') : null;
-    if (link !== null) {
-      event.preventDefault();
-      openInBackground(link.href);
-      return;
-    }
+    if (handleLinkClick(event)) return;
     const resolved = resolveVerdictTarget(event.target);
     if (resolved === null) return;
     handleVerdict(resolved.handle, resolved.verdict).catch((error: unknown) => {
@@ -428,6 +508,20 @@ function attachListeners(): void {
       scheduleApply();
     });
   }
+
+  // 解除の案内（設定 > ミュート）も背景タブで開く。同じタブで開くと
+  // ポップアップが閉じ、評価の続きができなくなる
+  find(SELECTORS.muteNote)?.addEventListener('click', (event) => {
+    handleLinkClick(event);
+  });
+
+  find<HTMLInputElement>(SELECTORS.muteOnValid)?.addEventListener('change', (event) => {
+    const checked = event.target instanceof HTMLInputElement && event.target.checked;
+    currentMuteOnValid = checked;
+    saveMuteOnValid(checked).catch((error: unknown) => {
+      logger.error('failed to save mute setting:', error);
+    });
+  });
 
   find(SELECTORS.openOptions)?.addEventListener('click', () => {
     chrome.runtime.openOptionsPage().catch((error: unknown) => {
@@ -449,6 +543,8 @@ export async function init(): Promise<void> {
     currentViews = state.views;
     currentHasIndex = state.hasIndex;
     currentRateLimited = state.rateLimitNotice !== null;
+    currentMuteOnValid = state.muteOnValid;
+    renderMuteToggle(state.muteOnValid);
     renderMode(state.hasToken);
     renderSliderInputs(state.settings);
     renderSettingLabels(state.settings);

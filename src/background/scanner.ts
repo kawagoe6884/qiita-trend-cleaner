@@ -380,13 +380,6 @@ async function persistScan(input: PersistInput): Promise<ScanResult> {
 }
 
 /**
- * スキャンを 1 回実行する。
- *
- * items は content script が表示中のページから読んだトレンド記事。
- * 既にインデックスにある記事は叩かないため、同じページをリロードしても
- * API を 1 度も消費しない。
- */
-/**
  * スキャンが走っている間 true。**同時に 2 本走らせない。**
  *
  * content script は qiita.com のページを開くたびに TREND_ITEMS を送り、
@@ -399,6 +392,13 @@ async function persistScan(input: PersistInput): Promise<ScanResult> {
  */
 let scanning = false;
 
+/**
+ * スキャンを 1 回実行する。
+ *
+ * items は content script が表示中のページから読んだトレンド記事。
+ * 既にインデックスにある記事は叩かないため、同じページをリロードしても
+ * API を 1 度も消費しない。
+ */
 export async function runScan(items: TrendItem[]): Promise<ScanResult | null> {
   const startedAt = new Date().toISOString();
 

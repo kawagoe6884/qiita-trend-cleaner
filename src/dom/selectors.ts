@@ -28,12 +28,43 @@ export const SELECTORS = {
    * 表示テキスト（「2026年08月18日」）は UTC との日付ずれがあるため読まない。
    */
   trendItemTime: 'time[datetime]',
+  /**
+   * カードの三点メニューを開くボタン（アイコンは more_horiz）。
+   * aria-haspopup と aria-label はどちらも ARIA の契約であり、CSS-in-JS の
+   * ハッシュクラスと違ってリニューアルに耐える。
+   *
+   * ⚠️ aria-controls が <ul role="menu"> の id を指すが、**開いたあとに読むこと**。
+   *    React は開いたときに初めて属性を設定することがある。
+   */
+  cardMenuButton: '[aria-haspopup="dialog"][aria-label="ユーザーを管理"]',
+  /** 開いたメニュー本体。aria-controls の id と突き合わせて特定する */
+  cardMenu: '[role="menu"]',
+  /** メニューの項目。**どれを押すかはテキスト完全一致だけで決める**（MENU_TEXT 参照） */
+  menuItem: '[role="menuitem"]',
 } as const;
 
 /** Snackbar が表示する完了メッセージ。Phase 8 の完了検知に使う */
 export const SNACKBAR_TEXT = {
   muteCompleted: 'ミュートが完了しました',
   unmuteCompleted: 'ミュートの解除が完了しました',
+} as const;
+
+/**
+ * メニュー項目の文言。**完全一致でのみ使う。**
+ *
+ * ⚠️ ブロックがミュートの **直上** にある（2026-08-24 実測）。順序やインデックスで
+ * 選ぶと 1 つずれただけでブロックを踏む。ブロックは native alert() を起動して
+ * content script から閉じられず、解除用の一覧 URL も存在しないので誤検知を
+ * 回収できない（設計上の約束 7）。
+ * **block は「押してはいけないもの」としてだけ持つ。**テストが誤爆を検査するために使う。
+ *
+ * 既にミュート済みのユーザーは文言が変わる（項目がトグルで解除側になる）。
+ * 完全一致なら一致せず何も押さないので、**解除の文言を知らないまま安全に何もしない。**
+ * 知らない方が安全なので調べない — 実装がその文字列を知った瞬間、押す経路が生まれる。
+ */
+export const MENU_TEXT = {
+  mute: '投稿ユーザーをミュート',
+  block: '投稿ユーザーをブロック',
 } as const;
 
 /** 拡張が注入済みであることを示すマーカー（dataset のキー名） */

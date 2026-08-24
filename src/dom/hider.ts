@@ -21,8 +21,8 @@
  * カードが特定できなければ黙って諦める（設計上の約束 3）。
  * 誤った対象を隠すより、何もしない方が無害。
  */
-import { SELECTORS, HIDDEN_MARKER, HIGHLIGHT_MARKER, NOTICE_ID } from './selectors';
-import { readTrendItems, findCard } from './trend-reader';
+import { HIDDEN_MARKER, HIGHLIGHT_MARKER, NOTICE_ID } from './selectors';
+import { readTrendItems, readTrendCards } from './trend-reader';
 import type { AccountHandle, FeedbackLog } from '../types/domain';
 
 /** dataset のキー（qtgHidden）に対応する属性セレクタ */
@@ -69,18 +69,12 @@ export function hideJudgedAuthors(feedback: FeedbackLog, root: ParentNode = docu
   const hiddenAuthors = new Set<AccountHandle>();
   let hidden = 0;
 
-  for (const link of root.querySelectorAll<HTMLAnchorElement>(SELECTORS.trendItemLink)) {
-    const card = findCard(link);
-    if (!(card instanceof HTMLElement)) continue;
-    // 1 カードに記事リンクが 2 本あるので、同じカードに 2 回来る
+  for (const { item, card } of readTrendCards(root)) {
+    if (!targets.has(item.authorHandle)) continue;
+    // 既に隠れているものを二重に数えない
     if (isHidden(card)) continue;
 
-    // どの著者のカードかは、そのカード内の記事リンクから引く
-    const [item] = readTrendItems(card);
-    if (item === undefined || !targets.has(item.authorHandle)) continue;
-
-    card.style.display = 'none';
-    card.dataset[HIDDEN_MARKER] = 'true';
+    concealCard(card);
     // 背景の目印は「表示する」で戻したときに残る。どのカードが該当かが
     // 分からないと、誤検知の確認ができない
     card.style.backgroundColor = HIGHLIGHT_BACKGROUND;
@@ -90,6 +84,35 @@ export function hideJudgedAuthors(feedback: FeedbackLog, root: ParentNode = docu
   }
 
   return { hidden, authors: [...hiddenAuthors].sort() };
+}
+
+/**
+ * カードを 1 枚隠す。
+ *
+ * **インラインの display を使う**（hidden 属性だと Qiita 側の CSS に負ける。
+ * ファイル冒頭の理由を参照）。マーカーも同時に付けること — 付いていないと
+ * unhideAll が「拡張が隠したもの」として拾えなくなる。
+ */
+export function concealCard(card: HTMLElement): void {
+  card.style.display = 'none';
+  card.dataset[HIDDEN_MARKER] = 'true';
+}
+
+/**
+ * カードを 1 枚だけ表示に戻す。**隠れていたときだけ true を返す。**
+ *
+ * ミュートの操作中に一時的に戻すために要る（muter.ts）。「妥当」を押すと
+ * 非表示とミュートが同時に走り、**順序が保証されない**。muter 側が
+ * 「戻す → 操作 → finally で隠し直す」をやれば、どちらが先でも同じ結果になる。
+ *
+ * 背景の目印には触らない — あれは「妥当と判断した」印であって、
+ * 隠れているかどうかとは別の情報（HIGHLIGHT_MARKER の JSDoc 参照）。
+ */
+export function revealCard(card: HTMLElement): boolean {
+  if (!isHidden(card)) return false;
+  card.style.removeProperty('display');
+  delete card.dataset[HIDDEN_MARKER];
+  return true;
 }
 
 /** 拡張が隠した要素だけを列挙する。Qiita 自身が隠しているものは含まない */
@@ -110,10 +133,7 @@ export function countHidden(root: ParentNode = document): number {
  */
 export function unhideAll(root: ParentNode = document): number {
   const cards = hiddenCards(root);
-  for (const card of cards) {
-    card.style.removeProperty('display');
-    delete card.dataset[HIDDEN_MARKER];
-  }
+  for (const card of cards) revealCard(card);
   return cards.length;
 }
 

@@ -67,8 +67,21 @@ function setupDom(): void {
         <output id="lookback-value"></output>
       </p>
     </details>
+    <p class="mute-toggle">
+      <label for="mute-on-valid">
+        <input type="checkbox" id="mute-on-valid" />「妥当」と同時に Qiita 側でもミュートする
+      </label>
+    </p>
+    <p class="footnote" id="mute-note">
+      <a href="https://qiita.com/settings/mutes">設定 &gt; ミュート</a>
+    </p>
     <ul id="candidates"></ul>
     <p id="empty" hidden>いまの条件に当てはまる候補はありません。</p>`;
+}
+
+/** chrome.tabs.Tab の全項目は要らない。query が返す最小形だけ用意する */
+function tab(id: number, url: string, active = false): chrome.tabs.Tab {
+  return { id, url, active } as unknown as chrome.tabs.Tab;
 }
 
 function el<T extends HTMLElement>(selector: string): T {
@@ -96,6 +109,7 @@ beforeEach(() => {
     lastScanAt: '2026-08-20T03:00:00.000Z',
     hasToken: false,
     hasIndex: true,
+    muteOnValid: false,
   });
   applyMock.mockResolvedValue(toViews([candidate()], {}));
   verdictMock.mockResolvedValue({ valid: 1, falsePositive: 0, ratio: 1 });
@@ -122,6 +136,7 @@ describe('init の描画', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      muteOnValid: false,
     });
     await init();
     expect(el('#summary').textContent).toContain('適合率 75%');
@@ -147,6 +162,7 @@ describe('init の描画', () => {
       lastScanAt: null,
       hasToken: true,
       hasIndex: true,
+      muteOnValid: false,
     });
     // Act
     await init();
@@ -171,6 +187,7 @@ describe('init の描画', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      muteOnValid: false,
     });
     await expect(init()).resolves.toBeUndefined();
     expect(el('#empty').hidden).toBe(false);
@@ -201,6 +218,7 @@ describe('init の描画', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      muteOnValid: false,
     });
     await init();
     expect(el('#notice').hidden).toBe(false);
@@ -242,6 +260,7 @@ describe('init の XSS 対策', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      muteOnValid: false,
     });
     // Act
     await init();
@@ -269,8 +288,11 @@ describe('init の操作', () => {
     applyMock.mockClear();
     // Act
     clickVerdict('妥当');
+    // handleVerdict が最後まで走るのを待つ。**verdictMock の呼び出しでは足りない** —
+    // 即座に解決するので、requestMute の await 連鎖が始まる前にアサートしてしまう。
+    // 再描画は handleVerdict の末尾なので、ここまで来れば全部終わっている
     await vi.waitFor(() => {
-      expect(verdictMock).toHaveBeenCalled();
+      expect(document.querySelector('#candidates button[aria-pressed="true"]')).not.toBeNull();
     });
     // Assert — 閾値は変わっていないので検出をやり直す理由が無い
     expect(applyMock).not.toHaveBeenCalled();
@@ -445,6 +467,7 @@ describe('候補一覧への一言', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      muteOnValid: false,
     });
     await init();
     expect(el('#call').hidden).toBe(true);
@@ -621,6 +644,7 @@ describe('候補ゼロの案内', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex,
+      muteOnValid: false,
     };
   }
 
@@ -795,6 +819,7 @@ describe('coAuthors の行', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      muteOnValid: false,
     };
   }
 
@@ -832,5 +857,220 @@ describe('coAuthors の行', () => {
     const line = document.querySelector('#candidates .co-authors');
     expect(line?.querySelector('img')).toBeNull();
     expect(line?.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+});
+
+/**
+ * 「妥当」と同時のミュート。**既定はオフ。**
+ *
+ * 起動は storage.onChanged ではなくメッセージで行う。評価が既に valid なら
+ * storage の値が変わらず通知が発火せず、**押し直しでのやり直しができなくなる**。
+ * ミュートは状態の同期ではなく操作である。
+ */
+describe('「妥当」と同時のミュート', () => {
+  const TREND_TAB = 1;
+
+  function stateWithMute(muteOnValid: boolean, views = toViews([candidate()], {})) {
+    return {
+      views,
+      precision: NO_PRECISION,
+      settings: SETTINGS,
+      rateLimitNotice: null,
+      lastScanAt: null,
+      hasToken: false,
+      hasIndex: true,
+      muteOnValid,
+    };
+  }
+
+  function tabsQueryMock() {
+    // @types/chrome の query はオーバーロードを複数持ち、vi.mocked が
+    // void を返すシグネチャを拾う。実行時には配列が返るので、ここだけ型を黙らせる
+    return vi.mocked(chrome.tabs.query) as unknown as {
+      mockResolvedValue: (value: chrome.tabs.Tab[]) => void;
+    };
+  }
+
+  function sendMessageMock() {
+    return vi.mocked(chrome.tabs.sendMessage) as unknown as {
+      mockResolvedValue: (value: unknown) => void;
+      mockRejectedValue: (value: unknown) => void;
+      mock: { calls: unknown[][] };
+    };
+  }
+
+  function muteResult(handle: string, outcome: string) {
+    return { type: 'MUTE_RESULT', handle, outcome };
+  }
+
+  beforeEach(() => {
+    tabsQueryMock().mockResolvedValue([tab(TREND_TAB, 'https://qiita.com/trend', true)]);
+    sendMessageMock().mockResolvedValue(muteResult('example-author-a', 'muted'));
+  });
+
+  it('チェックがオンなら「妥当」でミュートを依頼する', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithMute(true));
+    await init();
+    // Act
+    clickVerdict('妥当');
+    // Assert
+    await vi.waitFor(() => {
+      expect(sendMessageMock().mock.calls).toHaveLength(1);
+    });
+    expect(sendMessageMock().mock.calls[0]).toEqual([
+      TREND_TAB,
+      { type: 'MUTE_AUTHOR', handle: 'example-author-a' },
+    ]);
+  });
+
+  /**
+   * ★ **この設計の番人。**
+   * storage.onChanged で起動する実装に変えると、2 回目は値が変わらないため
+   * 通知が発火せず、ここが落ちる。押し直しがそのままリトライ手段になっている。
+   */
+  it('同じ著者に「妥当」を 2 回押すと、2 回ミュートを依頼する', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithMute(true));
+    await init();
+    // Act — 1 回目
+    clickVerdict('妥当');
+    await vi.waitFor(() => {
+      expect(sendMessageMock().mock.calls).toHaveLength(1);
+    });
+    // Act — 2 回目（評価は既に valid なので storage の値は変わらない）
+    clickVerdict('妥当');
+    // Assert
+    await vi.waitFor(() => {
+      expect(sendMessageMock().mock.calls).toHaveLength(2);
+    });
+  });
+
+  it('チェックがオフなら依頼しない', async () => {
+    // Arrange — 既定の状態
+    loadMock.mockResolvedValue(stateWithMute(false));
+    await init();
+    // Act
+    clickVerdict('妥当');
+    // handleVerdict が最後まで走るのを待つ。**verdictMock の呼び出しでは足りない** —
+    // 即座に解決するので、requestMute の await 連鎖が始まる前にアサートしてしまう。
+    // 再描画は handleVerdict の末尾なので、ここまで来れば全部終わっている
+    await vi.waitFor(() => {
+      expect(document.querySelector('#candidates button[aria-pressed="true"]')).not.toBeNull();
+    });
+    // Assert — 評価は記録されるが Qiita 側は変えない
+    expect(sendMessageMock().mock.calls).toHaveLength(0);
+  });
+
+  it('「誤り」では依頼しない', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithMute(true));
+    await init();
+    // Act
+    clickVerdict('誤り');
+    // handleVerdict が最後まで走るのを待つ。**verdictMock の呼び出しでは足りない** —
+    // 即座に解決するので、requestMute の await 連鎖が始まる前にアサートしてしまう。
+    // 再描画は handleVerdict の末尾なので、ここまで来れば全部終わっている
+    await vi.waitFor(() => {
+      expect(document.querySelector('#candidates button[aria-pressed="true"]')).not.toBeNull();
+    });
+    // Assert — 誤検知だったものをミュートしては本末転倒
+    expect(sendMessageMock().mock.calls).toHaveLength(0);
+  });
+
+  it('トレンドタブが無ければ依頼せず、案内を出す', async () => {
+    // Arrange
+    tabsQueryMock().mockResolvedValue([]);
+    loadMock.mockResolvedValue(stateWithMute(true));
+    await init();
+    // Act
+    clickVerdict('妥当');
+    // Assert
+    await vi.waitFor(() => {
+      expect(el('#candidates').textContent).toContain('トレンドページを開いてから');
+    });
+    expect(sendMessageMock().mock.calls).toHaveLength(0);
+  });
+
+  it('トレンドページのタブにだけ送る', async () => {
+    // Arrange — 記事ページのタブが先に並んでいても、そちらへは送らない
+    tabsQueryMock().mockResolvedValue([
+      tab(9, 'https://qiita.com/example-author-a/items/0123456789abcdef0001', true),
+      tab(TREND_TAB, 'https://qiita.com/trend'),
+    ]);
+    loadMock.mockResolvedValue(stateWithMute(true));
+    await init();
+    // Act
+    clickVerdict('妥当');
+    // Assert
+    await vi.waitFor(() => {
+      expect(sendMessageMock().mock.calls).toHaveLength(1);
+    });
+    expect(sendMessageMock().mock.calls[0]?.[0]).toBe(TREND_TAB);
+  });
+
+  it('届かなくても落ちず、押し直しを促す', async () => {
+    // Arrange — 拡張をリロードすると content script が孤児になる
+    sendMessageMock().mockRejectedValue(new Error('Receiving end does not exist'));
+    loadMock.mockResolvedValue(stateWithMute(true));
+    await init();
+    // Act
+    clickVerdict('妥当');
+    // Assert
+    await vi.waitFor(() => {
+      expect(el('#candidates').textContent).toContain('再読み込み');
+    });
+  });
+
+  it('結果の文言を候補の行に出す', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithMute(true));
+    await init();
+    // Act
+    clickVerdict('妥当');
+    // Assert
+    await vi.waitFor(() => {
+      expect(el('#candidates .mute-status').textContent).toBe('Qiita 側でミュートしました。');
+    });
+  });
+
+  it('まだ試していない候補には結果の行を出さない', async () => {
+    loadMock.mockResolvedValue(stateWithMute(true));
+    await init();
+    expect(document.querySelector('#candidates .mute-status')).toBeNull();
+  });
+
+  it('保存済みの設定をチェックボックスに映す', async () => {
+    loadMock.mockResolvedValue(stateWithMute(true));
+    await init();
+    expect(el<HTMLInputElement>('#mute-on-valid').checked).toBe(true);
+  });
+
+  it('チェックを切り替えると保存する', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithMute(false));
+    await init();
+    const input = el<HTMLInputElement>('#mute-on-valid');
+    // Act
+    input.checked = true;
+    input.dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(chrome.storage.local.set).toHaveBeenCalledWith({ muteOnValid: true });
+    });
+  });
+
+  it('解除の案内リンクは背景タブで開く', async () => {
+    // Arrange — 同じタブで開くとポップアップが閉じ、評価の続きができなくなる
+    loadMock.mockResolvedValue(stateWithMute(false));
+    await init();
+    // Act
+    el('#mute-note a').click();
+    // Assert
+    expect(chrome.tabs.create).toHaveBeenCalledWith({
+      url: 'https://qiita.com/settings/mutes',
+      active: false,
+    });
   });
 });

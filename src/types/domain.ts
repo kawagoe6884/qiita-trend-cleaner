@@ -71,6 +71,58 @@ export type FeedbackLog = Record<AccountHandle, Verdict>;
  */
 export type AuthorVisits = Record<AccountHandle, IsoDateTime>;
 
+/**
+ * ミュートを試みた結果。**例外ではなく値で返す**（DOM 層は投げない・約束 3）。
+ *
+ * **popup-state.ts が使うのでここに置く。**dom/muter.ts に置くと、
+ * ポップアップが DOM 操作モジュールを import することになる（ポップアップに
+ * トレンドページの DOM は無い）。RateLimitError を lib/errors.ts に集めたのと
+ * 同じ理由 — 型は「使う側が全員たどり着ける場所」に置く。
+ *
+ * `menu-unavailable` は「メニューに『投稿ユーザーをミュート』が無かった」。
+ * **既にミュート済みの場合もここに入る** — 項目がトグルで文言が変わるため、
+ * 完全一致では見分けられない。**見分けようとしない**（解除の文言を実装に
+ * 持ち込むと、それを押してしまう経路ができる）。UI の文言で両方を言う。
+ *
+ * | 値 | 意味 |
+ * |---|---|
+ * | `muted` | Snackbar で完了を確認した |
+ * | `not-on-page` | その著者のカードが表示中のページに無い（トレンドが入れ替わった等） |
+ * | `menu-unavailable` | 三点メニューか「投稿ユーザーをミュート」が無い。**既にミュート済みを含む** |
+ * | `timeout` | クリックしたが Snackbar が出なかった。成功しているかは不明 |
+ * | `no-trend-tab` | トレンドページを開いているタブが無い |
+ * | `unreachable` | タブに届かなかった（拡張のリロードで content script が孤児になった等） |
+ *
+ * **配列から型を導出する。**storage から読んだ値とメッセージで届いた値の
+ * 両方を検証する必要があり、一覧を 2 箇所に書くと片方だけ直すことになる。
+ */
+export const MUTE_OUTCOMES = [
+  'muted',
+  'not-on-page',
+  'menu-unavailable',
+  'timeout',
+  'no-trend-tab',
+  'unreachable',
+] as const;
+
+export type MuteOutcome = (typeof MUTE_OUTCOMES)[number];
+
+/**
+ * 外部から来た値が MuteOutcome かを判定する。
+ * storage の中身も別コンテキストからのメッセージも、自分が書いたとは限らない
+ */
+export function isMuteOutcome(value: unknown): value is MuteOutcome {
+  return typeof value === 'string' && (MUTE_OUTCOMES as readonly string[]).includes(value);
+}
+
+export interface MuteRecord {
+  outcome: MuteOutcome;
+  at: IsoDateTime;
+}
+
+/** 著者ハンドル -> 最後にミュートを試みた結果。UI に出すためだけに持つ */
+export type MuteLog = Record<AccountHandle, MuteRecord>;
+
 /** 検出された組織票の候補 */
 export interface Candidate {
   authorHandle: AccountHandle;
@@ -160,6 +212,15 @@ export interface LocalState {
   candidates: Candidate[];
   /** 候補への判定。適合率の唯一の入力 */
   feedback?: FeedbackLog;
+  /**
+   * 「妥当」と同時に Qiita 側でもミュートするか。**既定は false。**
+   *
+   * Settings（sync）に入れないのは、あれが detectCandidates の入力だから。
+   * 判定に関係しない値を混ぜない。明示的にオンにしたときだけ Qiita 側を変更する
+   */
+  muteOnValid?: boolean;
+  /** ミュートを試みた結果。失敗の記録として持ち、ポップアップに出す */
+  muteLog?: MuteLog;
   /** 著者ごとの過去記事巡回の記録。保持期間 7 日でパージする */
   authorVisits?: AuthorVisits;
   /** 保持期間 7 日 */

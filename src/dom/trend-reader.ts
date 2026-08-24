@@ -126,3 +126,41 @@ export function readTrendItems(root: ParentNode = document): TrendItem[] {
 
   return [...byUrl.values()];
 }
+
+/** 記事 1 件と、それが載っているカード要素の組 */
+export interface TrendCard {
+  item: TrendItem;
+  card: HTMLElement;
+}
+
+/**
+ * 表示中のページから「記事 ＋ カード要素」の組を読む。
+ *
+ * **1 カードにつき 1 件しか返さない。**記事リンクが 2 本あるため、
+ * カード要素そのものを Map のキーにして畳み込む（readTrendItems が
+ * 正規化 URL をキーにするのと同じ手）。
+ *
+ * 【なぜ hider と muter で共有するのか】
+ * 「リンクを列挙 → findCard で祖先を辿る → 著者を引く」という同じ手順を
+ * 2 箇所に書くと、片方だけ直して直したつもりになる。同じ形の窓が 3 つあり
+ * 1 つ直しても残りが同じことをしていた、という失敗を繰り返さない。
+ *
+ * **隠れているカードも返す。**ミュートは Phase 7 が隠したあとに走りうる。
+ */
+export function readTrendCards(root: ParentNode = document): TrendCard[] {
+  const byCard = new Map<HTMLElement, TrendCard>();
+
+  for (const link of root.querySelectorAll<HTMLAnchorElement>(SELECTORS.trendItemLink)) {
+    const card = findCard(link);
+    // 2 本目のリンクで同じカードに戻ってくるので、祖先探索を繰り返さない
+    if (!(card instanceof HTMLElement) || byCard.has(card)) continue;
+
+    // どの記事のカードかは、そのカードの中だけを見て引く
+    const [item] = readTrendItems(card);
+    if (item === undefined) continue;
+
+    byCard.set(card, { item, card });
+  }
+
+  return [...byCard.values()];
+}

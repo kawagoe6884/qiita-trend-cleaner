@@ -468,7 +468,7 @@ chrome.storage.sync
 | **5b-2** | **著者をまたぐ共起** | 記事 1 本の著者を捕まえる判定軸（OQ-18）＋ **保存窓と取得射程の整合**（OQ-19） | **complete**（実機確認済み 2026-08-24。**記事 1 本の著者を検出**。レビュー指摘 3 件を修正） | - | 5b-1 | [plan](../plans/completed/cross-author-clusters.plan.md) / [report](../reports/cross-author-clusters-report.md) |
 | 6 | 候補 UI・設定 UI | 候補一覧、スライダー、適合率フィードバック（**すべてポップアップ**） | **in-progress**（実装完了・**実機確認待ち**） | with 7 | 5 | [plan](../plans/completed/candidate-popup-ui.plan.md) / [report](../reports/candidate-popup-ui-report.md) |
 | 7 | DOM 非表示 | 表示中ページでの非表示（**除外件数バッジは載せない** — 下記 Scope 参照） | **complete**（実機確認済み 2026-08-24。トグルと背景色は実機フィードバックで追加） | with 6 | 4b, 5, 5b-2 | [plan](../plans/completed/dom-hiding.plan.md) / [report](../reports/dom-hiding-report.md) |
-| 8 | ミュート実行（「妥当」と同時） | 三点メニューの自動操作、Snackbar による完了検知、直列化、失敗記録 | **in-progress**（計画済み・**実装未着手**） | - | 6, 7 | [plan](../plans/mute-on-valid.plan.md) |
+| 8 | ミュート実行（「妥当」と同時） | 三点メニューの自動操作、Snackbar による完了検知、直列化、失敗記録 | **in-progress**（実装完了・**実機確認待ち**。変異 17 件すべて捕捉） | - | 6, 7 | [plan](../plans/completed/mute-on-valid.plan.md) / [report](../reports/mute-on-valid-report.md) |
 | 9 | 適合率計測・閾値調整 | 実運用して適合率 80% を目指しパラメータを追い込む | pending | - | 8 | - |
 | 10 | 記事化 | Qiita 記事の執筆と投稿 | pending | - | 9 | - |
 
@@ -555,7 +555,7 @@ chrome.storage.sync
 - **隠すのは評価済みの候補だけ（2026-08-24 決定）**: 「妥当」を押したものが消える。未評価のまま隠すと **適合率を測る前に対象が視界から消える**（OQ-16 と同じ形）。Phase 9 で適合率 80% を目指す設計なので、**測る前に対象が消える経路を作らない**
 - **制約**: fetch は一切行わない。既に描画されている DOM のみを対象とする
 
-**Phase 8: ミュート実行（「妥当」と同時）** — 計画: [mute-on-valid.plan.md](../plans/mute-on-valid.plan.md)
+**Phase 8: ミュート実行（「妥当」と同時）** — [plan](../plans/completed/mute-on-valid.plan.md) / [report](../reports/mute-on-valid-report.md)
 
 - **Goal**: 核心の痛み「手間」を解消する
 - **Scope**: 「妥当」と評価した著者に対するミュートメニューの自動操作、**Snackbar のテキスト出現による 1 件ごとの完了検知**（固定 sleep を使わない）、連続実行の直列化とスロットリング、失敗時の記録

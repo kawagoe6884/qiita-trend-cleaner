@@ -9,8 +9,11 @@ import {
   recordVerdict,
   describeMode,
   describeCall,
+  describeMuteOutcome,
+  requestMute,
 } from './popup-state';
 import * as storage from '../../lib/storage';
+import * as domain from '../../types/domain';
 import { DEFAULT_SETTINGS } from '../../types/domain';
 import { RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from '../../api/rate-budget';
 import type { Candidate, FeedbackLog, LikeIndex } from '../../types/domain';
@@ -181,11 +184,6 @@ describe('loadPopupState', () => {
   });
 });
 
-/**
- * スライダーは storage.local の蓄積に対して判定をやり直すだけ。
- * ここで API を叩くと、「取得はトレンドページを開いたときだけ」という
- * 設計が UI 側から崩れる。
- */
 /**
  * スライダーは storage.local の蓄積に対して判定をやり直すだけ。
  * ここで API を叩くと、「取得はトレンドページを開いたときだけ」という
@@ -371,5 +369,163 @@ describe('describeCall', () => {
       ratio: 0.5,
     });
     expect(call).toBe('この一覧はすべて評価済みです。');
+  });
+});
+
+/**
+ * ミュートの結果の文言。**断定しない**（設計上の約束 6）。
+ * menu-unavailable は「既にミュート済み」と「Qiita の変更」の両方を含むので、
+ * 見分けられないことを隠さずに書く。
+ */
+describe('describeMuteOutcome', () => {
+  it('すべての結果に文言を返す', () => {
+    // Arrange — 型に足した値の文言を書き忘れると、UI が空欄になる
+    const { MUTE_OUTCOMES } = domain;
+    // Act & Assert
+    for (const outcome of MUTE_OUTCOMES) {
+      expect(describeMuteOutcome(outcome).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('「不正」「スパム」と断定しない', () => {
+    const { MUTE_OUTCOMES } = domain;
+    const texts = MUTE_OUTCOMES.map((outcome) => describeMuteOutcome(outcome));
+    expect(texts.filter((text) => /不正|スパム|悪質/.test(text))).toEqual([]);
+  });
+
+  it('既にミュート済みの可能性を隠さずに書く', () => {
+    // 見分けようとすると解除の文言を実装に持ち込むことになり、押す経路ができる
+    expect(describeMuteOutcome('menu-unavailable')).toContain('既にミュート済み');
+  });
+});
+
+describe('requestMute', () => {
+  const NOW = new Date('2026-08-24T12:00:00.000Z');
+
+  function tab(id: number, url: string, active = false): chrome.tabs.Tab {
+    return { id, url, active } as unknown as chrome.tabs.Tab;
+  }
+
+  function tabsQueryMock() {
+    // @types/chrome の query はオーバーロードを複数持つ。ここだけ型を黙らせる
+    return vi.mocked(chrome.tabs.query) as unknown as {
+      mockResolvedValue: (value: chrome.tabs.Tab[]) => void;
+    };
+  }
+
+  function sendMessageMock() {
+    return vi.mocked(chrome.tabs.sendMessage) as unknown as {
+      mockResolvedValue: (value: unknown) => void;
+      mockRejectedValue: (value: unknown) => void;
+      mock: { calls: unknown[][] };
+    };
+  }
+
+  it('トレンドタブが無ければ no-trend-tab を記録し、送らない', async () => {
+    // Arrange
+    tabsQueryMock().mockResolvedValue([]);
+    // Act
+    const log = await requestMute('example-author-a', NOW);
+    // Assert
+    expect(log['example-author-a']).toEqual({
+      outcome: 'no-trend-tab',
+      at: '2026-08-24T12:00:00.000Z',
+    });
+    expect(sendMessageMock().mock.calls).toHaveLength(0);
+  });
+
+  it('アクティブなトレンドタブを優先する', async () => {
+    // Arrange — ユーザーが見ている画面で操作が起きる方が分かりやすい
+    tabsQueryMock().mockResolvedValue([
+      tab(1, 'https://qiita.com/'),
+      tab(2, 'https://qiita.com/trend', true),
+    ]);
+    sendMessageMock().mockResolvedValue({
+      type: 'MUTE_RESULT',
+      handle: 'example-author-a',
+      outcome: 'muted',
+    });
+    // Act
+    await requestMute('example-author-a', NOW);
+    // Assert
+    expect(sendMessageMock().mock.calls[0]?.[0]).toBe(2);
+  });
+
+  it('応答の handle が違えば unreachable にする', async () => {
+    // Arrange — 別の依頼の応答を取り違えない
+    tabsQueryMock().mockResolvedValue([tab(1, 'https://qiita.com/trend')]);
+    sendMessageMock().mockResolvedValue({
+      type: 'MUTE_RESULT',
+      handle: 'example-author-b',
+      outcome: 'muted',
+    });
+    // Act
+    const log = await requestMute('example-author-a', NOW);
+    // Assert
+    expect(log['example-author-a']?.outcome).toBe('unreachable');
+  });
+
+  it('知らない outcome が返っても通さない', async () => {
+    tabsQueryMock().mockResolvedValue([tab(1, 'https://qiita.com/trend')]);
+    sendMessageMock().mockResolvedValue({
+      type: 'MUTE_RESULT',
+      handle: 'example-author-a',
+      outcome: 'something-else',
+    });
+    const log = await requestMute('example-author-a', NOW);
+    expect(log['example-author-a']?.outcome).toBe('unreachable');
+  });
+
+  it('届かなければ unreachable を記録し、例外を漏らさない', async () => {
+    // Arrange — 拡張をリロードすると content script が孤児になる
+    tabsQueryMock().mockResolvedValue([tab(1, 'https://qiita.com/trend')]);
+    sendMessageMock().mockRejectedValue(new Error('Receiving end does not exist'));
+    // Act & Assert
+    await expect(requestMute('example-author-a', NOW)).resolves.toEqual({
+      'example-author-a': { outcome: 'unreachable', at: '2026-08-24T12:00:00.000Z' },
+    });
+  });
+
+  it('解析できない URL のタブは対象外にし、例外を投げない', async () => {
+    // Arrange — スキームが無いと new URL が throw する
+    tabsQueryMock().mockResolvedValue([tab(1, 'qiita.com/trend', true)]);
+    // Act & Assert
+    const log = await requestMute('example-author-a', NOW);
+    expect(log['example-author-a']?.outcome).toBe('no-trend-tab');
+  });
+
+  it('記事ページのタブには送らない', async () => {
+    // Arrange — content script は qiita.com 全体に注入されている
+    tabsQueryMock().mockResolvedValue([
+      tab(1, 'https://qiita.com/example-author-a/items/0123456789abcdef0001', true),
+    ]);
+    // Act
+    const log = await requestMute('example-author-a', NOW);
+    // Assert
+    expect(log['example-author-a']?.outcome).toBe('no-trend-tab');
+    expect(sendMessageMock().mock.calls).toHaveLength(0);
+  });
+
+  it('結果を storage に残す（開き直しても読める）', async () => {
+    tabsQueryMock().mockResolvedValue([]);
+    await requestMute('example-author-a', NOW);
+    await expect(storage.getMuteLog()).resolves.toEqual({
+      'example-author-a': { outcome: 'no-trend-tab', at: '2026-08-24T12:00:00.000Z' },
+    });
+  });
+});
+
+describe('toViews のミュート結果', () => {
+  it('記録があれば重ねる', () => {
+    const log = {
+      'example-author-a': { outcome: 'muted' as const, at: '2026-08-24T12:00:00.000Z' },
+    };
+    const [view] = toViews([candidate('a')], {}, log);
+    expect(view?.mute?.outcome).toBe('muted');
+  });
+
+  it('記録が無ければ null（「まだ試していない」と「失敗した」を区別する）', () => {
+    const [view] = toViews([candidate('a')], {});
+    expect(view?.mute).toBeNull();
   });
 });

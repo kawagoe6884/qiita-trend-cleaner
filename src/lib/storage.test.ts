@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import * as storage from './storage';
 import {
   getToken,
   saveToken,
@@ -350,5 +351,87 @@ describe('getAuthorVisits', () => {
   it('空文字は落とす（時刻として使えない）', async () => {
     await chrome.storage.local.set({ authorVisits: { 'example-author-1': '' } });
     expect(await getAuthorVisits()).toEqual({});
+  });
+});
+
+/**
+ * 「妥当」と同時のミュート。**既定は false。**
+ * Settings（sync）に入れないのは、あれが detectCandidates の入力だから。
+ */
+describe('getMuteOnValid / saveMuteOnValid', () => {
+  it('未設定なら false', async () => {
+    await expect(storage.getMuteOnValid()).resolves.toBe(false);
+  });
+
+  it('保存した値を返す', async () => {
+    await storage.saveMuteOnValid(true);
+    await expect(storage.getMuteOnValid()).resolves.toBe(true);
+  });
+
+  it('文字列の "false" を true と読まない', async () => {
+    // Boolean() で判定すると通ってしまう。=== true で見ること
+    await chrome.storage.local.set({ muteOnValid: 'false' });
+    await expect(storage.getMuteOnValid()).resolves.toBe(false);
+  });
+
+  it('local に置く（sync には書かない）', async () => {
+    // 動作の切り替えであって判定の閾値ではない
+    await storage.saveMuteOnValid(true);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(chrome.storage.sync.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('getMuteLog / recordMuteOutcome', () => {
+  const NOW = new Date('2026-08-24T12:00:00.000Z');
+
+  it('未設定なら空', async () => {
+    await expect(storage.getMuteLog()).resolves.toEqual({});
+  });
+
+  it('記録して、書いた後の全体を返す', async () => {
+    // Arrange & Act
+    const log = await storage.recordMuteOutcome('example-author-a', 'muted', NOW);
+    // Assert — 呼び出し側が読み直さずに済む（saveVerdict と同じ形）
+    expect(log).toEqual({
+      'example-author-a': { outcome: 'muted', at: '2026-08-24T12:00:00.000Z' },
+    });
+    await expect(storage.getMuteLog()).resolves.toEqual(log);
+  });
+
+  it('読んで足して書く（既存の記録を消さない）', async () => {
+    // Arrange — ポップアップを 2 枚開いても互いの記録を消し合わない
+    await storage.recordMuteOutcome('example-author-a', 'muted', NOW);
+    // Act
+    const log = await storage.recordMuteOutcome('example-author-b', 'timeout', NOW);
+    // Assert
+    expect(Object.keys(log).sort()).toEqual(['example-author-a', 'example-author-b']);
+  });
+
+  it('同じ著者は上書きする（最後に試した結果だけを持つ）', async () => {
+    await storage.recordMuteOutcome('example-author-a', 'timeout', NOW);
+    const log = await storage.recordMuteOutcome('example-author-a', 'muted', NOW);
+    expect(log['example-author-a']?.outcome).toBe('muted');
+  });
+
+  it('知らない outcome の 1 件だけを落とし、他は残す', async () => {
+    // Arrange — 壊れていても全体を捨てない（getFeedback と同じ扱い）
+    await chrome.storage.local.set({
+      muteLog: {
+        'example-author-a': { outcome: 'muted', at: '2026-08-24T12:00:00.000Z' },
+        'example-author-b': { outcome: 'something-else', at: '2026-08-24T12:00:00.000Z' },
+        'example-author-c': { outcome: 'muted' },
+        'example-author-d': 'muted',
+      },
+    });
+    // Act & Assert
+    await expect(storage.getMuteLog()).resolves.toEqual({
+      'example-author-a': { outcome: 'muted', at: '2026-08-24T12:00:00.000Z' },
+    });
+  });
+
+  it('配列が入っていても例外を投げない', async () => {
+    await chrome.storage.local.set({ muteLog: [] });
+    await expect(storage.getMuteLog()).resolves.toEqual({});
   });
 });

@@ -8,20 +8,22 @@ import {
   renderNotice,
   clearHighlights,
 } from '../dom/hider';
+import { muteAuthor, MUTE_INTERVAL_MS } from '../dom/muter';
 import * as storage from '../lib/storage';
+import type { AccountHandle, MuteOutcome } from '../types/domain';
 import type { QtgRequest, QtgResponse } from '../types/messages';
 
 function markInjected(version: string): void {
   document.documentElement.dataset[INJECTION_MARKER] = version;
 }
 
+/** QtgResponse はユニオンなので、PONG だけに絞った型を用意する */
+type PongResponse = Extract<QtgResponse, { type: 'PONG' }>;
+
 /**
  * service worker からの応答を実行時に検証する。
  * 別コンテキストから来る値なので、型アサーションではなく型ガードで受ける。
  */
-/** QtgResponse はユニオンなので、PONG だけに絞った型を用意する */
-type PongResponse = Extract<QtgResponse, { type: 'PONG' }>;
-
 function isPongResponse(value: unknown): value is PongResponse {
   if (typeof value !== 'object' || value === null) return false;
   const candidate = value as Partial<PongResponse>;
@@ -153,9 +155,89 @@ function watchFeedback(): void {
   });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * ミュートを直列につなぐ。**デバウンスでは足りない。**
+ *
+ * タイマーは発火した瞬間に手を離すので、実行中の処理は次を止めない。
+ * ミュートは Qiita の DOM を実際に操作するため、2 件が重なると片方の
+ * メニューが開いたまま別のカードを触ることになる。
+ *
+ * 間隔を空けるのは、手動操作と同程度の負荷に留めるため。
+ * 失敗しても列は止めない（成否どちらでも sleep を挟む）。
+ */
+let muteQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueMute(handle: AccountHandle): Promise<MuteOutcome> {
+  const result = muteQueue.then(() => muteAuthor(handle));
+  muteQueue = result.then(
+    () => sleep(MUTE_INTERVAL_MS),
+    () => sleep(MUTE_INTERVAL_MS),
+  );
+  return result;
+}
+
+/** ポップアップから来る値なので、型アサーションではなく型ガードで受ける */
+function isMuteRequest(value: unknown): value is Extract<QtgRequest, { type: 'MUTE_AUTHOR' }> {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Partial<{ type: unknown; handle: unknown }>;
+  return candidate.type === 'MUTE_AUTHOR' && typeof candidate.handle === 'string';
+}
+
+/**
+ * ミュートの依頼を受ける。
+ *
+ * 【なぜ storage.onChanged ではなくメッセージなのか】
+ * 評価が既に valid なら storage の値が変わらず、onChanged が発火しない。
+ * **押し直しでのやり直しができなくなる。**ミュートは状態の同期ではなく操作で、
+ * 冪等に再実行できる必要がある。これがリトライ機構を持たずに済む根拠でもある。
+ *
+ * 【トレンドページ以外では応じない】
+ * プロフィールページにも記事一覧と <time> が揃っているので、素通しにすると
+ * トレンドでないカードを操作しうる。エラーが出ないことと、やるべきでないことを
+ * やらないことは別物。
+ *
+ * 【扱わないメッセージで true を返さない】
+ * true を返すとチャネルが開いたままになり、他のリスナーの応答が捨てられる。
+ */
+function listenForMute(): void {
+  chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+    if (!isMuteRequest(message)) return undefined;
+    const { handle } = message;
+    const respond = (outcome: MuteOutcome): void => {
+      const response: QtgResponse = { type: 'MUTE_RESULT', handle, outcome };
+      sendResponse(response);
+    };
+
+    if (!isTrendPage(location.pathname)) {
+      respond('not-on-page');
+      return undefined;
+    }
+
+    enqueueMute(handle)
+      .then((outcome) => {
+        // 失敗はすべて想定内（カードが無い・既にミュート済み・Qiita の変更）。
+        // warn / error に載せると「拡張が壊れている」と読まれる
+        if (outcome === 'muted') logger.info('muted:', handle);
+        else logger.debug('mute skipped:', handle, outcome);
+        respond(outcome);
+      })
+      .catch((error: unknown) => {
+        // muteAuthor は投げない設計だが、ポップアップを待たせ続けない
+        logger.debug('mute failed:', handle, error);
+        respond('menu-unavailable');
+      });
+    return true; // 非同期で応答する
+  });
+}
+
 logger.info('content script ready');
 void ping();
 // 隠す前に読む。隠したカードも DOM には残るので実害は無いが、順序を明示しておく
 void sendTrendItems();
 watchFeedback();
+listenForMute();
 void applyHiding();

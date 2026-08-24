@@ -11,13 +11,16 @@
  * ここが読むのは自分で書いた値なので、API レスポンスほど厳密には検証しない。
  * ただし storage が壊れていても例外で落とさず、既定値へフォールバックする。
  */
-import { DEFAULT_SETTINGS } from '../types/domain';
+import { DEFAULT_SETTINGS, isMuteOutcome } from '../types/domain';
 import type {
   AccountHandle,
   AuthorVisits,
   Candidate,
   FeedbackLog,
   LikeIndex,
+  MuteLog,
+  MuteOutcome,
+  MuteRecord,
   ScanResult,
   Settings,
   Verdict,
@@ -147,6 +150,61 @@ export async function saveVerdict(handle: AccountHandle, verdict: Verdict): Prom
   const feedback = { ...(await getFeedback()), [handle]: verdict };
   await chrome.storage.local.set({ feedback });
   return feedback;
+}
+
+/**
+ * 「妥当」と同時に Qiita 側でもミュートするか。**既定は false。**
+ *
+ * 明示的にオンにしたときだけ Qiita 側を変更する。Settings（sync）に入れないのは、
+ * あれが detectCandidates の入力だから — 判定に関係しない値を混ぜない。
+ *
+ * `=== true` で見ること。Boolean() だと 'false' という文字列が true になる。
+ */
+export async function getMuteOnValid(): Promise<boolean> {
+  const raw = await readRaw();
+  return raw.muteOnValid === true;
+}
+
+export async function saveMuteOnValid(muteOnValid: boolean): Promise<void> {
+  await chrome.storage.local.set({ muteOnValid });
+}
+
+/**
+ * ミュートを試みた結果。1 件だけ壊れていても全体を捨てない
+ * （getFeedback と同じ扱い）。
+ *
+ * **知らない outcome は落とす。**通すと UI の switch が文言を返せずに落ちる
+ */
+export async function getMuteLog(): Promise<MuteLog> {
+  const raw = await readRaw();
+  const stored = raw.muteLog;
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {};
+  const log: MuteLog = {};
+  for (const [handle, value] of Object.entries(stored as Record<string, unknown>)) {
+    if (typeof value !== 'object' || value === null) continue;
+    const record = value as Partial<Record<keyof MuteRecord, unknown>>;
+    const at = asNonEmptyString(record.at);
+    if (at === null || !isMuteOutcome(record.outcome)) continue;
+    log[handle] = { outcome: record.outcome, at };
+  }
+  return log;
+}
+
+/**
+ * 結果を 1 件記録し、**書いた後の全体を返す**（saveVerdict と同じ形）。
+ * now を引数に取るのは、テストが時刻を固定できるようにするため。
+ */
+export async function recordMuteOutcome(
+  handle: AccountHandle,
+  outcome: MuteOutcome,
+  now: Date,
+): Promise<MuteLog> {
+  const muteLog: MuteLog = {
+    ...(await getMuteLog()),
+    [handle]: { outcome, at: now.toISOString() },
+  };
+  await chrome.storage.local.set({ muteLog });
+  return muteLog;
 }
 
 /**

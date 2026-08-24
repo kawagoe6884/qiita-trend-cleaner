@@ -49,8 +49,17 @@ function createChromeMock() {
       // ポップアップが開いている間の 429 を追うために購読する。権限は要らない
       onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
     },
-    // タブを作るだけなら tabs 権限は要らない（読み取りには要る）
-    tabs: { create: vi.fn(() => Promise.resolve({ id: 1 })) },
+    // タブを作るだけなら tabs 権限は要らない（読み取りには要る）。
+    // query の url フィルタと sendMessage も host_permissions で足りる。
+    //
+    // query の既定は空配列 = 「トレンドタブが開いていない」。muteOnValid の
+    // 既定が false であることと合わせて、Phase 6 / 7 の既存テストは
+    // これで一切変更なく通る
+    tabs: {
+      create: vi.fn(() => Promise.resolve({ id: 1 })),
+      query: vi.fn(() => Promise.resolve([])),
+      sendMessage: vi.fn(() => Promise.resolve()),
+    },
     // バッジ。manifest に action があれば権限不要で使える
     action: {
       setBadgeText: vi.fn(() => Promise.resolve()),

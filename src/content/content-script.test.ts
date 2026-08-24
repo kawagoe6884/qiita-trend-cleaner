@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { saveVerdict } from '../lib/storage';
+import { SELECTORS, MENU_TEXT, SNACKBAR_TEXT } from '../dom/selectors';
 
 /** chrome は setup.ts が各テストの前に用意する。トップレベルではまだ未定義 */
 function sendMessageMock() {
@@ -21,6 +22,68 @@ function visibleCards(): number {
   return [...document.querySelectorAll<HTMLElement>('.card')].filter(
     (el) => el.style.display !== 'none',
   ).length;
+}
+
+/**
+ * 三点メニュー付きのカード。実測どおり「フォロー / **ブロック** / ミュート」の順。
+ * ブロックがミュートの直上にあることを、ここでも再現しておく。
+ */
+function cardWithMenu(n: number, author = `example-author-${String(n)}`): string {
+  const itemId = `0123456789abcdef${String(n).padStart(4, '0')}`;
+  const url = `https://qiita.com/${author}/items/${itemId}`;
+  const items = ['投稿ユーザーをフォロー', MENU_TEXT.block, MENU_TEXT.mute]
+    .map((text) => `<li role="menuitem" data-label="${text}">${text}</li>`)
+    .join('');
+  return [
+    `<div class="card" data-n="${String(n)}">`,
+    `<a href="${url}"></a>`,
+    '<time datetime="2026-08-18T10:00:00Z">2026年08月18日</time>',
+    `<a href="${url}">タイトル ${String(n)}</a>`,
+    `<button aria-haspopup="dialog" aria-label="ユーザーを管理" aria-controls=":r${String(n)}:"></button>`,
+    `<ul role="menu" id=":r${String(n)}:">${items}</ul>`,
+    '</div>',
+  ].join('');
+}
+
+/** 押した順序を記録する。**直列化の検査に使う**（時間そのものは検査しない） */
+function trackSequence(): string[] {
+  const sequence: string[] = [];
+  for (const card of document.querySelectorAll<HTMLElement>('.card')) {
+    const n = card.dataset.n ?? '?';
+    card.querySelector(SELECTORS.cardMenuButton)?.addEventListener('click', () => {
+      sequence.push(`open-${n}`);
+    });
+    for (const item of card.querySelectorAll<HTMLElement>(SELECTORS.menuItem)) {
+      item.addEventListener('click', () => {
+        sequence.push(`${item.dataset.label === MENU_TEXT.mute ? 'mute' : 'OTHER'}-${n}`);
+        // Qiita は完了を Snackbar で知らせる。**遅らせるのが要点** —
+        // 同期で出すと waitForSnackbar が即座に解決し、直列化していない実装でも
+        // 同じ順序になってしまう（muteAuthor は click まで全部同期）
+        setTimeout(() => {
+          document.body.insertAdjacentHTML(
+            'beforeend',
+            `<div id="Snackbar-react-component-abc"><div aria-live="polite" aria-atomic="true"><p>${SNACKBAR_TEXT.muteCompleted}</p></div></div>`,
+          );
+        }, 0);
+      });
+    }
+  }
+  return sequence;
+}
+
+/** onMessage に登録されたリスナーを取り出す */
+function messageListener() {
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const listener = vi.mocked(chrome.runtime.onMessage.addListener).mock.calls[0]?.[0];
+  if (!listener) throw new Error('message listener not registered');
+  return listener;
+}
+
+/** ミュートを依頼し、応答を受け取る spy とリスナーの戻り値を返す */
+function requestMute(handle: string) {
+  const sendResponse = vi.fn();
+  const returned = messageListener()({ type: 'MUTE_AUTHOR', handle }, {}, sendResponse);
+  return { sendResponse, returned };
 }
 
 /** storage.onChanged に登録されたリスナーを取り出す */
@@ -274,5 +337,119 @@ describe('content script の背景の目印', () => {
     // Assert
     expect(visibleCards()).toBe(2);
     expect(document.querySelectorAll('[data-qtg-judged="true"]')).toHaveLength(1);
+  });
+});
+
+/**
+ * ミュートは **メッセージで受ける**。storage.onChanged ではない。
+ *
+ * 評価が既に valid なら storage の値が変わらず onChanged が発火しないため、
+ * そこにぶら下げると押し直しでのやり直しができなくなる。
+ * ミュートは状態の同期ではなく操作である。
+ */
+describe('content script のミュート受信', () => {
+  it('MUTE_AUTHOR を受けるとミュートの項目だけを押す', async () => {
+    // Arrange
+    document.body.innerHTML = cardWithMenu(1);
+    await bootContentScript();
+    const sequence = trackSequence();
+    // Act
+    const { sendResponse, returned } = requestMute('example-author-1');
+    // Assert — 非同期で応答するので true を返している必要がある
+    expect(returned).toBe(true);
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalled();
+    });
+    expect(sequence).toEqual(['open-1', 'mute-1']);
+    expect(sendResponse).toHaveBeenCalledWith({
+      type: 'MUTE_RESULT',
+      handle: 'example-author-1',
+      outcome: 'muted',
+    });
+  });
+
+  it('トレンド以外のページでは操作せず not-on-page を返す', async () => {
+    // Arrange — プロフィールページにも記事一覧と <time> が揃っている
+    document.body.innerHTML = cardWithMenu(1);
+    await bootContentScript('/example-author-1');
+    const sequence = trackSequence();
+    // Act
+    const { sendResponse, returned } = requestMute('example-author-1');
+    // Assert — 同期で応答するのでチャネルは開かない
+    expect(returned).toBeUndefined();
+    expect(sequence).toEqual([]);
+    expect(sendResponse).toHaveBeenCalledWith({
+      type: 'MUTE_RESULT',
+      handle: 'example-author-1',
+      outcome: 'not-on-page',
+    });
+  });
+
+  it('関係のないメッセージには応答せず、チャネルも開かない', async () => {
+    // Arrange
+    document.body.innerHTML = cardWithMenu(1);
+    await bootContentScript();
+    const sendResponse = vi.fn();
+    // Act — service worker 宛ての PING が届くことがある
+    const returned = messageListener()({ type: 'PING' }, {}, sendResponse);
+    // Assert — true を返すとチャネルが開いたままになり、他のリスナーの応答が捨てられる
+    expect(returned).toBeUndefined();
+    expect(sendResponse).not.toHaveBeenCalled();
+  });
+
+  it('handle が無いメッセージには応答しない', async () => {
+    document.body.innerHTML = cardWithMenu(1);
+    await bootContentScript();
+    const sendResponse = vi.fn();
+    const returned = messageListener()({ type: 'MUTE_AUTHOR' }, {}, sendResponse);
+    expect(returned).toBeUndefined();
+    expect(sendResponse).not.toHaveBeenCalled();
+  });
+
+  it('2 件続けて依頼しても重ならない', async () => {
+    // Arrange — 別々の著者のカードを 2 枚
+    document.body.innerHTML = cardWithMenu(1) + cardWithMenu(2);
+    await bootContentScript();
+    const sequence = trackSequence();
+    // Act — 続けざまに 2 件
+    const first = requestMute('example-author-1');
+    const second = requestMute('example-author-2');
+
+    // Assert 1 — 依頼した時点ではまだ 1 件も走っていない（列に積まれただけ）。
+    // muteAuthor を直に呼ぶ実装だと、click まで同期なのでここで既に全部終わっている
+    expect(sequence).toEqual([]);
+
+    // Assert 2 — 1 件目が Snackbar を待っているあいだ、2 件目は開始していない。
+    // **デバウンスでは同時実行を止められない。**タイマーは発火した瞬間に手を離す
+    await vi.waitFor(() => {
+      expect(sequence).toContain('mute-1');
+    });
+    expect(sequence).not.toContain('open-2');
+
+    // Assert 3 — 最後まで走ると 1 件目 → 2 件目の順になる
+    await vi.waitFor(
+      () => {
+        expect(second.sendResponse).toHaveBeenCalled();
+      },
+      { timeout: 5000 },
+    );
+    expect(first.sendResponse).toHaveBeenCalled();
+    expect(sequence).toEqual(['open-1', 'mute-1', 'open-2', 'mute-2']);
+  });
+
+  it('カードが無ければ not-on-page を返し、エラーにしない', async () => {
+    // Arrange — トレンドが入れ替わったあと
+    document.body.innerHTML = cardWithMenu(2);
+    await bootContentScript();
+    // Act
+    const { sendResponse } = requestMute('example-author-1');
+    // Assert
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalledWith({
+        type: 'MUTE_RESULT',
+        handle: 'example-author-1',
+        outcome: 'not-on-page',
+      });
+    });
   });
 });

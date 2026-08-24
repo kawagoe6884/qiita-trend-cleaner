@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SELECTORS, SNACKBAR_TEXT, readSnackbarMessage } from './selectors';
+import { SELECTORS, SNACKBAR_TEXT, MENU_TEXT, readSnackbarMessage } from './selectors';
 import { DEFAULT_SETTINGS } from '../types/domain';
 
 describe('SELECTORS', () => {
@@ -16,6 +16,23 @@ describe('SELECTORS', () => {
     const values: string[] = Object.values(SELECTORS);
     const offenders = values.filter((value) => value.includes('.'));
     expect(offenders).toEqual([]);
+  });
+});
+
+/**
+ * ⚠️ ブロックはミュートの **直上** にある。取り違えると native alert() が出て
+ * 閉じられず、解除用の一覧 URL も無いので回収できない（設計上の約束 7）。
+ */
+describe('MENU_TEXT', () => {
+  it('ミュートとブロックが別々の文字列である', () => {
+    expect(MENU_TEXT.mute).not.toBe(MENU_TEXT.block);
+  });
+
+  it('ミュートとブロックの文言が互いを部分文字列として含まない', () => {
+    // 完全一致で選ぶ根拠。片方がもう片方を含むと、実装を includes に
+    // 変えたときに気づけなくなる
+    expect(MENU_TEXT.mute.includes(MENU_TEXT.block)).toBe(false);
+    expect(MENU_TEXT.block.includes(MENU_TEXT.mute)).toBe(false);
   });
 });
 
