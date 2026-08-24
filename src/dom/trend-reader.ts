@@ -83,7 +83,7 @@ function parseItemUrl(href: string): ParsedItemUrl | null {
  *
  * 境界判定を先に行うこと。time を先に探すと、全カードのコンテナで他人の時刻を掴む。
  */
-function findCard(link: Element): Element | null {
+export function findCard(link: Element): Element | null {
   let current: Element | null = link.parentElement;
   for (let depth = 0; depth < MAX_CARD_DEPTH && current !== null; depth += 1) {
     if (current.querySelectorAll(SELECTORS.trendItemLink).length > LINKS_PER_CARD) return null;

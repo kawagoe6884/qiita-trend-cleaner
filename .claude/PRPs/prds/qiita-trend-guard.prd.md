@@ -465,7 +465,7 @@ chrome.storage.sync
 | **5b-1** | **検出の穴を塞ぐ（バグ 2 件）** | 著者巡回の起動条件、判定窓と取得射程の整合 | **complete**（実機確認済み 2026-08-24。**候補 1 件を検出**） | - | 5, 4b | [plan](../plans/completed/detection-gap-fixes.plan.md) / [report](../reports/detection-gap-fixes-report.md) |
 | **5b-2** | **著者をまたぐ共起** | 記事 1 本の著者を捕まえる判定軸（OQ-18）＋ **保存窓と取得射程の整合**（OQ-19） | **complete**（実機確認済み 2026-08-24。**記事 1 本の著者を検出**。レビュー指摘 3 件を修正） | - | 5b-1 | [plan](../plans/completed/cross-author-clusters.plan.md) / [report](../reports/cross-author-clusters-report.md) |
 | 6 | 候補 UI・設定 UI | 候補一覧、スライダー、適合率フィードバック（**すべてポップアップ**） | **in-progress**（実装完了・**実機確認待ち**） | with 7 | 5 | [plan](../plans/completed/candidate-popup-ui.plan.md) / [report](../reports/candidate-popup-ui-report.md) |
-| 7 | DOM 非表示 | 表示中ページでの非表示（**除外件数バッジは載せない** — 下記 Scope 参照） | **in-progress** | with 6 | 4b, 5, 5b-2 | [plan](../plans/dom-hiding.plan.md) |
+| 7 | DOM 非表示 | 表示中ページでの非表示（**除外件数バッジは載せない** — 下記 Scope 参照） | **in-progress**（実装完了・**実機確認待ち**） | with 6 | 4b, 5, 5b-2 | [plan](../plans/completed/dom-hiding.plan.md) / [report](../reports/dom-hiding-report.md) |
 | 8 | 一括ミュート実行 | div ポップアップの自動操作、スロットリング、失敗記録 | pending | - | 6 | - |
 | 9 | 適合率計測・閾値調整 | 実運用して適合率 80% を目指しパラメータを追い込む | pending | - | 8 | - |
 | 10 | 記事化 | Qiita 記事の執筆と投稿 | pending | - | 9 | - |
@@ -561,6 +561,7 @@ chrome.storage.sync
 - **前提**: OQ-9 の残件（ミュートを起動するメニューの DOM）を着手前に実測する。完了検知側の構造は取得済み
 - **確認ダイアログは存在しない**: ミュートはクリックで即実行され、Snackbar が結果を通知するのみ
 - **スコープ外**: ブロックの一括実行（native `alert()` により自動化不可）
+- **未確定（2026-08-24 のユーザー要望）**: 「妥当」を押したときにミュートも同時に実行するか。案は A 自動実行 / B 別ボタン / C 候補一覧から一括。**OQ-16 が効く** — ミュートするとトレンドから消えて再評価できないので、**評価を押してからミュートする順序は崩せない**。解除一覧（`settings/mutes`）があるので回収は可能
 
 **Phase 9: 適合率計測・閾値調整**
 

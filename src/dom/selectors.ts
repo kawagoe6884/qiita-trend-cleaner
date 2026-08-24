@@ -40,6 +40,21 @@ export const SNACKBAR_TEXT = {
 export const INJECTION_MARKER = 'qtgInjected';
 
 /**
+ * 拡張が隠した要素の目印（dataset のキー名）。
+ *
+ * **戻すときに「拡張が隠したものだけ」を選ぶために要る。**これが無いと
+ * Qiita 自身が `display: none` にしている要素まで表示してしまう。
+ */
+export const HIDDEN_MARKER = 'qtgHidden';
+
+/**
+ * 非表示の件数を知らせる要素の id。**拡張が作る要素なので Qiita の DOM とは無関係。**
+ * SELECTORS に入れないのは、あれが Qiita 側の DOM を指すものの置き場だから
+ * （ハッシュクラス禁止の検査対象を、拡張自身の要素で薄めない）。
+ */
+export const NOTICE_ID = 'qtg-hidden-notice';
+
+/**
  * 1 カードに含まれる記事リンクの数。これを超えたらカード境界を越えている。
  * 実測ではタイトル付きと無しの 2 本で、30 カード = 60 リンクだった。
  */

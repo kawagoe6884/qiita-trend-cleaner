@@ -1,0 +1,228 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { saveVerdict } from '../lib/storage';
+
+/** chrome は setup.ts が各テストの前に用意する。トップレベルではまだ未定義 */
+function sendMessageMock() {
+  return vi.mocked(chrome.runtime.sendMessage);
+}
+
+/**
+ * 1 カード分の骨格。実測どおり記事リンクを 2 本持たせる。
+ * フィクスチャは合成値のみ。実アカウント名・実 item_id は使わない。
+ */
+function card(n: number, author = `example-author-${String(n)}`): string {
+  const itemId = `0123456789abcdef${String(n).padStart(4, '0')}`;
+  const url = `https://qiita.com/${author}/items/${itemId}`;
+  return `<div class="card"><a href="${url}"></a><time datetime="2026-08-18T10:00:00Z">2026年08月18日</time><a href="${url}">タイトル ${String(n)}</a></div>`;
+}
+
+/** 表示中のカード数 */
+function visibleCards(): number {
+  return [...document.querySelectorAll<HTMLElement>('.card')].filter(
+    (el) => el.style.display !== 'none',
+  ).length;
+}
+
+/** storage.onChanged に登録されたリスナーを取り出す */
+function storageListener() {
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const listener = vi.mocked(chrome.storage.onChanged.addListener).mock.calls[0]?.[0];
+  if (!listener) throw new Error('storage listener not registered');
+  return listener;
+}
+
+/**
+ * content script は import しただけでトップレベルの処理が走る。
+ * モジュールキャッシュが効くと 2 件目以降で観測できないため毎回リセットする
+ * （service-worker.test.ts と同じ手法）。
+ *
+ * pathname は jsdom の URL で決まるので、テストごとに書き換える。
+ */
+async function bootContentScript(pathname = '/trend'): Promise<void> {
+  window.history.replaceState({}, '', pathname);
+  vi.resetModules();
+  await import('./content-script');
+  // トップレベルの async 処理（storage の読み込み）が終わるのを待つ
+  await vi.waitFor(() => {
+    expect(sendMessageMock()).toHaveBeenCalled();
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  document.body.innerHTML = '';
+  // @types/chrome の sendMessage は 5 つのオーバーロードを持ち、vi.mocked が
+  // void を返すシグネチャを拾う。実行時には正しい応答が返るので、ここだけ型を黙らせる
+  sendMessageMock().mockResolvedValue({ type: 'PONG', version: '0.0.0-test' } as never);
+});
+
+describe('content script の非表示', () => {
+  it('妥当と評価された著者のカードを隠す', async () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    await saveVerdict('example-author-1', 'valid');
+    // Act
+    await bootContentScript();
+    // Assert
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(1);
+    });
+  });
+
+  it('評価が無ければ何も隠さない', async () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    // Act
+    await bootContentScript();
+    // Assert
+    expect(visibleCards()).toBe(2);
+  });
+
+  it('トレンド以外のページでは何もしない', async () => {
+    // Arrange — プロフィールページにも記事リンクと <time> が揃っている
+    document.body.innerHTML = card(1) + card(2);
+    await saveVerdict('example-author-1', 'valid');
+    // Act
+    await bootContentScript('/example-author-1');
+    // Assert — ページを絞らないと、トレンドでない記事まで消える
+    expect(visibleCards()).toBe(2);
+  });
+
+  it('隠した件数の案内を出す', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await saveVerdict('example-author-1', 'valid');
+    // Act
+    await bootContentScript();
+    // Assert
+    await vi.waitFor(() => {
+      expect(document.querySelector('#qtg-hidden-notice')?.textContent).toContain('1 件を非表示中');
+    });
+  });
+
+  it('隠すものが無ければ案内を出さない', async () => {
+    document.body.innerHTML = card(1);
+    await bootContentScript();
+    expect(document.querySelector('#qtg-hidden-notice')).toBeNull();
+  });
+});
+
+/**
+ * ポップアップと content script は別コンテキストだが storage は共有されている。
+ * message passing を使わずに追従する。
+ */
+describe('content script の評価変更への追従', () => {
+  it('妥当に変わったら隠す', async () => {
+    // Arrange — 最初は評価が無い
+    document.body.innerHTML = card(1) + card(2);
+    await bootContentScript();
+    expect(visibleCards()).toBe(2);
+    // Act — ポップアップで「妥当」を押した状況
+    await saveVerdict('example-author-1', 'valid');
+    storageListener()({ feedback: { newValue: { 'example-author-1': 'valid' } } }, 'local');
+    // Assert
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(1);
+    });
+  });
+
+  it('誤りに押し直したら戻る', async () => {
+    // Arrange — 隠れている状態から始める
+    document.body.innerHTML = card(1) + card(2);
+    await saveVerdict('example-author-1', 'valid');
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(1);
+    });
+    // Act — 誤検知だったので押し直す
+    await saveVerdict('example-author-1', 'false_positive');
+    storageListener()({ feedback: { newValue: {} } }, 'local');
+    // Assert — 差分を追わず unhideAll してから再適用するので戻る
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(2);
+    });
+  });
+
+  it('関係のないキーの変更では何もしない', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await bootContentScript();
+    await saveVerdict('example-author-1', 'valid');
+    // Act — 候補の保存など、スキャンのたびに起きる書き込み
+    storageListener()({ candidates: { newValue: [] } }, 'local');
+    await Promise.resolve();
+    // Assert — feedback を見ていないので隠さない
+    expect(visibleCards()).toBe(1);
+  });
+});
+
+/**
+ * 右下の通知はトグル。**2026-08-24 の実機で見つかったバグの番人。**
+ *
+ * 「表示する」だけを置いていたとき、押したあとに隠し直す手段が無かった。
+ * ユーザーは「妥当」を押し直したが、**評価は既に valid なので storage の値が
+ * 変わらず、onChanged が発火しない**（Chrome は値が実際に変わったときだけ
+ * 発火する）。何も起きないように見えた。
+ */
+describe('content script の通知トグル', () => {
+  function noticeButton(): HTMLButtonElement {
+    const button = document.querySelector<HTMLButtonElement>('#qtg-hidden-notice button');
+    if (!button) throw new Error('notice button not found');
+    return button;
+  }
+
+  async function bootWithOneHidden(): Promise<void> {
+    document.body.innerHTML = card(1) + card(2);
+    await saveVerdict('example-author-1', 'valid');
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(1);
+    });
+  }
+
+  it('「表示する」を押すと戻り、ボタンが「隠す」に変わる', async () => {
+    // Arrange
+    await bootWithOneHidden();
+    expect(noticeButton().textContent).toBe('表示する');
+    // Act
+    noticeButton().click();
+    // Assert
+    expect(visibleCards()).toBe(2);
+    expect(noticeButton().textContent).toBe('隠す');
+    expect(document.querySelector('#qtg-hidden-notice')?.textContent).toContain('1 件を表示中');
+  });
+
+  it('「隠す」を押すと隠し直せる', async () => {
+    // Arrange — 「表示する」で戻した状態
+    await bootWithOneHidden();
+    noticeButton().click();
+    expect(visibleCards()).toBe(2);
+    // Act — ここが無いと、戻した後に隠す手段が無い
+    noticeButton().click();
+    // Assert
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(1);
+    });
+    expect(noticeButton().textContent).toBe('表示する');
+  });
+
+  it('評価が変わったら「表示する」の状態を解除する', async () => {
+    // Arrange — 手で戻した状態
+    await bootWithOneHidden();
+    noticeButton().click();
+    expect(noticeButton().textContent).toBe('隠す');
+    // Act — 別の著者に「妥当」を押した（評価が変わるので onChanged が発火する）
+    await saveVerdict('example-author-2', 'valid');
+    storageListener()(
+      { feedback: { newValue: { 'example-author-1': 'valid', 'example-author-2': 'valid' } } },
+      'local',
+    );
+    // Assert — 隠れ直し、ボタンも「表示する」に戻る
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(0);
+    });
+    expect(noticeButton().textContent).toBe('表示する');
+  });
+});
