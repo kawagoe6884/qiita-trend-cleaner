@@ -113,7 +113,9 @@
 
 ## 現在地
 
-**Phase 2〜9 complete（4 を除く）。窓内占有率まで実機で動いている。次は「取得ページが逆だった」の修正（下記）／Phase 10（記事化）。**
+**Phase 2〜9 complete（4 を除く）。窓内占有率まで実機で動いている。次は Phase 10（記事化）。**
+
+**決めたのに実装していないものが 1 つある** — OQ-14「フルモードでは likes を再取得する」。改訂 6 の「リロードのたびに 30 req 使わない」が後から入り、`collectKnownItemIds` が**モードを見ずに**既知の記事を除くため、**ライトでもフルでも一度取った記事は二度と取りに行かない**。PRD には「Phase 4b で実装」と書いてあったが実装は無い（2026-08-29 にコードで確認）。**敵対的な回避（いいねの時刻をずらす）への備えが効いていない。**
 
 - 設計: [PRD](.claude/PRPs/prds/qiita-trend-guard.prd.md) — **改訂 6**。意思決定ログと未解決事項はここ
 - 完了した計画: `.claude/PRPs/plans/completed/`
@@ -123,8 +125,8 @@
 |---|---|
 | 2 基盤構築 / 3 トークン設定 UI / 5 検出エンジン | complete |
 | 4 データ取得層（Atom フィード版） | **superseded** — 取得対象がユーザーの見ている画面と一致しなかった |
-| **4b データ取得層（DOM 版）** | **complete**（実機確認済み） — [report](.claude/PRPs/reports/dom-trend-reader-report.md)。ただし **2026-08-25 に欠陥が 1 件見つかった**（下記） |
-| **6 候補 UI** | **UI は動いた**（実機で候補・適合率・バッジを確認）。ただし**検出側の穴 3 件**が露見 — [report](.claude/PRPs/reports/candidate-popup-ui-report.md) |
+| **4b データ取得層（DOM 版）** | **complete**（実機確認済み） — [report](.claude/PRPs/reports/dom-trend-reader-report.md)。2026-08-25 に見つかった欠陥（取得ページが逆）は**同日修正済み**（下記） |
+| **6 候補 UI** | **complete**（実機確認済み 2026-08-23。候補・適合率・バッジを確認）。**UI が動いたことで検出側の穴 3 件が露見**し、5b-1 / 5b-2 に分岐した — [report](.claude/PRPs/reports/candidate-popup-ui-report.md) |
 | **5b-1 検出の穴を塞ぐ（バグ 2 件）** | **complete**（実機確認済み・**候補 1 件を検出**） — [report](.claude/PRPs/reports/detection-gap-fixes-report.md) / [調査](.claude/PRPs/reports/cross-author-collusion-investigation.md) |
 | **5b-2 著者をまたぐ共起** | **complete**（実機で記事 1 本の著者を検出） — [report](.claude/PRPs/reports/cross-author-clusters-report.md) |
 | **7 DOM 非表示** | **complete**（実機確認済み） — 評価済みを隠す / トグルで戻す / 妥当なカードに色 — [report](.claude/PRPs/reports/dom-hiding-report.md) |
