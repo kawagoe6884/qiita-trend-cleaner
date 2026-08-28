@@ -13,7 +13,7 @@
 import { withinLookback } from './like-index';
 import { findClusters } from './cluster';
 import { findCrossAuthorClusters } from './cross-cluster';
-import { burstScore, emptyAccountRatio } from './burst';
+import { burstScore, emptyAccountRatio, windowShare } from './burst';
 import type { ClusterHit } from './cluster';
 import type { AccountHandle, Candidate, ItemId, LikeIndex, Settings } from '../types/domain';
 
@@ -73,13 +73,21 @@ export function detectCandidates(index: LikeIndex, settings: Settings, now: Date
       clusterSize: hit.clusterAccounts.length,
       sharedItemIds: hit.sharedItemIds,
       sharedItemCount: hit.sharedItemIds.length,
-      burstScore: burstScore(scoped, hit),
+      burstScore: burstScore(scoped, hit, settings.burstWindowMinutes),
       emptyAccountRatio: emptyAccountRatio(scoped, hit.clusterAccounts),
+      // **scoped を渡す。**分母はクラスタ外の liker も含むが、対象は根拠記事
+      // だけなので、窓（lookbackDays）で落ちた記事は最初から関係しない
+      windowShare: windowShare(scoped, hit, settings.burstWindowMinutes),
       detectedAt,
       ...(others !== undefined && others.length > 0 ? { coAuthors: others } : {}),
     };
   });
 
-  // 怪しい順に並べる。Phase 6 の一覧はこの順で出す
+  // 怪しい順に並べる。Phase 6 の一覧はこの順で出す。
+  //
+  // **burstScore で候補を絞らない**（Phase 9 で一度入れて撤回した）。
+  // いつ押すかを握っているのは攻撃側なので、下限を設けると時刻をずらすだけで
+  // 候補から消える。しかも消えたことはユーザーに見えない。
+  // burstScore は並び順と表示にだけ使う（burst.ts のヘッダー）。
   return candidates.sort((a, b) => b.clusterSize - a.clusterSize || b.burstScore - a.burstScore);
 }

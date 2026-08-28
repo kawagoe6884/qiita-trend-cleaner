@@ -90,13 +90,16 @@
         margin: 0;
         padding: 0;
       }
-      #candidates li {
+      /* 折りたたみの中の候補も同じ見た目にする。**候補の行は 2 箇所に出る** */
+      #candidates li,
+      #folded-candidates li {
         border: 1px solid currentColor;
         border-radius: 8px;
         padding: 10px 12px;
         margin-bottom: 8px;
       }
-      #candidates p {
+      #candidates p,
+      #folded-candidates p {
         margin: 0 0 2px;
       }
       .author {
@@ -106,9 +109,13 @@
       .stats {
         font-size: 0.9rem;
       }
-      .scores {
-        font-size: 0.8rem;
-        opacity: 0.75;
+      /* 窓内占有率。**候補で唯一のスコア行。**
+         「早い時間帯をこの集団が占めたか」は実測で唯一 2 人の著者を
+         区別できた指標（burstScore は区別できなかった）。
+         空アカウント率の行（.scores）は 2026-08-25 に削除した —
+         比較相手を決めない割合は強さを誤って伝える */
+      .share {
+        font-size: 0.85rem;
       }
       /* 著者をまたぐ共起のときだけ出る行。**display は指定しない** —
          指定すると UA の [hidden]{display:none} に勝ってしまう（Phase 6 で踏んだ） */
@@ -118,10 +125,26 @@
       .evidence {
         font-size: 0.85rem;
       }
+      /* 「この検出は [妥当] [誤り]」。**ラベルを左に置く** —
+         ボタンだけだと、何に対する「妥当」なのかが読み取れない */
       .actions {
         margin-top: 6px;
         display: flex;
+        align-items: center;
         gap: 8px;
+      }
+      .verdict-prompt {
+        font-size: 0.85rem;
+      }
+      /* 文中に置く操作。button の既定の見た目を打ち消してリンクに寄せる */
+      .link-button {
+        padding: 0;
+        border: none;
+        background: none;
+        font: inherit;
+        color: inherit;
+        text-decoration: underline;
+        cursor: pointer;
       }
       button {
         padding: 4px 14px;
@@ -155,7 +178,9 @@
       }
       .slider {
         display: grid;
-        grid-template-columns: 11em 1fr 2.5em;
+        /* 3 列目は出力。「360 分」と「無効」が入る幅が要る。
+           2.5em では折り返す（既存 3 本は 2 桁なので広げても位置は変わらない） */
+        grid-template-columns: 11em 1fr 4.5em;
         align-items: center;
         gap: 8px;
         font-size: 0.85rem;
@@ -169,19 +194,26 @@
         opacity: 0.75;
         margin: 0 0 12px;
       }
-      /* 「妥当」と同時に Qiita 側でもミュートするかの切り替え。
-         **一覧のすぐ上に置く。**下に置くと、押したあとに気づくことになる */
-      .mute-toggle {
-        margin: 0 0 2px;
-        font-size: 0.9rem;
-      }
-      .mute-toggle label {
-        cursor: pointer;
-      }
       /* ミュートの結果。実行したものにだけ出る。**display は指定しない** —
          指定すると UA の [hidden]{display:none} に勝ってしまう */
       .mute-status {
         font-size: 0.85rem;
+      }
+      /* 評価が済んだ候補の置き場。**中身が 0 件のときは hidden。**
+         display は指定しない（UA の [hidden]{display:none} に勝ってしまう） */
+      #folded {
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 6px 12px;
+        margin: 12px 0 0;
+      }
+      #folded[open] {
+        padding-bottom: 12px;
+      }
+      #folded-candidates {
+        list-style: none;
+        margin: 8px 0 0;
+        padding: 0;
       }
     </style>
   </head>
@@ -197,6 +229,23 @@
     <p id="summary">読み込み中…</p>
     <p id="call" hidden></p>
     <p id="last-scan"></p>
+    <!-- **設定への入口をトークンの導線に相乗りさせない。**
+         「トークンを設定する」しか無いと、トークンを使わない人が
+         表示の設定に辿り着けない。
+
+         **Qiita の「設定」と区別するため「拡張機能の設定」と書く。**
+         1 文にまとめたことで、同じ文の中に Qiita 側の「ミュート設定」が
+         並ぶようになった。区別は前より効いていなければならない。
+
+         中の button は #mute-note のクリック処理を通るが、handleLinkClick は
+         closest('a[href]') で判定するので反応しない（button に a の先祖は無い）。 -->
+    <p class="footnote" id="mute-note">
+      ミュートは
+      <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a>
+      から一覧・解除ができます。表示や動作は
+      <button type="button" class="link-button" id="open-settings">拡張機能の設定</button>
+      から変えられます。
+    </p>
 
     <details id="conditions">
       <summary id="conditions-summary">判定の条件</summary>
@@ -215,29 +264,41 @@
         <input type="range" id="lookback" min="1" max="7" step="1" />
         <output id="lookback-value"></output>
       </p>
+      <p class="slider">
+        <label for="burst-window">投稿から何分以内</label>
+        <!-- **値は分ではなく BURST_WINDOW_CHOICES の添字。**
+             60→2880 分は等間隔ではないので、分を value にすると目盛りに載らない -->
+        <input type="range" id="burst-window" min="0" max="6" step="1" />
+        <output id="burst-window-value"></output>
+      </p>
       <p class="footnote">
         条件を変えても Qiita には問い合わせません。すでに集めたデータで判定をやり直すだけです。
       </p>
+      <!-- **幅は候補を絞らない。**下限を設けない理由は burst.ts のヘッダーに書いてある
+           （いつ押すかを握っているのは相手側なので、下限は盲点になる）。
+           絞り込みだと誤解されると、ユーザーは件数が変わるのを待ち続けることになる -->
+      <p class="footnote">
+        「投稿から何分以内」は候補の件数を変えません。同じ著者でも時間を延ばすとスコアが上がることがあり、いいねの時刻がずらされているかを見る目安になります。
+      </p>
     </details>
-
-    <p class="mute-toggle">
-      <label for="mute-on-valid">
-        <input type="checkbox" id="mute-on-valid" />
-        「妥当」と同時に Qiita 側でもミュートする
-      </label>
-    </p>
-    <p class="footnote" id="mute-note">
-      ミュートは
-      <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer"
-        >設定 &gt; ミュート</a
-      >
-      から一覧・解除ができます。
-    </p>
 
     <ul id="candidates"></ul>
     <p id="empty" hidden>
       いまの条件に当てはまる候補はありません。トレンドページを開くと蓄積が増えます。
     </p>
+
+    <details id="folded" hidden>
+      <summary id="folded-summary"></summary>
+      <!-- 解除の導線。**文言を JS で組み立てず、ここにリンクごと置く**
+           （#mute-note と同じ形）。textContent で書くとリンクにならず、
+           誤検知でミュートしたアカウントを回収する経路が押せなくなる -->
+      <p class="footnote" id="fold-note" hidden>
+        ここで「誤り」を押しても、Qiita 側のミュートは解除されません。解除は
+        <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a>
+        から行ってください。
+      </p>
+      <ul id="folded-candidates"></ul>
+    </details>
 
     <script type="module" src="./main.ts"></script>
   </body>

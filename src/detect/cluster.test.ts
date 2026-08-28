@@ -1,8 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { findClusters } from './cluster';
+import { DEFAULT_SETTINGS } from '../types/domain';
 import type { LikeIndex, Settings } from '../types/domain';
 
-const SETTINGS: Settings = { minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 };
+// findClusters が読むのは 3 項目だけ。残りは既定値で埋める
+// （項目を足すたびにここを書き換えずに済む）
+const SETTINGS: Settings = {
+  ...DEFAULT_SETTINGS,
+  minClusterSize: 5,
+  minSharedItems: 2,
+  lookbackDays: 3,
+};
 
 const POSTED = '2026-08-18T10:00:00+09:00';
 const LIKED = '2026-08-18T10:30:00+09:00';

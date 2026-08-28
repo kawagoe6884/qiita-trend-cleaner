@@ -13,12 +13,13 @@
  */
 import { QtgError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
-import { readRateHeaders } from './rate-budget';
+import { readRateHeaders, API_PER_PAGE } from './rate-budget';
 import type { RateState } from './rate-budget';
 
 const API_BASE = 'https://qiita.com/api/v2';
 /** Qiita API の上限。101 以上を指定するとエラーになる */
-const PER_PAGE = 100;
+/** rate-budget から取る。**2 箇所に 100 と書かない** — 完全性の判定でも使う値 */
+const PER_PAGE = API_PER_PAGE;
 
 /**
  * パスセグメントに入れてよい形式。

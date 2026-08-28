@@ -13,6 +13,7 @@ import {
 import { RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { countRecords } from '../detect/like-index';
+import { DEFAULT_SETTINGS } from '../types/domain';
 import type { TrendItem } from '../types/domain';
 
 vi.mock('../api/qiita-client', () => ({ fetchLikes: vi.fn(), fetchUserItems: vi.fn() }));
@@ -565,7 +566,7 @@ describe('runScan の設定とバッジ', () => {
 
   it('保存された閾値で検出する', async () => {
     // Arrange — 既定（N=5）では出ないが N=2 なら出る
-    await saveSettings({ minClusterSize: 2, minSharedItems: 2, lookbackDays: 3 });
+    await saveSettings({ ...DEFAULT_SETTINGS, minClusterSize: 2, lookbackDays: 3 });
     // Act
     await runScan(SAME_AUTHOR);
     // Assert
@@ -583,7 +584,7 @@ describe('runScan の設定とバッジ', () => {
 
   it('候補件数をバッジに出す', async () => {
     // Arrange
-    await saveSettings({ minClusterSize: 2, minSharedItems: 2, lookbackDays: 3 });
+    await saveSettings({ ...DEFAULT_SETTINGS, minClusterSize: 2, lookbackDays: 3 });
     // Act
     await runScan(SAME_AUTHOR);
     // Assert

@@ -162,6 +162,8 @@ describe('getCandidates', () => {
     clusterSize: 2,
     burstScore: 0.75,
     emptyAccountRatio: 1,
+    // null = 測れない。storage は形を検証しないので、往復して壊れないことだけ見る
+    windowShare: null,
     detectedAt: '2026-08-19T03:00:00.000Z',
   };
 
@@ -209,7 +211,12 @@ describe('getSettings', () => {
   });
 
   it('保存した設定を読み戻せる', async () => {
-    const settings = { minClusterSize: 8, minSharedItems: 3, lookbackDays: 5 };
+    const settings = {
+      minClusterSize: 8,
+      minSharedItems: 3,
+      lookbackDays: 5,
+      burstWindowMinutes: 180,
+    };
     await saveSettings(settings);
     expect(await getSettings()).toEqual(settings);
   });
@@ -227,11 +234,13 @@ describe('getSettings', () => {
     await chrome.storage.sync.set({
       settings: { minClusterSize: '8', minSharedItems: 3, lookbackDays: 5 },
     });
-    // Act & Assert — 全部捨てると、あとで項目を足したとき既存設定を巻き添えにする
+    // Act & Assert — 全部捨てると、あとで項目を足したとき既存設定を巻き添えにする。
+    // **Phase 9 で項目が 1 つ増えたが、既存 3 項目の扱いは変わっていない**
     expect(await getSettings()).toEqual({
       minClusterSize: DEFAULT_SETTINGS.minClusterSize,
       minSharedItems: 3,
       lookbackDays: 5,
+      burstWindowMinutes: DEFAULT_SETTINGS.burstWindowMinutes,
     });
   });
 
@@ -245,6 +254,77 @@ describe('getSettings', () => {
   it('設定そのものが壊れていても例外を投げない', async () => {
     await chrome.storage.sync.set({ settings: 'broken' });
     await expect(getSettings()).resolves.toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('旧い 3 項目だけの保存値でも、新項目は既定値で埋まる', async () => {
+    // Arrange — Phase 8 以前に保存された設定。マイグレーションは書かない
+    await chrome.storage.sync.set({
+      settings: { minClusterSize: 8, minSharedItems: 3, lookbackDays: 5 },
+    });
+    // Act & Assert — 既存 3 項目は活き、新項目だけが既定になる
+    expect(await getSettings()).toEqual({
+      minClusterSize: 8,
+      minSharedItems: 3,
+      lookbackDays: 5,
+      burstWindowMinutes: DEFAULT_SETTINGS.burstWindowMinutes,
+    });
+  });
+});
+
+/**
+ * 投稿直後の幅（Phase 9）。**下限（絞り込み）は作らなかった。**
+ *
+ * いつ押すかを握っているのは攻撃側なので、下限を設ければ時刻をずらすだけで
+ * 候補から消え、しかも消えたことはユーザーに見えない。
+ */
+describe('getSettings の burstWindowMinutes', () => {
+  it('保存されていればその値を返す', async () => {
+    await chrome.storage.sync.set({ settings: { ...DEFAULT_SETTINGS, burstWindowMinutes: 180 } });
+    expect((await getSettings()).burstWindowMinutes).toBe(180);
+  });
+
+  it('0 や負数・小数・文字列は既定値に倒す（幅 0 分は意味を成さない）', async () => {
+    for (const broken of [0, -30, 1.5, '60', null]) {
+      await chrome.storage.sync.set({
+        settings: { ...DEFAULT_SETTINGS, burstWindowMinutes: broken },
+      });
+      expect((await getSettings()).burstWindowMinutes).toBe(DEFAULT_SETTINGS.burstWindowMinutes);
+    }
+  });
+
+  it('下限（minBurstScore）は Settings に存在しない', () => {
+    // **撤回した設定が復活していないことの番人。**
+    // 保存済みの古い値が残っていても読まない
+    expect(DEFAULT_SETTINGS).not.toHaveProperty('minBurstScore');
+  });
+});
+
+/** 表示の設定。判定に関係しないので local に置く（muteOnValid と同じ） */
+describe('getFoldTarget / saveFoldTarget', () => {
+  it('未設定なら none', async () => {
+    await expect(storage.getFoldTarget()).resolves.toBe('none');
+  });
+
+  it('保存した値を読み戻せる', async () => {
+    await storage.saveFoldTarget('judged');
+    await expect(storage.getFoldTarget()).resolves.toBe('judged');
+  });
+
+  it('知らない値は none に倒す', async () => {
+    // 通すと UI の switch が文言を返せずに落ちる
+    await chrome.storage.local.set({ foldTarget: 'everything' });
+    await expect(storage.getFoldTarget()).resolves.toBe('none');
+  });
+
+  it('数値でも例外を投げず none に倒す', async () => {
+    await chrome.storage.local.set({ foldTarget: 3 });
+    await expect(storage.getFoldTarget()).resolves.toBe('none');
+  });
+
+  it('local に置く（sync には書かない）', async () => {
+    await storage.saveFoldTarget('muted');
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(chrome.storage.sync.set).not.toHaveBeenCalled();
   });
 });
 

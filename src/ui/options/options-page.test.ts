@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { init } from './options-page';
+import { init, describeToggleState } from './options-page';
 import { loadState, submitToken, removeToken } from './token-form';
+// 実際に配布される HTML をそのまま読む（Vite の ?raw）。
+// setupDom() は骨格のモックなので、**順序は実ファイルに対して検査する**
+import indexHtml from './index.html?raw';
 import type * as TokenForm from './token-form';
 
 vi.mock('./token-form', async (importOriginal) => {
@@ -33,7 +36,29 @@ function setupDom(): void {
       <input type="password" id="token" autocomplete="off" />
       <button type="submit" id="save">保存する</button>
     </form>
-    <p id="message" role="status" aria-live="polite"></p>`;
+    <p id="message" role="status" aria-live="polite"></p>
+    <section class="prefs">
+      <label class="toggle">
+        <input type="checkbox" id="mute-on-valid" />
+        <span class="track"></span>
+        <span>「妥当」と同時に Qiita 側でもミュート</span>
+        <strong class="toggle-state" id="mute-on-valid-state"></strong>
+      </label>
+      <div class="fold-grid">
+        <label class="fold-option">
+          <input type="radio" name="fold-target" value="none" />そのまま一覧に出す
+        </label>
+        <label class="fold-option">
+          <input type="radio" name="fold-target" value="muted" />ミュート済みだけ
+        </label>
+        <label class="fold-option">
+          <input type="radio" name="fold-target" value="valid" />「妥当」だけ
+        </label>
+        <label class="fold-option">
+          <input type="radio" name="fold-target" value="judged" />評価済みをすべて
+        </label>
+      </div>
+    </section>`;
 }
 
 function el<T extends HTMLElement>(selector: string): T {
@@ -345,5 +370,236 @@ describe('操作中のロック（古い応答が新しい入力を消さない�
     expect(el<HTMLInputElement>('#token').readOnly).toBe(false);
     expect(el<HTMLButtonElement>('#save').disabled).toBe(false);
     expect(el<HTMLButtonElement>('#remove').disabled).toBe(false);
+  });
+});
+
+/**
+ * 候補の見え方（Phase 9 でポップアップから移した 2 つ）。
+ *
+ * どちらも `storage.local`。判定の閾値（sync）とは置き場が違う。
+ * **この画面は検出をやり直さない** — 保存するだけで、次にポップアップを
+ * 開いたときに反映される。
+ */
+describe('候補の見え方の設定', () => {
+  function radios(): HTMLInputElement[] {
+    return [...document.querySelectorAll<HTMLInputElement>('input[name="fold-target"]')];
+  }
+
+  function pick(value: string): void {
+    const radio = radios().find((input) => input.value === value);
+    if (!radio) throw new Error(`missing radio: ${value}`);
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change'));
+  }
+
+  it('未設定ならトグルはオフ、折りたたみは「なし」', async () => {
+    // Act
+    await init();
+    // Assert — 既定は「Qiita 側を変えない」「視界から消さない」
+    expect(el<HTMLInputElement>('#mute-on-valid').checked).toBe(false);
+    expect(radios().find((input) => input.checked)?.value).toBe('none');
+  });
+
+  it('保存済みの値を映す', async () => {
+    // Arrange
+    await chrome.storage.local.set({ muteOnValid: true, foldTarget: 'judged' });
+    // Act
+    await init();
+    // Assert
+    expect(el<HTMLInputElement>('#mute-on-valid').checked).toBe(true);
+    expect(radios().find((input) => input.checked)?.value).toBe('judged');
+  });
+
+  it('トグルを入れると保存する', async () => {
+    // Arrange
+    await init();
+    const toggle = el<HTMLInputElement>('#mute-on-valid');
+    // Act
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(chrome.storage.local.set).toHaveBeenCalledWith({ muteOnValid: true });
+    });
+  });
+
+  it('トグルを外すと false を保存する（キーごと消さない）', async () => {
+    await chrome.storage.local.set({ muteOnValid: true });
+    await init();
+    const toggle = el<HTMLInputElement>('#mute-on-valid');
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(chrome.storage.local.set).toHaveBeenCalledWith({ muteOnValid: false });
+    });
+  });
+
+  it('折りたたみを選ぶと保存する', async () => {
+    await init();
+    pick('muted');
+    await vi.waitFor(() => {
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      expect(chrome.storage.local.set).toHaveBeenCalledWith({ foldTarget: 'muted' });
+    });
+  });
+
+  it('4 択すべてが保存できる', async () => {
+    await init();
+    for (const value of ['none', 'muted', 'valid', 'judged']) {
+      pick(value);
+      await vi.waitFor(() => {
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        expect(chrome.storage.local.set).toHaveBeenCalledWith({ foldTarget: value });
+      });
+    }
+  });
+
+  it('知らない値は保存しない（HTML を書き換えられても storage に入らない）', async () => {
+    // Arrange
+    await init();
+    const radio = radios()[0];
+    if (!radio) throw new Error('missing radio');
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    vi.mocked(chrome.storage.local.set).mockClear();
+    // Act
+    radio.value = 'everything';
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change'));
+    // Assert
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(chrome.storage.local.set).not.toHaveBeenCalled();
+  });
+
+  it('開いた時点で「する」「しない」が出ている', async () => {
+    // Arrange — 色とつまみの位置だけでは状態が読み取りにくい
+    await chrome.storage.local.set({ muteOnValid: true });
+    // Act
+    await init();
+    // Assert
+    expect(el('#mute-on-valid-state').textContent).toBe('する');
+  });
+
+  it('オフなら「しない」', async () => {
+    await init();
+    expect(el('#mute-on-valid-state').textContent).toBe('しない');
+  });
+
+  it('切り替えると文言もその場で変わる（保存の往復を待たない）', async () => {
+    // Arrange
+    await init();
+    const toggle = el<HTMLInputElement>('#mute-on-valid');
+    // Act
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    // Assert — storage の往復を待つと、押した瞬間の文言が古いまま残る
+    expect(el('#mute-on-valid-state').textContent).toBe('する');
+    // Act — 戻す
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event('change'));
+    // Assert
+    expect(el('#mute-on-valid-state').textContent).toBe('しない');
+  });
+
+  it('見え方の読み込みが失敗しても init は落ちない', async () => {
+    // Arrange — storage が死んでいる状態。トークン側とは別の try で受ける。
+    // 差し替えて戻すだけで呼び出さないので、unbound-method の懸念は当たらない
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const get = chrome.storage.local.get;
+    (chrome.storage.local as { get: unknown }).get = () =>
+      Promise.reject(new Error('storage down'));
+    try {
+      // Act & Assert — ここで throw すると options ページ全体が白紙になる
+      await expect(init()).resolves.toBeUndefined();
+    } finally {
+      (chrome.storage.local as { get: unknown }).get = get;
+    }
+  });
+
+  it('トークンの読み込みが失敗しても見え方の設定は出す', async () => {
+    // Arrange — storage キーが別なので、片方の失敗で両方を落とさない
+    await chrome.storage.local.set({ foldTarget: 'valid' });
+    loadMock.mockRejectedValue(new Error('storage unavailable'));
+    // Act
+    await init();
+    // Assert
+    expect(radios().find((input) => input.checked)?.value).toBe('valid');
+  });
+});
+
+/**
+ * **色だけで状態を伝えない。**色覚や表示環境（強制カラー・モノクロ印刷）では
+ * 色の差が届かず、つまみの移動も 20px でしかない。
+ */
+describe('describeToggleState', () => {
+  it('オンは「する」', () => {
+    expect(describeToggleState(true)).toBe('する');
+  });
+
+  it('オフは「しない」', () => {
+    expect(describeToggleState(false)).toBe('しない');
+  });
+
+  it('2 つは別の文言（同じだと状態が読めない）', () => {
+    expect(describeToggleState(true)).not.toBe(describeToggleState(false));
+  });
+});
+
+/**
+ * **実ファイルに対して順序を固定する。**
+ *
+ * Phase 9 で「候補の見え方」を足したとき、トークンの入力欄と取得手順のあいだに
+ * 割り込ませてしまい、**手順を見ながら入力できない配置**になった。
+ * 骨格のモックでは検出できないので、`index.html?raw` に対して検査する。
+ */
+describe('index.html のレイアウト順序', () => {
+  it('トークンの取得手順が入力欄の直後にある（あいだに何も挟まない）', () => {
+    const form = indexHtml.indexOf('id="token-form"');
+    const howTo = indexHtml.indexOf('トークンの取得手順');
+    const prefs = indexHtml.indexOf('class="prefs"');
+    expect(form).toBeGreaterThan(-1);
+    expect(howTo).toBeGreaterThan(form);
+    expect(howTo).toBeLessThan(prefs);
+  });
+
+  it('候補の見え方はページの最後にある', () => {
+    // トークンは「まず設定するもの」、見え方は「あとから調整するもの」
+    const prefs = indexHtml.indexOf('class="prefs"');
+    const mode = indexHtml.indexOf('id="mode-title"');
+    expect(prefs).toBeGreaterThan(mode);
+  });
+
+  it('トグルは <input type="checkbox"> のまま（見た目だけ差し替える）', () => {
+    // div で自作すると、キーボード操作と支援技術の扱いを全部自前で書くことになる
+    expect(indexHtml).toContain('<input type="checkbox" id="mute-on-valid" />');
+  });
+
+  it('状態の文言を置く場所がある（色だけで伝えない）', () => {
+    expect(indexHtml).toContain('id="mute-on-valid-state"');
+  });
+
+  it('オンの色は琥珀系（赤でも緑でもない）', () => {
+    // Arrange — 赤 = 断定（約束 6）。緑 = 「良い」と読める。ここでオンにするのは
+    // Qiita 側のアカウントを変更する副作用の有効化なので、どちらも違う。
+    // hider.ts が「妥当」のカードに使っている琥珀と同じ色相に揃える
+    const rule = indexHtml.slice(
+      indexHtml.indexOf('.toggle input:checked + .track {'),
+      indexHtml.indexOf('.toggle-state {'),
+    );
+    // Act — rgba(r, g, b, a) を取り出す
+    const channels = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(rule);
+    expect(channels).not.toBeNull();
+    const [r, g, b] = (channels ?? []).slice(1).map(Number);
+    // Assert — r > g > b は琥珀・橙だけが満たす。
+    // 純赤 (255,0,0) は g > b を満たさず、緑 (0,255,0) は r > g を満たさない
+    expect(r).toBeGreaterThan(g ?? 0);
+    expect(g).toBeGreaterThan(b ?? 0);
+  });
+
+  it('実スクショを埋め込まない（実アカウント名が配布物に入る）', () => {
+    expect(indexHtml).not.toContain('data:image/png');
+    expect(indexHtml).not.toContain('.png');
+    expect(indexHtml).not.toContain('.jpg');
   });
 });

@@ -19,6 +19,7 @@ import type {
   AccountHandle,
   Candidate,
   FeedbackLog,
+  FoldTarget,
   IsoDateTime,
   ItemId,
   MuteLog,
@@ -39,8 +40,9 @@ export interface Precision {
    * 妥当 / (妥当 + 誤り)。**分母が 0 のときは null。**
    *
    * 0 にすると「測ったら 0% だった」と「まだ測っていない」が区別できなくなる。
-   * Phase 9 は適合率 80% を目標に閾値を追い込むフェーズなので、
-   * この 2 つを取り違えると調整の方向が逆になる。
+   * **適合率はユーザーが自分の調整結果を見る計器**（Phase 9 で方針転換。
+   * 開発者が 80% を目標に追い込むのはやめた）。取り違えると、条件を
+   * ゆるめるべきか締めるべきかの判断が逆になる。
    */
   ratio: number | null;
 }
@@ -56,6 +58,17 @@ export function precisionOf(feedback: FeedbackLog): Precision {
   const total = valid + falsePositive;
   return { valid, falsePositive, ratio: total === 0 ? null : valid / total };
 }
+
+/**
+ * 「妥当 / 誤り」の左に置くラベル。
+ *
+ * **ボタンだけでは何に対する判断か読み取れない。**評価する対象は
+ * **検出そのもの**（当たっていたか）であって、著者の人格ではない。
+ * describeCall が一覧の頭で言っていることを、行ごとにも短く置く。
+ *
+ * 「不正」「スパム」とは書かない（設計上の約束 6）。
+ */
+export const VERDICT_PROMPT = 'この検出は';
 
 export interface Evidence {
   itemId: ItemId;
@@ -101,6 +114,72 @@ export function toViews(
     })),
     mute: muteLog[candidate.authorHandle] ?? null,
   }));
+}
+
+export interface PartitionedViews {
+  open: CandidateView[];
+  folded: CandidateView[];
+}
+
+/**
+ * 折りたたむものと出すものに分ける。**純粋関数。順序は保つ。**
+ *
+ * 【mutedAt で見る。outcome では見ない】
+ * ミュートすると Qiita がその著者の記事をトレンドから外すので、押し直すと
+ * 必ず `not-on-page` になる（MuteRecord.mutedAt の JSDoc）。outcome で
+ * 判定すると、**押し直した瞬間に折りたたみから飛び出す。**
+ *
+ * 【'muted' では「誤り」を押しても外れない】
+ * 「誤り」を押しても Qiita 側のミュートは解除されない。折りたたみに残るのは
+ * 事実として正しい。解除の導線は foldNote が出す。
+ */
+export function partitionViews(views: CandidateView[], target: FoldTarget): PartitionedViews {
+  const shouldFold = (view: CandidateView): boolean => {
+    switch (target) {
+      case 'none':
+        return false;
+      case 'muted':
+        return view.mute?.mutedAt !== undefined;
+      case 'valid':
+        return view.verdict === 'valid';
+      case 'judged':
+        return view.verdict !== null;
+    }
+  };
+  return {
+    open: views.filter((view) => !shouldFold(view)),
+    folded: views.filter(shouldFold),
+  };
+}
+
+/**
+ * 折りたたみの見出し。**0 件なら空文字を返し、器ごと出さない**
+ * （describeCoAuthors と同じ規約）。
+ */
+export function describeFold(target: FoldTarget, count: number): string {
+  if (target === 'none' || count === 0) return '';
+  const label =
+    target === 'muted' ? 'ミュート済み' : target === 'valid' ? '「妥当」と評価した' : '評価済み';
+  return `${label} ${String(count)} 件`;
+}
+
+/**
+ * 折りたたみの中に注意書きを出すか。**ミュート済みが 1 件でもあるときだけ。**
+ *
+ * 「誤り」を押しても Qiita 側のミュートは解除されない。折りたたみは
+ * 「視界から消す」方向の変更なので、**誤検知でミュートしたアカウントを
+ * 再評価できなくする**という既知の失敗（OQ-16）と同じ形を持つ。
+ * 解除の導線を添えることがその歯止めになる。
+ *
+ * **文言そのものは index.html に置いてある。**解除ページへのリンクを含む
+ * ので、textContent で組み立てると押せない飾りになる（#mute-note と同じ形）。
+ * ここが決めるのは出すか出さないかだけ。
+ *
+ * 1 件も無いときに出さないのは、'judged' で誰もミュートしていない場合に
+ * 関係のない注意書きが常駐するのを避けるため。
+ */
+export function hasMutedInFold(folded: CandidateView[]): boolean {
+  return folded.some((view) => view.mute?.mutedAt !== undefined);
 }
 
 /**
@@ -150,7 +229,7 @@ export function describeCall(views: CandidateView[], precision: Precision): stri
  */
 export function describeCoAuthors(coAuthors: AccountHandle[] | undefined): string {
   if (coAuthors === undefined || coAuthors.length === 0) return '';
-  return `同じ顔ぶれが ${coAuthors.join('、')} の記事にも現れています。`;
+  return `同じメンバーが ${coAuthors.join('、')} の記事にも現れています。`;
 }
 
 /**
@@ -160,10 +239,87 @@ export function describeCoAuthors(coAuthors: AccountHandle[] | undefined): strin
  * 1 つの文言にすると、スライダーを上げてゼロになった人に
  * 「トレンドページを開いてください」と的外れな案内を出すことになる。
  */
-export function describeEmpty(hasIndex: boolean): string {
+export function describeEmpty(hasIndex: boolean, foldedCount = 0): string {
+  // 折りたたみの中に居るのに「条件をゆるめると増えます」と言うと、
+  // 何もしていない人に条件をいじらせることになる。**原因は 3 つある**
+  if (foldedCount > 0) return '出ている候補はすべて折りたたみの中にあります。';
   return hasIndex
     ? 'いまの条件に当てはまる候補はありません。条件をゆるめると増えます。'
     : 'まだ何も集めていません。トレンドページを開くと蓄積が始まります。';
+}
+
+const MINUTES_PER_DAY = 60 * 24;
+
+/**
+ * 「投稿から何分以内」で選べる値（分）。**等間隔ではない。**
+ *
+ * 短い側は 1 時間刻みで細かく、長い側は日単位まで伸ばす。組織票の
+ * signature は「投稿から間もない集中」だが、**手口を知られれば時刻はずらせる**
+ * ので、遅い側も見られる必要がある（burst.ts のヘッダー）。
+ *
+ * スライダーは**この配列の添字**を値にする。分そのものを value にすると、
+ * 60→2880 を等間隔の目盛りに載せられない。
+ */
+export const BURST_WINDOW_CHOICES = [60, 120, 180, 360, 720, MINUTES_PER_DAY, MINUTES_PER_DAY * 2];
+
+/** 幅の表示。1 日以上は日で言う（「1440 分」は読めない） */
+export function describeWindow(minutes: number): string {
+  if (minutes >= MINUTES_PER_DAY && minutes % MINUTES_PER_DAY === 0) {
+    return `${String(minutes / MINUTES_PER_DAY)} 日`;
+  }
+  return `${String(minutes)} 分`;
+}
+
+/**
+ * 分から目盛りの添字を引く。**一致しなければ最も近いものに寄せる。**
+ *
+ * 選択肢の一覧を変えたときに、保存済みの値がどこにも無くなりうる。
+ * そのとき先頭へ倒すと、ユーザーの設定が黙って最短に変わる。
+ */
+export function windowIndexOf(minutes: number): number {
+  let best = 0;
+  for (let i = 1; i < BURST_WINDOW_CHOICES.length; i += 1) {
+    const current = BURST_WINDOW_CHOICES[i] ?? 0;
+    const chosen = BURST_WINDOW_CHOICES[best] ?? 0;
+    if (Math.abs(current - minutes) < Math.abs(chosen - minutes)) best = i;
+  }
+  return best;
+}
+
+/** 0.0-1.0 を百分率の整数にする。0.98 → 98 */
+function toPercent(ratio: number): string {
+  return String(Math.round(ratio * 100));
+}
+
+/**
+ * 窓内占有率の行。**候補 1 件の見出しになる数字。**
+ *
+ * 【burstScore を画面から降ろした】
+ * `burstScore` は「**クラスタのいいね**のうち窓内だったもの」で、彼らが早く
+ * 押したかしか言わない。実測（2026-08-25）では、どの幅でも 80〜95% の著者と、
+ * 180 分で 79% ／ 2 日で 43% まで薄まる著者を **burstScore では区別できなかった**。
+ * 分けたのは占有率だけだった。並び順のタイブレークには引き続き使う。
+ *
+ * 【実件数を書く】
+ * 「100%」は 10/10 とも 5/5 とも読める。％だけにすると強さが読めない。
+ *
+ * 【3 つの状態を言い分ける】
+ *   - null      … **測れない**（いいねの多い記事を含み、分母が欠けている）
+ *   - total = 0 … 測ったが窓内にいいねが無かった
+ *   - それ以外  … 件数と割合
+ * 「測れない」と「測ったら 0 だった」を混ぜると、条件を動かす方向が逆になる
+ * （適合率の分母 0 を 0% にしないのと同じ話）。
+ */
+export function describeWindowShare(candidate: Candidate, windowMinutes: number): string {
+  // **「該当記事の」を付ける。**見出しが「3 記事に重なった」と言っているので、
+  // どの記事の話かをこの行だけで読めるようにする
+  const scope = `該当記事の投稿から ${describeWindow(windowMinutes)}以内`;
+  // 保存済みの古い候補にはこのフィールドが無い。undefined も「測れない」に倒す
+  const share = candidate.windowShare ?? null;
+  if (share === null) return `${scope}の占有率は測れません (いいねの多い記事を含みます)`;
+  if (share.total === 0) return `${scope}にいいねした人はまだいません`;
+  const ratio = toPercent(share.cluster / share.total);
+  return `${scope}にいいねした ${String(share.cluster)}/${String(share.total)} アカウント (${ratio}%) が同じメンバー`;
 }
 
 export interface ModeCopy {
@@ -206,22 +362,35 @@ export interface PopupState {
   hasIndex: boolean;
   /** 「妥当」と同時に Qiita 側でもミュートするか。**既定は false** */
   muteOnValid: boolean;
+  /** 評価が済んだ候補を折りたたむ対象。**既定は 'none'** */
+  foldTarget: FoldTarget;
 }
 
 /** 保存済みの状態をまとめて読む */
 export async function loadPopupState(now: Date): Promise<PopupState> {
-  const [candidates, feedback, settings, until, lastScan, hasToken, index, muteOnValid, muteLog] =
-    await Promise.all([
-      storage.getCandidates(),
-      storage.getFeedback(),
-      storage.getSettings(),
-      storage.getRateLimitedUntil(),
-      storage.getLastScanResult(),
-      storage.hasToken(),
-      storage.getLikeIndex(),
-      storage.getMuteOnValid(),
-      storage.getMuteLog(),
-    ]);
+  const [
+    candidates,
+    feedback,
+    settings,
+    until,
+    lastScan,
+    hasToken,
+    index,
+    muteOnValid,
+    muteLog,
+    foldTarget,
+  ] = await Promise.all([
+    storage.getCandidates(),
+    storage.getFeedback(),
+    storage.getSettings(),
+    storage.getRateLimitedUntil(),
+    storage.getLastScanResult(),
+    storage.hasToken(),
+    storage.getLikeIndex(),
+    storage.getMuteOnValid(),
+    storage.getMuteLog(),
+    storage.getFoldTarget(),
+  ]);
   return {
     views: toViews(candidates, feedback, muteLog),
     precision: precisionOf(feedback),
@@ -231,6 +400,7 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
     hasToken,
     hasIndex: Object.keys(index).length > 0,
     muteOnValid,
+    foldTarget,
   };
 }
 
@@ -374,7 +544,7 @@ export async function requestMute(handle: AccountHandle, now: Date): Promise<Mut
 export function describeMuteRecord(record: MuteRecord): string {
   if (record.mutedAt === undefined) return describeMuteOutcome(record.outcome);
   if (record.outcome === 'not-on-page' || record.outcome === 'menu-unavailable') {
-    return 'ミュート済みです。ミュートした著者の記事はトレンドから外れるので、ここには出てきません。設定 > ミュート で確認・解除できます。';
+    return 'ミュート済みです。ミュートした著者の記事はトレンドから外れるので、ここには出てきません。';
   }
   return describeMuteOutcome(record.outcome);
 }
@@ -398,7 +568,7 @@ export function describeMuteOutcome(outcome: MuteOutcome): string {
     case 'menu-unavailable':
       return 'ミュートのメニューが見つかりませんでした。既にミュート済みか、Qiita の画面構造が変わった可能性があります。';
     case 'timeout':
-      return '完了の通知を確認できませんでした。設定 > ミュート で結果を確認してください。';
+      return '完了の通知を確認できませんでした。ミュート設定で結果を確認してください。';
     case 'unreachable':
       return 'トレンドページに届きませんでした。ページを再読み込みしてから押し直してください。';
   }

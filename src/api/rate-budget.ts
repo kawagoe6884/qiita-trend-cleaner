@@ -20,6 +20,23 @@ import type { ScanMode } from '../types/domain';
 export const RATE_LIMIT_ANON = 60;
 export const RATE_LIMIT_AUTH = 1000;
 
+/**
+ * 1 リクエストで要求する件数（`per_page`）。Qiita API の上限が 100。
+ *
+ * 【なぜ qiita-client ではなくここに置くか】
+ * **完全性の判定に使うため** `detect/burst.ts` からも参照する。
+ * `qiita-client` は 2 つのテストで `vi.mock` されており、そこから定数を
+ * import すると**モック下で undefined になる**（`RateLimitError` を
+ * `lib/errors.ts` へ移したのと同じ罠）。このモジュールは純粋で、
+ * どこからもモックされていない。
+ *
+ * 【何を保証するか】
+ * 応答が 100 件未満なら、それがその時点の**全部**だった。`Total-Count` を
+ * 記録していない古いレコードでも、保持件数が 100 未満なら取りこぼしていない
+ * と言い切れる。
+ */
+export const API_PER_PAGE = 100;
+
 export interface RateState {
   limit: number;
   remaining: number;

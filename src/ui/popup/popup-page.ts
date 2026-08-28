@@ -26,12 +26,19 @@ import {
   describeEmpty,
   describeCoAuthors,
   describeMuteRecord,
+  describeWindowShare,
+  partitionViews,
+  describeFold,
+  hasMutedInFold,
+  VERDICT_PROMPT,
+  describeWindow,
+  windowIndexOf,
+  BURST_WINDOW_CHOICES,
   rateLimitNotice,
 } from './popup-state';
 import type { CandidateView, Precision } from './popup-state';
-import { saveMuteOnValid } from '../../lib/storage';
 import { DEFAULT_SETTINGS } from '../../types/domain';
-import type { MuteRecord, Settings, Verdict } from '../../types/domain';
+import type { FoldTarget, MuteRecord, Settings, Verdict } from '../../types/domain';
 
 const SELECTORS = {
   notice: '#notice',
@@ -50,8 +57,14 @@ const SELECTORS = {
   lookbackValue: '#lookback-value',
   conditionsSummary: '#conditions-summary',
   openOptions: '#open-options',
-  muteOnValid: '#mute-on-valid',
+  openSettings: '#open-settings',
   muteNote: '#mute-note',
+  burstWindow: '#burst-window',
+  burstWindowValue: '#burst-window-value',
+  folded: '#folded',
+  foldedSummary: '#folded-summary',
+  foldedList: '#folded-candidates',
+  foldNote: '#fold-note',
 } as const;
 
 /** 依頼してから応答が返るまでの表示。数秒かかるので、押した直後に出す */
@@ -86,9 +99,9 @@ function setHidden(selector: string, hidden: boolean): void {
 
 /** 適合率。分母 0 は「—」。0% と区別する */
 function formatPrecision(precision: Precision): string {
-  if (precision.ratio === null) return '適合率 —（未評価）';
+  if (precision.ratio === null) return '適合率 — (未評価)';
   const percent = Math.round(precision.ratio * 100);
-  return `適合率 ${String(percent)}%（妥当 ${String(precision.valid)} / 誤り ${String(precision.falsePositive)}）`;
+  return `適合率 ${String(percent)}% (妥当 ${String(precision.valid)} / 誤り ${String(precision.falsePositive)})`;
 }
 
 /**
@@ -103,33 +116,37 @@ function renderMode(hasToken: boolean): void {
   setText(SELECTORS.openOptions, copy.action);
 }
 
-/** 保存済みの設定をチェックボックスに映す。**init でだけ呼ぶ** */
-function renderMuteToggle(muteOnValid: boolean): void {
-  const input = find<HTMLInputElement>(SELECTORS.muteOnValid);
-  if (input) input.checked = muteOnValid;
-}
-
 function renderSummary(views: CandidateView[], precision: Precision): void {
   setText(SELECTORS.summary, `候補 ${String(views.length)} 件 / ${formatPrecision(precision)}`);
   const call = describeCall(views, precision);
   setText(SELECTORS.call, call);
   setHidden(SELECTORS.call, call === '');
-  setText(SELECTORS.empty, describeEmpty(currentHasIndex));
-  setHidden(SELECTORS.empty, views.length > 0);
+  // 折りたたみの中に居るだけなら「条件をゆるめて」ではない。
+  // 案内は **開いている件数** で出し分ける（renderCandidates と同じ分割）
+  const { open, folded } = partitionViews(views, currentFoldTarget);
+  setText(SELECTORS.empty, describeEmpty(currentHasIndex, folded.length));
+  setHidden(SELECTORS.empty, open.length > 0);
   // バッジはスキャン時だけでなく、閾値を変えたときも合わせる。
   // 合わせないと一覧が 5 件を出しているのにバッジは前回の 2 件を出し続ける
   void updateBadge(views.length, currentRateLimited);
 }
 
-/** 断定しない（設計上の約束 6）。「不正」「スパム」とは書かない */
+/**
+ * 候補の見出し。**「共通」と書かない。**
+ *
+ * `clusterSize` は連結成分の**和集合**であって、全記事に共通する集合ではない
+ * （cross-cluster.ts の `component.accounts` は `pair.overlap` を足し込む。
+ * cluster.ts の `qualifying` も「M 本以上いいねした人」の集合で、1 記事ごとに
+ * 全員が居ることは保証されない）。
+ *
+ * **実機で矛盾が露見した**（2026-08-25）— 総いいね 26 件の記事に対して
+ * 「30 アカウントが共通」と出ていた。**26 人しかいない記事に 30 人は入らない。**
+ *
+ * 断定しない（設計上の約束 6）。「不正」「スパム」とは書かない。
+ */
 function describeCandidate(view: CandidateView): string {
   const { clusterSize, sharedItemCount } = view.candidate;
-  return `${String(clusterSize)} アカウントが ${String(sharedItemCount)} 記事に共通`;
-}
-
-function describeScores(view: CandidateView): string {
-  const { burstScore, emptyAccountRatio } = view.candidate;
-  return `投稿直後の集中 ${burstScore.toFixed(2)} / 空アカウント ${emptyAccountRatio.toFixed(2)}`;
+  return `${String(sharedItemCount)} 記事に重なった ${String(clusterSize)} アカウント`;
 }
 
 function paragraph(className: string, text: string): HTMLParagraphElement {
@@ -172,14 +189,21 @@ function candidateItem(view: CandidateView): HTMLLIElement {
   item.dataset.handle = view.candidate.authorHandle;
   const actions = document.createElement('p');
   actions.className = 'actions';
+  // **ボタンの左にラベルを置く。**「妥当」だけでは何に対する判断か読めない
+  const prompt = document.createElement('span');
+  prompt.className = 'verdict-prompt';
+  prompt.textContent = VERDICT_PROMPT;
   actions.append(
+    prompt,
     verdictButton('妥当', 'valid', view.verdict),
     verdictButton('誤り', 'false_positive', view.verdict),
   );
   item.append(
     paragraph('author', view.candidate.authorHandle),
     paragraph('stats', describeCandidate(view)),
-    paragraph('scores', describeScores(view)),
+    // **空アカウント率の行は出さない**（2026-08-25 に削除。理由は popup-state.ts）。
+    // 記録は続けるが、比較相手を持たない割合は強さを誤って伝える
+    paragraph('share', describeWindowShare(view.candidate, currentSettings.burstWindowMinutes)),
     ...coAuthorLine(view),
     evidenceLine(view),
     ...muteStatusLine(view),
@@ -207,15 +231,35 @@ function coAuthorLine(view: CandidateView): HTMLParagraphElement[] {
   return text === '' ? [] : [paragraph('co-authors', text)];
 }
 
+/**
+ * 一覧を描く。**折りたたみの分割はここで行う。**
+ *
+ * partitionViews は純粋関数なので renderSummary 側でも呼び直す。
+ * **module 変数に開き件数を持たない** — 1 つの事実に置き場を 2 つ作ると、
+ * 片方の更新を忘れて表示が食い違う（currentMuteLog を消したのと同じ理由）。
+ * 数十件の filter は 2 回回しても無視できる。
+ */
 function renderCandidates(views: CandidateView[]): void {
-  const list = find<HTMLUListElement>(SELECTORS.candidates);
-  if (!list) return;
-  list.replaceChildren(...views.map(candidateItem));
+  const { open, folded } = partitionViews(views, currentFoldTarget);
+  find<HTMLUListElement>(SELECTORS.candidates)?.replaceChildren(...open.map(candidateItem));
+  find<HTMLUListElement>(SELECTORS.foldedList)?.replaceChildren(...folded.map(candidateItem));
+
+  const heading = describeFold(currentFoldTarget, folded.length);
+  setText(SELECTORS.foldedSummary, heading);
+  setHidden(SELECTORS.folded, heading === '');
+
+  // 文言とリンクは index.html にある。ここは出すか出さないかだけ
+  setHidden(SELECTORS.foldNote, !hasMutedInFold(folded));
 }
 
-/** 折りたたんだままでも現在の条件が読めるようにする */
+/**
+ * 折りたたんだままでも現在の条件が読めるようにする。
+ *
+ * **投稿直後の幅は書かない。**あれは候補の件数を変えないので「条件」ではなく、
+ * ここに並べると絞り込みに効くと読める。
+ */
 function describeConditions(settings: Settings): string {
-  return `判定の条件（${String(settings.minClusterSize)} アカウントが ${String(settings.minSharedItems)} 記事に共通 / 直近 ${String(settings.lookbackDays)} 日）`;
+  return `判定の条件 (${String(settings.minClusterSize)} アカウントが ${String(settings.minSharedItems)} 記事に共通 / 直近 ${String(settings.lookbackDays)} 日)`;
 }
 
 /**
@@ -240,6 +284,13 @@ function renderSliderInputs(settings: Settings): void {
   bind(SELECTORS.minCluster, settings.minClusterSize, RANGES.minClusterSize);
   bind(SELECTORS.minShared, settings.minSharedItems, RANGES.minSharedItems);
   bind(SELECTORS.lookback, settings.lookbackDays, RANGES.lookbackDays);
+  // 幅だけは **添字** を入れる。目盛りが等間隔でないので分をそのまま置けない
+  const windowInput = find<HTMLInputElement>(SELECTORS.burstWindow);
+  if (windowInput) {
+    windowInput.min = '0';
+    windowInput.max = String(BURST_WINDOW_CHOICES.length - 1);
+    windowInput.value = String(windowIndexOf(settings.burstWindowMinutes));
+  }
 }
 
 /** 数値表示と折りたたみの見出し。ドラッグ中も呼ぶので input には触らない */
@@ -247,8 +298,27 @@ function renderSettingLabels(settings: Settings): void {
   setText(SELECTORS.minClusterValue, String(settings.minClusterSize));
   setText(SELECTORS.minSharedValue, String(settings.minSharedItems));
   setText(SELECTORS.lookbackValue, String(settings.lookbackDays));
+  // 単位を付ける。「180」だけでは分か時間か読めない。1 日以上は日で言う
+  setText(SELECTORS.burstWindowValue, describeWindow(settings.burstWindowMinutes));
   setText(SELECTORS.conditionsSummary, describeConditions(settings));
 }
+
+/**
+ * 幅のスライダーだけは **目盛りの添字** を持つ（分は等間隔に並ばないため）。
+ *
+ * **共通の read() に通さない。**あちらは `parsed <= 0` を弾くが、
+ * 添字の 0 は有効な値（60 分）なので、通すと左端に行かなくなる。
+ * 同じ罠を `minBurstScore` で踏みかけた（撤回済み）。
+ */
+function readWindowMinutes(fallback: number): number {
+  const input = find<HTMLInputElement>(SELECTORS.burstWindow);
+  if (input === null) return fallback;
+  const index = Number(input.value);
+  if (!Number.isInteger(index)) return fallback;
+  const clamped = Math.min(Math.max(index, 0), BURST_WINDOW_CHOICES.length - 1);
+  return BURST_WINDOW_CHOICES[clamped] ?? fallback;
+}
+
 /**
  * スライダーの現在値。要素が取れなければ直前の値の側に倒す。
  *
@@ -268,6 +338,7 @@ function readSettings(fallback: Settings): Settings {
     minClusterSize: read(SELECTORS.minCluster, fallback.minClusterSize, RANGES.minClusterSize),
     minSharedItems: read(SELECTORS.minShared, fallback.minSharedItems, RANGES.minSharedItems),
     lookbackDays: read(SELECTORS.lookback, fallback.lookbackDays, RANGES.lookbackDays),
+    burstWindowMinutes: readWindowMinutes(fallback.burstWindowMinutes),
   };
 }
 
@@ -280,7 +351,7 @@ function readSettings(fallback: Settings): Settings {
  * （sync は 1800 writes/hour）、束ねないとマウスで踏んだのと同じ問題が
  * キーボードで再発する。
  */
-const APPLY_DEBOUNCE_MS = 250;
+export const APPLY_DEBOUNCE_MS = 250;
 
 /** 直近に描いた状態。再検出せずに済む更新のために持つ */
 let currentSettings: Settings = DEFAULT_SETTINGS;
@@ -290,6 +361,8 @@ let currentHasIndex = false;
 let currentRateLimited = false;
 /** 「妥当」と同時に Qiita 側でもミュートするか。**既定は false** */
 let currentMuteOnValid = false;
+/** 評価が済んだ候補を折りたたむ対象。**既定は 'none'**（折りたたまない） */
+let currentFoldTarget: FoldTarget = 'none';
 
 /**
  * ドラッグ中に呼ぶ。**同期処理だけ。**
@@ -389,9 +462,12 @@ async function handleVerdict(handle: string, verdict: Verdict): Promise<void> {
  * **セレクタ文字列を組み立てない。**ハンドルは Qiita 由来の外部データで、
  * `li[data-handle="..."]` に埋めると別の要素に一致したり例外になったりする。
  * 列挙して比較すればエスケープの問題が起きようが無い（muter の menu id と同じ手）。
+ *
+ * **`#candidates` に限定しない。**折りたたみの中の行も対象。data-handle を
+ * 持つのは候補の <li> だけなので、文書全体から拾って問題ない。
  */
 function findCandidateItem(handle: string): HTMLLIElement | null {
-  for (const item of document.querySelectorAll<HTMLLIElement>('#candidates li[data-handle]')) {
+  for (const item of document.querySelectorAll<HTMLLIElement>('li[data-handle]')) {
     if (item.dataset.handle === handle) return item;
   }
   return null;
@@ -486,6 +562,23 @@ function handleLinkClick(event: MouseEvent): boolean {
 }
 
 /**
+ * 候補の行のクリック。リンクなら背景タブ、判定ボタンなら記録。
+ *
+ * **括り出したのは、折りたたみの中の行にも同じ処理が要るため。**
+ * 中で「誤り」が押せないと、誤検知でミュートしたアカウントを再評価できなく
+ * なる（OQ-16 と同じ形）。折りたたみは視界から消す機能なので、
+ * 回収経路を必ず残す。
+ */
+function handleCandidateAreaClick(event: MouseEvent): void {
+  if (handleLinkClick(event)) return;
+  const resolved = resolveVerdictTarget(event.target);
+  if (resolved === null) return;
+  handleVerdict(resolved.handle, resolved.verdict).catch((error: unknown) => {
+    logger.error('failed to record verdict:', error);
+  });
+}
+
+/**
  * イベントリスナーを登録する。
  *
  * **storage の読み込みより先に呼ぶこと。**（options-page.ts と同じ理由）
@@ -494,16 +587,18 @@ function handleLinkClick(event: MouseEvent): boolean {
  */
 function attachListeners(): void {
   watchRateLimit();
-  find(SELECTORS.candidates)?.addEventListener('click', (event) => {
-    if (handleLinkClick(event)) return;
-    const resolved = resolveVerdictTarget(event.target);
-    if (resolved === null) return;
-    handleVerdict(resolved.handle, resolved.verdict).catch((error: unknown) => {
-      logger.error('failed to record verdict:', error);
-    });
-  });
+  // #folded には注意書きのリンク（ミュート設定）も入っている。
+  // handleLinkClick が先に走るので 1 本で足りる
+  for (const selector of [SELECTORS.candidates, SELECTORS.folded]) {
+    find(selector)?.addEventListener('click', handleCandidateAreaClick);
+  }
 
-  for (const selector of [SELECTORS.minCluster, SELECTORS.minShared, SELECTORS.lookback]) {
+  for (const selector of [
+    SELECTORS.minCluster,
+    SELECTORS.minShared,
+    SELECTORS.lookback,
+    SELECTORS.burstWindow,
+  ]) {
     const input = find<HTMLInputElement>(selector);
     // input はドラッグ中に連続発火する。数字の表示だけを同期で更新する
     input?.addEventListener('input', () => {
@@ -515,25 +610,21 @@ function attachListeners(): void {
     });
   }
 
-  // 解除の案内（設定 > ミュート）も背景タブで開く。同じタブで開くと
+  // 解除の案内（ミュート設定）も背景タブで開く。同じタブで開くと
   // ポップアップが閉じ、評価の続きができなくなる
   find(SELECTORS.muteNote)?.addEventListener('click', (event) => {
     handleLinkClick(event);
   });
 
-  find<HTMLInputElement>(SELECTORS.muteOnValid)?.addEventListener('change', (event) => {
-    const checked = event.target instanceof HTMLInputElement && event.target.checked;
-    currentMuteOnValid = checked;
-    saveMuteOnValid(checked).catch((error: unknown) => {
-      logger.error('failed to save mute setting:', error);
+  // 入口は 2 つ。トークンの CTA（mode）と、表示・動作のための行（footnote）。
+  // トークンを使わない人が設定に辿り着けない状態を作らない
+  for (const selector of [SELECTORS.openOptions, SELECTORS.openSettings]) {
+    find(selector)?.addEventListener('click', () => {
+      chrome.runtime.openOptionsPage().catch((error: unknown) => {
+        logger.error('failed to open options page:', error);
+      });
     });
-  });
-
-  find(SELECTORS.openOptions)?.addEventListener('click', () => {
-    chrome.runtime.openOptionsPage().catch((error: unknown) => {
-      logger.error('failed to open options page:', error);
-    });
-  });
+  }
 }
 
 /**
@@ -550,7 +641,8 @@ export async function init(): Promise<void> {
     currentHasIndex = state.hasIndex;
     currentRateLimited = state.rateLimitNotice !== null;
     currentMuteOnValid = state.muteOnValid;
-    renderMuteToggle(state.muteOnValid);
+    // **renderCandidates より前に代入する。**あとにすると初回だけ折りたたまれない
+    currentFoldTarget = state.foldTarget;
     renderMode(state.hasToken);
     renderSliderInputs(state.settings);
     renderSettingLabels(state.settings);

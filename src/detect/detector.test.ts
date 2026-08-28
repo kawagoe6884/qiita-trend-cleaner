@@ -327,3 +327,67 @@ describe('detectCandidates の連結成分', () => {
     expect(detectCandidates(twoRings(), DEFAULT_SETTINGS, NOW)).toHaveLength(4);
   });
 });
+
+/**
+ * 投稿直後の幅（burstWindowMinutes）は Phase 9 でユーザーが決めるようになった。
+ *
+ * **下限（絞り込み）は作らない。**いつ押すかを握っているのは攻撃側なので、
+ * 下限を設ければ時刻をずらすだけで候補から消え、しかも消えたことは
+ * ユーザーに見えない。ここは「絞らないこと」を固定する番人でもある。
+ *
+ * **既定は 180 分**（60 分から変えた）。**候補の件数は変わらない**が、
+ * スコアの表示と並び順のタイブレークは変わる。上の describe 群が
+ * DEFAULT_SETTINGS のまま通ることは「件数が変わらない」ことの証拠であって、
+ * 「何も変わらない」ことの証拠ではない。
+ */
+describe('detectCandidates の投稿直後の幅', () => {
+  /** 全員が投稿から minutes 後に一斉いいね */
+  function likedAfter(minutes: number): LikeIndex {
+    return cluster({
+      author: 'example-author-a',
+      items: [1, 2],
+      accounts: 5,
+      burstMinutes: minutes,
+    });
+  }
+
+  it('burstScore が 0 でも候補から外さない', () => {
+    // Arrange — 投稿から 10 時間後。**手口を知って時刻をずらした形**
+    const index = likedAfter(600);
+    // Act
+    const candidates = detectCandidates(index, DEFAULT_SETTINGS, NOW);
+    // Assert — ここで絞ると、ずらした相手だけが見えなくなる
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.burstScore).toBe(0);
+  });
+
+  it('幅を変えても候補の件数は変わらない', () => {
+    // Arrange — 300 分後。既定（180 分）では窓外、360 分では窓内
+    const index = likedAfter(300);
+    // Act & Assert
+    expect(detectCandidates(index, DEFAULT_SETTINGS, NOW)).toHaveLength(1);
+    expect(
+      detectCandidates(index, { ...DEFAULT_SETTINGS, burstWindowMinutes: 360 }, NOW),
+    ).toHaveLength(1);
+  });
+
+  it('幅を広げると burstScore が上がる（ユーザーが遅延に気づく手がかり）', () => {
+    // Arrange — 既定（180 分）で 0.00 の著者が 360 分で 1.00 になれば、
+    // いいねの時刻がずらされている
+    const index = likedAfter(300);
+    // Act
+    const narrow = detectCandidates(index, DEFAULT_SETTINGS, NOW);
+    const wide = detectCandidates(index, { ...DEFAULT_SETTINGS, burstWindowMinutes: 360 }, NOW);
+    // Assert
+    expect(narrow[0]?.burstScore).toBe(0);
+    expect(wide[0]?.burstScore).toBe(1);
+  });
+
+  it('幅を狭めると burstScore が下がる', () => {
+    const index = likedAfter(45);
+    expect(detectCandidates(index, DEFAULT_SETTINGS, NOW)[0]?.burstScore).toBe(1);
+    expect(
+      detectCandidates(index, { ...DEFAULT_SETTINGS, burstWindowMinutes: 30 }, NOW)[0]?.burstScore,
+    ).toBe(0);
+  });
+});

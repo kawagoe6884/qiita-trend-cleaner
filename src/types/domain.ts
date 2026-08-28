@@ -26,6 +26,36 @@ export interface LikeRecord {
   likedAt: IsoDateTime;
   /** バースト判定用。記事の投稿時刻 */
   itemPostedAt: IsoDateTime;
+  /**
+   * その記事の**総**いいね数（取得時の `Total-Count` ヘッダー）。
+   *
+   * **窓内占有率の分母が信用できるかを判定するためだけに持つ。**
+   * インデックスが持つ liker 数がこれに満たなければ取りこぼしており、
+   * 占有率は計算できない。`page=1` は**降順**なので「最も新しい 100 件」であり、
+   * 100 いいねを超える記事では投稿直後のいいねが 1 件も入らない（2026-08-25 実測）。
+   *
+   * **任意。**ヘッダーが欠ければ undefined になり「不明」として扱われる。
+   * 記事ごとの値をレコードに複製しているのは、別の storage キーにすると
+   * purge と merge を二重に書くことになるため（ここなら自動的に正しい）。
+   */
+  itemTotalLikes?: number;
+}
+
+/**
+ * 窓内占有率の内訳。**割合ではなく実人数で持つ。**
+ *
+ * 「100%」は 10/10 とも 5/5 とも読める（2026-08-25 のユーザー指摘）。
+ * 比に丸めた時点で強さが読めなくなるので、分子と分母をそのまま保持する。
+ *
+ * **単位はアカウント。**(アカウント × 記事) の組で数えると、3 記事とも押した
+ * 人が 3 回数えられ、`clusterSize` と単位が食い違う。実機で「3 記事の合計」が
+ * 1 記事のいいね数を超え、**オーバーフローしていると読まれた**。
+ */
+export interface WindowShare {
+  /** 窓内にいいねしたアカウントのうち、クラスタに属するもの。**clusterSize 以下** */
+  cluster: number;
+  /** 窓内に根拠記事のどれかをいいねした実人数。**クラスタ外も含む** */
+  total: number;
 }
 
 /**
@@ -135,6 +165,32 @@ export interface MuteRecord {
 /** 著者ハンドル -> 最後にミュートを試みた結果。UI に出すためだけに持つ */
 export type MuteLog = Record<AccountHandle, MuteRecord>;
 
+/**
+ * ポップアップの一覧で折りたたむ対象。**表示の設定であって判定ではない。**
+ *
+ * | 値 | 意味 |
+ * |---|---|
+ * | `none` | 折りたたまない（**既定**） |
+ * | `muted` | 一度でもミュートに成功した著者だけ |
+ * | `valid` | 「妥当」と評価した著者だけ |
+ * | `judged` | 「妥当」「誤り」いずれかを評価した著者すべて |
+ *
+ * **既定が none なのは、視界から消す方向の変更だから。**
+ * 誤検知でミュートしたアカウントを再評価できなくする失敗（OQ-16）と
+ * 同じ形を持つ。折りたたんだ中でも「誤り」が押せることで回収経路を残す。
+ *
+ * **配列から型を導出する**（MUTE_OUTCOMES と同じ）。storage から読んだ値を
+ * 検証する必要があり、一覧を 2 箇所に書くと片方だけ直すことになる。
+ */
+export const FOLD_TARGETS = ['none', 'muted', 'valid', 'judged'] as const;
+
+export type FoldTarget = (typeof FOLD_TARGETS)[number];
+
+/** 外部から来た値が FoldTarget かを判定する。storage の中身は自分が書いたとは限らない */
+export function isFoldTarget(value: unknown): value is FoldTarget {
+  return typeof value === 'string' && (FOLD_TARGETS as readonly string[]).includes(value);
+}
+
 /** 検出された組織票の候補 */
 export interface Candidate {
   authorHandle: AccountHandle;
@@ -155,10 +211,28 @@ export interface Candidate {
   sharedItemIds: ItemId[];
   /** N: クラスタを構成するアカウント数 */
   clusterSize: number;
-  /** 0.0-1.0。投稿直後に集中したいいねの割合 */
+  /**
+   * 0.0-1.0。投稿直後に集中したいいねの割合。
+   * **「投稿直後」の幅は `Settings.burstWindowMinutes`**（ユーザーが決める）
+   */
   burstScore: number;
   /** 0.0-1.0。クラスタのうち記事 0 本・プロフィール空のアカウントの割合 */
   emptyAccountRatio: number;
+  /**
+   * 窓内占有率。**分母は「その記事の窓内いいね総数」**であって、
+   * クラスタのいいね数ではない（そちらが burstScore）。
+   *
+   *   burstScore  = クラスタの窓内いいね（件） / **クラスタ**のいいね総数（件）
+   *   windowShare = 窓内のクラスタ**アカウント数** / **窓内にいいねした実人数**
+   *
+   * 前者は「彼らが早く押したか」、後者は「**早い時間帯を彼らが占めたか**」。
+   * 実測（2026-08-25）で 2 人の著者を区別できたのは後者だけだった
+   * （どの幅でも 80〜95% の著者と、2 日で 43% まで薄まる著者）。
+   *
+   * **測れなければ null。**「測ったら 0% だった」と区別する
+   * （適合率の分母 0 を 0% にしないのと同じ話）。
+   */
+  windowShare: WindowShare | null;
   detectedAt: IsoDateTime;
   /**
    * 同じクラスタが現れた他の著者。**著者をまたぐ共起のときだけ入る。**
@@ -175,6 +249,23 @@ export interface Settings {
   minClusterSize: number;
   minSharedItems: number;
   lookbackDays: number;
+  /**
+   * 「投稿直後」とみなす幅（分）。**候補の件数は変えない。**
+   *
+   * `burstScore` の計算に効くので `detectCandidates` の入力ではあるが、
+   * その値は**表示と並び順のタイブレークにしか使われない**（burst.ts）。
+   *
+   * 【なぜ「下限で絞る」を作らないのか】
+   * **いつ押すかを握っているのは攻撃側である。**下限を設けると、手口を知った
+   * 相手は時刻をずらすだけで候補から消える。しかも消えたことはユーザーに
+   * 見えないので、**善意で下限を上げた人が実在の手口を静かに取りこぼす**
+   * （`emptyAccountRatio` を開放しないのと同じ理由）。
+   *
+   * 幅を動かせることの価値は絞り込みではなく**探索**にある。60 分で 0.00 の
+   * 著者が 180 分で 1.00 になれば、それはユーザーが遅延に気づいたということ。
+   * 下限はその発見を先回りして潰してしまう。
+   */
+  burstWindowMinutes: number;
 }
 
 /**
@@ -187,11 +278,19 @@ export interface Settings {
  *
  * **保存済みの設定は変えない。** `getSettings` は保存値を優先するので、
  * これは新規インストール時の値でしかない。
+ *
+ * **`burstWindowMinutes` は 60 → 180 に変えた**（Phase 9・ユーザー確定）。
+ *
+ * これは「既定値は現状維持」の唯一の例外。**候補の件数は変わらない**
+ * （下限を撤回したので burstScore は絞り込みに使われない）が、
+ * **保存済み設定が無い人のスコア表示と並び順のタイブレークは変わる。**
+ * 60 分は「通知を見てすぐ読んだ人」と区別がつきにくく、初期値としては狭すぎた。
  */
 export const DEFAULT_SETTINGS: Settings = {
   minClusterSize: 5,
   minSharedItems: 2,
   lookbackDays: 7,
+  burstWindowMinutes: 180,
 };
 
 /** 取得の射程。トークンの有無ではなくレート枠から決まる */
@@ -233,6 +332,13 @@ export interface LocalState {
   muteOnValid?: boolean;
   /** ミュートを試みた結果。失敗の記録として持ち、ポップアップに出す */
   muteLog?: MuteLog;
+  /**
+   * 評価が済んだ候補を折りたたむ対象。**既定は 'none'。**
+   *
+   * Settings（sync）に入れないのは、あれが detectCandidates の入力だから。
+   * これは表示の設定で判定に一切関与しない（muteOnValid と同じ扱い）
+   */
+  foldTarget?: FoldTarget;
   /** 著者ごとの過去記事巡回の記録。保持期間 7 日でパージする */
   authorVisits?: AuthorVisits;
   /** 保持期間 7 日 */

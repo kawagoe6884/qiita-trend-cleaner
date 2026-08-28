@@ -13,6 +13,8 @@
 import { logger } from '../../lib/logger';
 import { loadState, submitToken, removeToken, describeMode } from './token-form';
 import type { TokenState } from './token-form';
+import { getMuteOnValid, saveMuteOnValid, getFoldTarget, saveFoldTarget } from '../../lib/storage';
+import { isFoldTarget } from '../../types/domain';
 
 /**
  * このページが触る DOM セレクタ。
@@ -29,7 +31,22 @@ const SELECTORS = {
   saved: '#saved',
   masked: '#masked',
   message: '#message',
+  muteOnValid: '#mute-on-valid',
+  muteOnValidState: '#mute-on-valid-state',
+  foldTarget: 'input[name="fold-target"]',
 } as const;
+
+/**
+ * トグルの状態の文言。**色だけで状態を伝えない。**
+ *
+ * 色覚や表示環境（強制カラー・モノクロ印刷）では色の差が届かない。
+ * つまみの移動も 20px でしかなく、一目では読み取りにくい。
+ */
+const TOGGLE_STATE_TEXT = { on: 'する', off: 'しない' } as const;
+
+export function describeToggleState(checked: boolean): string {
+  return checked ? TOGGLE_STATE_TEXT.on : TOGGLE_STATE_TEXT.off;
+}
 
 /** 想定外の失敗で出す文言。ハンドラ側とリスナー側の 2 箇所で使うため定数にする */
 const UNEXPECTED_SUBMIT_ERROR = '予期しないエラーが発生しました。ページを再読み込みしてください。';
@@ -208,17 +225,74 @@ function attachListeners(): void {
 }
 
 /**
+ * 候補の見え方（Phase 9 でポップアップから移した 2 つ）を反映する。
+ *
+ * **トークンの状態とは別に読む。**片方が失敗しても、もう片方は表示できる。
+ * どちらも `storage.local` で、判定の閾値（sync）とは置き場が違う。
+ */
+async function renderPrefs(): Promise<void> {
+  const [muteOnValid, foldTarget] = await Promise.all([getMuteOnValid(), getFoldTarget()]);
+
+  const toggle = find<HTMLInputElement>(SELECTORS.muteOnValid);
+  if (toggle) toggle.checked = muteOnValid;
+  renderToggleState(muteOnValid);
+
+  for (const radio of document.querySelectorAll<HTMLInputElement>(SELECTORS.foldTarget)) {
+    radio.checked = radio.value === foldTarget;
+  }
+}
+
+/** 「する」「しない」を映す。**init と change の両方から呼ぶ** */
+function renderToggleState(checked: boolean): void {
+  const state = find(SELECTORS.muteOnValidState);
+  if (state) state.textContent = describeToggleState(checked);
+}
+
+/**
+ * 見え方の設定を配線する。**保存に失敗しても debug 止まり** —
+ * ユーザーの操作どおりに動かないのは困るが、拡張が壊れているわけではない。
+ */
+function attachPrefListeners(): void {
+  find<HTMLInputElement>(SELECTORS.muteOnValid)?.addEventListener('change', (event) => {
+    const checked = event.target instanceof HTMLInputElement && event.target.checked;
+    // 保存を待たずに映す。storage の往復を待つと、押した瞬間の文言が古いまま残る
+    renderToggleState(checked);
+    saveMuteOnValid(checked).catch((error: unknown) => {
+      logger.error('failed to save mute setting:', error);
+    });
+  });
+
+  for (const radio of document.querySelectorAll<HTMLInputElement>(SELECTORS.foldTarget)) {
+    radio.addEventListener('change', (event) => {
+      const value: unknown = event.target instanceof HTMLInputElement ? event.target.value : null;
+      // 知らない値は捨てる。HTML を書き換えられても storage に入らない
+      if (!isFoldTarget(value)) return;
+      saveFoldTarget(value).catch((error: unknown) => {
+        logger.error('failed to save fold setting:', error);
+      });
+    });
+  }
+}
+
+/**
  * ページを初期化する。
  * 保存状態の読み込みに失敗しても、リスナーだけは必ず付いた状態にする。
  */
 export async function init(): Promise<void> {
   setBusy(false);
   attachListeners();
+  attachPrefListeners();
   try {
     render(await loadState());
   } catch (error) {
     logger.error('failed to load token state:', error);
     clearMode();
     showMessage('設定の読み込みに失敗しました。ページを再読み込みしてください。');
+  }
+  // トークンの読み込みが失敗しても見え方の設定は出す（別の storage キー）
+  try {
+    await renderPrefs();
+  } catch (error) {
+    logger.error('failed to load display preferences:', error);
   }
 }

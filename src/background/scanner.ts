@@ -63,7 +63,12 @@ const RATE_WINDOW_SECONDS = 3600;
  * 引数の index を直接更新する。ローカルで組み立てる作業用オブジェクトであり、
  * 外部に共有された状態を書き換えているわけではない。
  */
-function foldLikes(index: LikeIndex, item: TrendItem, likes: QiitaLike[]): number {
+function foldLikes(
+  index: LikeIndex,
+  item: TrendItem,
+  likes: QiitaLike[],
+  totalCount: number | null,
+): number {
   for (const like of likes) {
     const handle = like.user.id;
     // noUncheckedIndexedAccess のため undefined を考慮する
@@ -78,6 +83,10 @@ function foldLikes(index: LikeIndex, item: TrendItem, likes: QiitaLike[]): numbe
       authorHandle: item.authorHandle,
       likedAt: like.created_at,
       itemPostedAt: item.publishedAt,
+      // **窓内占有率の分母が信用できるかの判定材料。**
+      // ヘッダーが欠けたらフィールドごと付けず「不明」に倒す
+      // （exactOptionalPropertyTypes のため undefined 代入はできない）
+      ...(totalCount === null ? {} : { itemTotalLikes: totalCount }),
     });
     index[handle] = entry;
   }
@@ -147,7 +156,8 @@ async function scanOneItem(
     return {
       ...progress,
       rate: response.rate ?? progress.rate,
-      likeRecordCount: progress.likeRecordCount + foldLikes(index, item, response.data),
+      likeRecordCount:
+        progress.likeRecordCount + foldLikes(index, item, response.data, response.totalCount),
       scannedItemCount: progress.scannedItemCount + 1,
     };
   } catch (error) {

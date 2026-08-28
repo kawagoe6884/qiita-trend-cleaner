@@ -11,12 +11,13 @@
  * ここが読むのは自分で書いた値なので、API レスポンスほど厳密には検証しない。
  * ただし storage が壊れていても例外で落とさず、既定値へフォールバックする。
  */
-import { DEFAULT_SETTINGS, isMuteOutcome } from '../types/domain';
+import { DEFAULT_SETTINGS, isFoldTarget, isMuteOutcome } from '../types/domain';
 import type {
   AccountHandle,
   AuthorVisits,
   Candidate,
   FeedbackLog,
+  FoldTarget,
   LikeIndex,
   MuteLog,
   MuteOutcome,
@@ -111,6 +112,8 @@ export async function getSettings(): Promise<Settings> {
     minClusterSize: asPositiveInt(candidate.minClusterSize) ?? DEFAULT_SETTINGS.minClusterSize,
     minSharedItems: asPositiveInt(candidate.minSharedItems) ?? DEFAULT_SETTINGS.minSharedItems,
     lookbackDays: asPositiveInt(candidate.lookbackDays) ?? DEFAULT_SETTINGS.lookbackDays,
+    burstWindowMinutes:
+      asPositiveInt(candidate.burstWindowMinutes) ?? DEFAULT_SETTINGS.burstWindowMinutes,
   };
 }
 
@@ -167,6 +170,24 @@ export async function getMuteOnValid(): Promise<boolean> {
 
 export async function saveMuteOnValid(muteOnValid: boolean): Promise<void> {
   await chrome.storage.local.set({ muteOnValid });
+}
+
+/**
+ * 評価が済んだ候補を折りたたむ対象。**既定は 'none'（折りたたまない）。**
+ *
+ * local に置くのは muteOnValid と同じ理由 — Settings（sync）は
+ * detectCandidates の入力であり、表示の設定を混ぜない。
+ *
+ * 知らない値は 'none' に倒す。通すと UI の switch が文言を返せずに落ちる
+ * （getMuteLog が知らない outcome を落とすのと同じ）。
+ */
+export async function getFoldTarget(): Promise<FoldTarget> {
+  const raw = await readRaw();
+  return isFoldTarget(raw.foldTarget) ? raw.foldTarget : 'none';
+}
+
+export async function saveFoldTarget(foldTarget: FoldTarget): Promise<void> {
+  await chrome.storage.local.set({ foldTarget });
 }
 
 /**

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { init } from './popup-page';
+import { init, APPLY_DEBOUNCE_MS } from './popup-page';
 import { loadPopupState, applySettings, recordVerdict, toViews } from './popup-state';
 import type * as PopupState from './popup-state';
+import { DEFAULT_SETTINGS } from '../../types/domain';
 import type { Candidate } from '../../types/domain';
 // 実際に配布される HTML をそのまま読む（Vite の ?raw）。
 // node:fs を使うと tsconfig の types に node を足すことになり、
@@ -22,7 +23,7 @@ const loadMock = vi.mocked(loadPopupState);
 const applyMock = vi.mocked(applySettings);
 const verdictMock = vi.mocked(recordVerdict);
 
-const SETTINGS = { minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 };
+const SETTINGS = { ...DEFAULT_SETTINGS, minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 };
 const NO_PRECISION = { valid: 0, falsePositive: 0, ratio: null };
 
 /** 合成の候補。実アカウント名・実 item_id は使わない */
@@ -35,6 +36,8 @@ function candidate(handle = 'example-author-a'): Candidate {
     clusterSize: 9,
     burstScore: 0.5,
     emptyAccountRatio: 0.25,
+    // 窓内のいいね 5 件中 4 件 = 80%。burstScore(0.5) と別の値にしてある
+    windowShare: { cluster: 4, total: 5 },
     detectedAt: '2026-08-20T03:00:00.000Z',
   };
 }
@@ -51,6 +54,12 @@ function setupDom(): void {
     <p id="summary">読み込み中…</p>
     <p id="call" hidden></p>
     <p id="last-scan"></p>
+    <p class="footnote" id="mute-note">
+      ミュートは <a href="https://qiita.com/settings/mutes">ミュート設定</a>
+      から一覧・解除ができます。表示や動作は
+      <button type="button" class="link-button" id="open-settings">拡張機能の設定</button>
+      から変えられます。
+    </p>
     <details id="conditions">
       <summary id="conditions-summary">判定の条件</summary>
       <p class="slider">
@@ -66,17 +75,21 @@ function setupDom(): void {
         <input type="range" id="lookback" min="1" max="7" step="1" />
         <output id="lookback-value"></output>
       </p>
+      <p class="slider">
+        <input type="range" id="burst-window" min="0" max="6" step="1" />
+        <output id="burst-window-value"></output>
+      </p>
     </details>
-    <p class="mute-toggle">
-      <label for="mute-on-valid">
-        <input type="checkbox" id="mute-on-valid" />「妥当」と同時に Qiita 側でもミュートする
-      </label>
-    </p>
-    <p class="footnote" id="mute-note">
-      <a href="https://qiita.com/settings/mutes">設定 &gt; ミュート</a>
-    </p>
     <ul id="candidates"></ul>
-    <p id="empty" hidden>いまの条件に当てはまる候補はありません。</p>`;
+    <p id="empty" hidden>いまの条件に当てはまる候補はありません。</p>
+    <details id="folded" hidden>
+      <summary id="folded-summary"></summary>
+      <p class="footnote" id="fold-note" hidden>
+        ここで「誤り」を押しても、Qiita 側のミュートは解除されません。解除は
+        <a href="https://qiita.com/settings/mutes">ミュート設定</a> から行ってください。
+      </p>
+      <ul id="folded-candidates"></ul>
+    </details>`;
 }
 
 /** chrome.tabs.Tab の全項目は要らない。query が返す最小形だけ用意する */
@@ -110,6 +123,7 @@ beforeEach(() => {
     hasToken: false,
     hasIndex: true,
     muteOnValid: false,
+    foldTarget: 'none' as const,
   });
   applyMock.mockResolvedValue(toViews([candidate()], {}));
   verdictMock.mockResolvedValue({ valid: 1, falsePositive: 0, ratio: 1 });
@@ -124,7 +138,7 @@ describe('init の描画', () => {
 
   it('未評価なら適合率を「—」と出す（0% と区別する）', async () => {
     await init();
-    expect(el('#summary').textContent).toContain('適合率 —（未評価）');
+    expect(el('#summary').textContent).toContain('適合率 — (未評価)');
   });
 
   it('評価済みなら百分率を出す', async () => {
@@ -137,6 +151,7 @@ describe('init の描画', () => {
       hasToken: false,
       hasIndex: true,
       muteOnValid: false,
+      foldTarget: 'none' as const,
     });
     await init();
     expect(el('#summary').textContent).toContain('適合率 75%');
@@ -163,6 +178,7 @@ describe('init の描画', () => {
       hasToken: true,
       hasIndex: true,
       muteOnValid: false,
+      foldTarget: 'none' as const,
     });
     // Act
     await init();
@@ -188,6 +204,7 @@ describe('init の描画', () => {
       hasToken: false,
       hasIndex: true,
       muteOnValid: false,
+      foldTarget: 'none' as const,
     });
     await expect(init()).resolves.toBeUndefined();
     expect(el('#empty').hidden).toBe(false);
@@ -219,6 +236,7 @@ describe('init の描画', () => {
       hasToken: false,
       hasIndex: true,
       muteOnValid: false,
+      foldTarget: 'none' as const,
     });
     await init();
     expect(el('#notice').hidden).toBe(false);
@@ -261,6 +279,7 @@ describe('init の XSS 対策', () => {
       hasToken: false,
       hasIndex: true,
       muteOnValid: false,
+      foldTarget: 'none' as const,
     });
     // Act
     await init();
@@ -438,7 +457,7 @@ describe('判定の条件の見出し', () => {
   it('折りたたんだままでも現在の条件が読める', async () => {
     await init();
     expect(el('#conditions-summary').textContent).toBe(
-      '判定の条件（5 アカウントが 2 記事に共通 / 直近 3 日）',
+      '判定の条件 (5 アカウントが 2 記事に共通 / 直近 3 日)',
     );
   });
 
@@ -468,6 +487,7 @@ describe('候補一覧への一言', () => {
       hasToken: false,
       hasIndex: true,
       muteOnValid: false,
+      foldTarget: 'none' as const,
     });
     await init();
     expect(el('#call').hidden).toBe(true);
@@ -645,6 +665,7 @@ describe('候補ゼロの案内', () => {
       hasToken: false,
       hasIndex,
       muteOnValid: false,
+      foldTarget: 'none' as const,
     };
   }
 
@@ -820,6 +841,7 @@ describe('coAuthors の行', () => {
       hasToken: false,
       hasIndex: true,
       muteOnValid: false,
+      foldTarget: 'none' as const,
     };
   }
 
@@ -880,6 +902,7 @@ describe('「妥当」と同時のミュート', () => {
       hasToken: false,
       hasIndex: true,
       muteOnValid,
+      foldTarget: 'none' as const,
     };
   }
 
@@ -1040,27 +1063,6 @@ describe('「妥当」と同時のミュート', () => {
     expect(document.querySelector('#candidates .mute-status')).toBeNull();
   });
 
-  it('保存済みの設定をチェックボックスに映す', async () => {
-    loadMock.mockResolvedValue(stateWithMute(true));
-    await init();
-    expect(el<HTMLInputElement>('#mute-on-valid').checked).toBe(true);
-  });
-
-  it('チェックを切り替えると保存する', async () => {
-    // Arrange
-    loadMock.mockResolvedValue(stateWithMute(false));
-    await init();
-    const input = el<HTMLInputElement>('#mute-on-valid');
-    // Act
-    input.checked = true;
-    input.dispatchEvent(new Event('change'));
-    // Assert
-    await vi.waitFor(() => {
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(chrome.storage.local.set).toHaveBeenCalledWith({ muteOnValid: true });
-    });
-  });
-
   it('解除の案内リンクは背景タブで開く', async () => {
     // Arrange — 同じタブで開くとポップアップが閉じ、評価の続きができなくなる
     loadMock.mockResolvedValue(stateWithMute(false));
@@ -1110,6 +1112,7 @@ describe('既にミュート済みの候補の表示', () => {
       hasToken: false,
       hasIndex: true,
       muteOnValid,
+      foldTarget: 'none' as const,
     };
   }
 
@@ -1146,5 +1149,488 @@ describe('既にミュート済みの候補の表示', () => {
     await waitForRerender();
     // Assert
     expect(document.querySelector('#candidates .mute-status')).not.toBeNull();
+  });
+});
+/**
+ * 投稿直後の幅（Phase 9）。**既定は 60 分で現状維持。**
+ *
+ * 追加の 1 本も既存 3 本と同じ input / change の二段構えに載せる。
+ * ここに非同期を 1 つでも足すと、Phase 6 で潰した「つまみが指の下から
+ * 逃げる」が戻る。
+ *
+ * **下限（絞り込み）は作らない。**いつ押すかを握っているのは攻撃側なので、
+ * 下限を設ければ時刻をずらすだけで候補から消える。
+ */
+describe('投稿直後のスライダー', () => {
+  it('幅の change で 4 項目すべてを保存する', async () => {
+    // Arrange
+    await init();
+    const slider = el<HTMLInputElement>('#burst-window');
+    // Act — 値は分ではなく目盛りの添字。3 は 360 分
+    slider.value = '3';
+    slider.dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      expect(applyMock).toHaveBeenCalledWith(
+        {
+          minClusterSize: 5,
+          minSharedItems: 2,
+          lookbackDays: 3,
+          burstWindowMinutes: 360,
+        },
+        expect.any(Date),
+      );
+    });
+  });
+
+  it('ドラッグ中（input）は再検出も保存もしない', async () => {
+    // Arrange
+    await init();
+    const slider = el<HTMLInputElement>('#burst-window');
+    applyMock.mockClear();
+    // Act
+    for (const value of ['1', '2', '3', '4', '5']) {
+      slider.value = value;
+      slider.dispatchEvent(new Event('input'));
+    }
+    // Assert — 数字の表示だけが即座に追従する。添字 5 は 1 日
+    expect(applyMock).not.toHaveBeenCalled();
+    expect(el('#burst-window-value').textContent).toBe('1 日');
+  });
+
+  it('幅の表示に単位を付ける', async () => {
+    await init();
+    expect(el('#burst-window-value').textContent).toBe('180 分');
+  });
+
+  it('つまみは分ではなく目盛りの添字を指す', async () => {
+    // Arrange — 既定は 180 分 = 添字 2。分（180）を入れると max=6 に丸められ、
+    // **つまみだけが右端に飛ぶ**。ラベルは settings から作るので気づけない
+    await init();
+    // Act & Assert
+    expect(el<HTMLInputElement>('#burst-window').value).toBe('2');
+    expect(el<HTMLInputElement>('#burst-window').max).toBe('6');
+  });
+
+  it('添字 0 に戻せる（左端が有効な値）', async () => {
+    // Arrange — 添字 0 は 60 分。共通の read() は parsed <= 0 を弾くので、
+    // そこに通すと左端に行かない（minBurstScore で踏みかけた罠）
+    await init();
+    const slider = el<HTMLInputElement>('#burst-window');
+    // Act
+    slider.value = '0';
+    slider.dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      expect(applyMock).toHaveBeenCalledWith(
+        expect.objectContaining({ burstWindowMinutes: 60 }),
+        expect.any(Date),
+      );
+    });
+  });
+
+  it('右端は 2 日', async () => {
+    await init();
+    const slider = el<HTMLInputElement>('#burst-window');
+    slider.value = '6';
+    slider.dispatchEvent(new Event('input'));
+    expect(el('#burst-window-value').textContent).toBe('2 日');
+  });
+
+  it('候補の占有率の行に幅と実件数を出す', async () => {
+    // Arrange & Act
+    await init();
+    // Assert — フィクスチャは窓内 5 件中 4 件
+    const text = el('#candidates .share').textContent;
+    expect(text).toContain('180 分以内');
+    expect(text).toContain('4/5 アカウント (80%)');
+  });
+
+  it('見出しに「共通」と書かない（clusterSize は和集合）', async () => {
+    // **総いいね 26 件の記事に「30 アカウントが共通」と出ていた**（2026-08-25 実機）。
+    // 26 人しかいない記事に 30 人は入らない。clusterSize は連結成分の和集合で、
+    // 全記事に共通する集合ではない
+    await init();
+    const text = el('#candidates .stats').textContent;
+    expect(text).not.toContain('共通');
+    expect(text).toContain('2 記事に重なった 9 アカウント');
+  });
+
+  it('空アカウント率の行を出さない', async () => {
+    // **比較相手を決めない割合は強さを誤って伝える**（実測 2026-08-25:
+    // 検出された 31 人の空率 61% に対し、同じ記事群の liker 全体が 54%）
+    await init();
+    const item = el('#candidates li');
+    expect(item.textContent).not.toContain('記事 0 本');
+    expect(item.querySelector('.scores')).toBeNull();
+  });
+
+  it('幅は見出しに書かない（候補の件数を変えないので条件ではない）', async () => {
+    // Arrange & Act
+    await init();
+    const slider = el<HTMLInputElement>('#burst-window');
+    slider.value = '180';
+    slider.dispatchEvent(new Event('input'));
+    // Assert — 「判定の条件」に並べると絞り込みに効くと読める
+    expect(el('#conditions-summary').textContent).not.toContain('分以内');
+  });
+});
+
+/**
+ * 折りたたみ（Phase 9）。**表示だけの設定で、判定には関与しない。**
+ *
+ * 中で「誤り」が押せることが、誤検知でミュートしたアカウントを回収する
+ * 唯一の経路になる（OQ-16 と同じ形）。
+ */
+describe('評価済みの折りたたみ', () => {
+  const AT = '2026-08-25T12:00:00.000Z';
+
+  /** 未評価 a / 妥当・ミュート成功 b の 2 件 */
+  function twoViews(): PopupState.CandidateView[] {
+    return toViews(
+      [candidate('example-author-a'), candidate('example-author-b')],
+      { 'example-author-b': 'valid' },
+      { 'example-author-b': { outcome: 'muted' as const, at: AT, mutedAt: AT } },
+    );
+  }
+
+  function stateWithFold(foldTarget: PopupState.PopupState['foldTarget']) {
+    return {
+      views: twoViews(),
+      precision: { valid: 1, falsePositive: 0, ratio: 1 },
+      settings: SETTINGS,
+      rateLimitNotice: null,
+      lastScanAt: null,
+      hasToken: false,
+      hasIndex: true,
+      muteOnValid: false,
+      foldTarget,
+    };
+  }
+
+  /** 折りたたみの中のボタンを押す */
+  function clickFoldedVerdict(label: string): void {
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>('#folded-candidates button')];
+    const target = buttons.find((button) => button.textContent === label);
+    if (!target) throw new Error(`missing folded button: ${label}`);
+    target.click();
+  }
+
+  it('既定（none）では 1 件も折りたたまない', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithFold('none'));
+    // Act
+    await init();
+    // Assert
+    expect(document.querySelectorAll('#candidates li')).toHaveLength(2);
+    expect(document.querySelectorAll('#folded-candidates li')).toHaveLength(0);
+    expect(el('#folded').hidden).toBe(true);
+  });
+
+  it('保存済みの設定で評価済みを折りたたむ', async () => {
+    // Arrange — 選ぶ操作は設定ページ。ポップアップは開いたときの値に従うだけ
+    loadMock.mockResolvedValue(stateWithFold('judged'));
+    // Act
+    await init();
+    // Assert
+    expect(document.querySelectorAll('#candidates li')).toHaveLength(1);
+    expect(document.querySelectorAll('#folded-candidates li')).toHaveLength(1);
+    expect(el('#folded').hidden).toBe(false);
+    expect(el('#folded-summary').textContent).toContain('1 件');
+  });
+
+  it('折りたたみの表示だけでは再検出しない（storage 全体を読み直さない）', async () => {
+    // Arrange — 表示だけの設定。applySettings は storage を 2 回読んで検出を回す
+    loadMock.mockResolvedValue(stateWithFold('judged'));
+    // Act
+    await init();
+    // **デバウンス（250ms）を越えて待つ。**同期で見るだけだと、あとから
+    // scheduleApply を足しても落ちない（変異テストで判明）
+    await new Promise((resolve) => setTimeout(resolve, APPLY_DEBOUNCE_MS + 150));
+    // Assert
+    expect(applyMock).not.toHaveBeenCalled();
+  });
+
+  it('折りたたみの中の候補にも「ミュートしています…」を出せる', async () => {
+    // Arrange — 依頼から応答まで数秒かかる。どの行で起きているか分からないと
+    // ユーザーは押せたのかどうか判断できない。
+    // **応答を保留する**ことで、途中の表示だけを観測する
+    (
+      vi.mocked(chrome.tabs.query) as unknown as {
+        mockResolvedValue: (value: chrome.tabs.Tab[]) => void;
+      }
+    ).mockResolvedValue([tab(1, 'https://qiita.com/trend', true)]);
+    let settle: (value: unknown) => void = () => undefined;
+    const pending = new Promise((resolve) => {
+      settle = resolve;
+    });
+    (
+      vi.mocked(chrome.tabs.sendMessage) as unknown as {
+        mockReturnValue: (value: unknown) => void;
+      }
+    ).mockReturnValue(pending);
+    loadMock.mockResolvedValue({ ...stateWithFold('judged'), muteOnValid: true });
+    await init();
+    // Act — 折りたたみの中の「妥当」を押し直す
+    clickFoldedVerdict('妥当');
+    // Assert — 行を #candidates の中だけで探すと、ここには出ない
+    await vi.waitFor(() => {
+      expect(el('#folded-candidates .mute-status').textContent).toContain('ミュートしています');
+    });
+    settle({ type: 'MUTE_RESULT', handle: 'example-author-b', outcome: 'muted' });
+    await pending;
+  });
+
+  it('折りたたみの中でも「誤り」が押せる（誤検知の回収経路）', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithFold('valid'));
+    await init();
+    expect(document.querySelectorAll('#folded-candidates li')).toHaveLength(1);
+    // Act
+    clickFoldedVerdict('誤り');
+    // Assert — 評価が記録され、一覧に戻る
+    await vi.waitFor(() => {
+      expect(verdictMock).toHaveBeenCalledWith('example-author-b', 'false_positive');
+    });
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('#candidates li')).toHaveLength(2);
+    });
+  });
+
+  it('ミュート済みだけを折りたたむ場合、「誤り」でも中に残る', async () => {
+    // Arrange — Qiita 側のミュートは解除されないので、残るのが事実
+    loadMock.mockResolvedValue(stateWithFold('muted'));
+    await init();
+    // Act
+    clickFoldedVerdict('誤り');
+    await vi.waitFor(() => {
+      expect(verdictMock).toHaveBeenCalled();
+    });
+    // Assert
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('#folded-candidates li')).toHaveLength(1);
+    });
+  });
+
+  it('ミュート済みが居れば解除の案内を出す', async () => {
+    loadMock.mockResolvedValue(stateWithFold('muted'));
+    await init();
+    expect(el('#fold-note').hidden).toBe(false);
+  });
+
+  it('ミュート済みが居なければ案内を出さない', async () => {
+    // Arrange — 評価だけして一度もミュートしていない
+    loadMock.mockResolvedValue({
+      ...stateWithFold('judged'),
+      views: toViews([candidate('example-author-b')], { 'example-author-b': 'valid' }),
+    });
+    // Act
+    await init();
+    // Assert
+    expect(el('#fold-note').hidden).toBe(true);
+  });
+
+  it('解除の案内は背景タブで開く（ポップアップを閉じさせない）', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithFold('muted'));
+    await init();
+    const link = el<HTMLAnchorElement>('#fold-note a');
+    // Act
+    link.click();
+    // Assert
+    expect(vi.mocked(chrome.tabs.create)).toHaveBeenCalledWith(
+      expect.objectContaining({ active: false }),
+    );
+  });
+
+  it('折りたたみの中の根拠リンクも背景タブで開く', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithFold('valid'));
+    await init();
+    const link = document.querySelector<HTMLAnchorElement>('#folded-candidates a');
+    // Act
+    link?.click();
+    // Assert
+    expect(vi.mocked(chrome.tabs.create)).toHaveBeenCalledWith(
+      expect.objectContaining({ active: false }),
+    );
+  });
+
+  it('全件折りたたまれても「条件をゆるめて」と言わない', async () => {
+    // Arrange — 評価済み 1 件だけ
+    loadMock.mockResolvedValue({
+      ...stateWithFold('judged'),
+      views: toViews([candidate('example-author-b')], { 'example-author-b': 'valid' }),
+    });
+    // Act
+    await init();
+    // Assert — 何もしていない人に条件をいじらせるのは的外れ
+    expect(el('#empty').hidden).toBe(false);
+    expect(el('#empty').textContent).toContain('折りたたみ');
+    expect(el('#empty').textContent).not.toContain('ゆるめる');
+  });
+
+  it('折りたたんでもバッジは候補の総数のまま', async () => {
+    // Arrange — バッジを書くのは service worker。表示設定を知る筋合いがない
+    loadMock.mockResolvedValue(stateWithFold('judged'));
+    // Act — 一覧には 1 件しか出ないが、候補は 2 件ある
+    await init();
+    // Assert
+    expect(document.querySelectorAll('#candidates li')).toHaveLength(1);
+    expect(vi.mocked(chrome.action.setBadgeText)).toHaveBeenCalledWith({ text: '2' });
+  });
+});
+
+/** 実際に配布される index.html に対して固定する（骨格のモックではなく） */
+describe('index.html の折りたたみ', () => {
+  it('見え方の設定はポップアップに置かない（設定ページへ移した）', () => {
+    // ポップアップは候補を読む場所。設定は options ページに集める
+    expect(indexHtml).not.toContain('id="fold-target"');
+    expect(indexHtml).not.toContain('id="mute-on-valid"');
+  });
+
+  it('ミュートの案内は最終スキャンの直後にある', () => {
+    const lastScan = indexHtml.indexOf('id="last-scan"');
+    const note = indexHtml.indexOf('id="mute-note"');
+    const conditions = indexHtml.indexOf('id="conditions"');
+    expect(lastScan).toBeLessThan(note);
+    expect(note).toBeLessThan(conditions);
+  });
+
+  it('折りたたみの器は候補一覧より後ろにある', () => {
+    const folded = indexHtml.indexOf('id="folded"');
+    const list = indexHtml.indexOf('id="candidates"');
+    expect(folded).toBeGreaterThan(list);
+  });
+
+  it('既定で閉じている（開いていたら折りたたみの意味が無い）', () => {
+    expect(indexHtml).toContain('<details id="folded" hidden>');
+    expect(indexHtml).not.toContain('<details id="folded" open');
+  });
+
+  it('解除の案内をリンクとして持つ（textContent で組み立てない）', () => {
+    const note = indexHtml.slice(
+      indexHtml.indexOf('id="fold-note"'),
+      indexHtml.indexOf('id="folded-candidates"'),
+    );
+    expect(note).toContain('解除されません');
+    expect(note).toContain('https://qiita.com/settings/mutes');
+  });
+
+  it('投稿直後のスライダーが判定の条件の中にある', () => {
+    const conditions = indexHtml.slice(
+      indexHtml.indexOf('<details id="conditions">'),
+      indexHtml.indexOf('</details>'),
+    );
+    expect(conditions).toContain('id="burst-window"');
+  });
+
+  it('幅のスライダーは目盛りの添字を持つ（分は等間隔に並ばない）', () => {
+    // 分を value にすると 60→2880 を等間隔の目盛りに載せられない
+    expect(indexHtml).toContain('id="burst-window" min="0" max="6" step="1"');
+  });
+
+  it('下限（絞り込み）のスライダーを置かない', () => {
+    // **いつ押すかを握っているのは攻撃側。**下限を設ければ、手口を知った相手は
+    // 時刻をずらすだけで候補から消え、しかも消えたことはユーザーに見えない
+    expect(indexHtml).not.toContain('id="min-burst"');
+  });
+
+  it('幅が候補を絞らないことを画面で明示する', () => {
+    // 絞り込みだと誤解されると、ユーザーは件数が変わるのを待ち続ける
+    expect(indexHtml).toContain('候補の件数を変えません');
+  });
+});
+
+/**
+ * 設定への入口と、判定ボタンのラベル（2026-08-25 の実機フィードバック）。
+ */
+describe('設定への入口', () => {
+  it('トークンの導線とは別に設定を開ける', async () => {
+    // Arrange — 「トークンを設定する」しか無いと、トークンを使わない人が
+    // 表示の設定に辿り着けない
+    await init();
+    // Act
+    el<HTMLButtonElement>('#open-settings').click();
+    // Assert
+    expect(vi.mocked(chrome.runtime.openOptionsPage)).toHaveBeenCalled();
+  });
+
+  it('トークンのボタンからも開ける（両方生きている）', async () => {
+    await init();
+    el<HTMLButtonElement>('#open-options').click();
+    expect(vi.mocked(chrome.runtime.openOptionsPage)).toHaveBeenCalled();
+  });
+
+  it('ミュートの案内と同じ段落に入っていても押せる', async () => {
+    // Arrange — 1 文にまとめたことで #open-settings が #mute-note の中に入った。
+    // #mute-note には「リンクなら背景タブで開く」処理が付いている。
+    // closest('a[href]') で判定しているので button では反応しない**はず**
+    await init();
+    // Act
+    el<HTMLButtonElement>('#open-settings').click();
+    // Assert — 設定は開き、ミュート一覧のタブは開かない
+    expect(vi.mocked(chrome.runtime.openOptionsPage)).toHaveBeenCalled();
+    expect(chrome.tabs.create).not.toHaveBeenCalled();
+  });
+
+  it('index.html: 設定の案内が候補一覧より前にある', () => {
+    const note = indexHtml.indexOf('id="open-settings"');
+    const list = indexHtml.indexOf('id="candidates"');
+    expect(note).toBeGreaterThan(-1);
+    expect(note).toBeLessThan(list);
+  });
+
+  it('index.html: ミュートの案内と同じ 1 段落に収める', () => {
+    // ユーザーの指示は「1 行にしたい」。2 つの <p> に分けると 12px の
+    // margin が入って 2 行になる
+    const note = indexHtml.slice(
+      indexHtml.indexOf('id="mute-note"'),
+      indexHtml.indexOf('<details id="conditions">'),
+    );
+    expect(note).toContain('id="open-settings"');
+    expect(note.match(/<p /g)).toBeNull();
+    expect(indexHtml).not.toContain('id="settings-note"');
+  });
+
+  it('index.html: Qiita の設定と拡張機能の設定を区別している', () => {
+    // **同じ文の中に Qiita 側の「ミュート設定」が並んでいる。**
+    // どちらも「設定」で終わるので、区別は前より効いていなければならない
+    const note = indexHtml.slice(
+      indexHtml.indexOf('id="mute-note"'),
+      indexHtml.indexOf('<details id="conditions">'),
+    );
+    expect(note).toContain('ミュート設定');
+    expect(note).toContain('拡張機能の設定');
+  });
+});
+
+describe('判定ボタンのラベル', () => {
+  it('ボタンの左に「この検出は」を出す', async () => {
+    // Arrange — 「妥当」だけでは何に対する判断か読み取れない
+    await init();
+    // Act & Assert
+    expect(el('#candidates .verdict-prompt').textContent).toBe('この検出は');
+  });
+
+  it('ラベルはボタンより前にある', async () => {
+    await init();
+    const actions = el('#candidates .actions');
+    expect(actions.firstElementChild?.className).toBe('verdict-prompt');
+  });
+
+  it('ラベルを足してもボタンは押せる（委譲が壊れていない）', async () => {
+    await init();
+    clickVerdict('妥当');
+    await vi.waitFor(() => {
+      expect(verdictMock).toHaveBeenCalledWith('example-author-a', 'valid');
+    });
+  });
+
+  it('断定しない（「不正」「スパム」と書かない）', async () => {
+    await init();
+    const text = el('#candidates .actions').textContent ?? '';
+    expect(text).not.toContain('不正');
+    expect(text).not.toContain('スパム');
   });
 });

@@ -83,6 +83,10 @@ describe('DEFAULT_SETTINGS', () => {
       minClusterSize: 5,
       minSharedItems: 2,
       lookbackDays: 7,
+      // Phase 9 で開放した項目。**60 → 180 はユーザー確定の変更**。
+      // 候補の件数は変わらない（下限は撤回済み）が、スコア表示と
+      // 並び順のタイブレークは変わる
+      burstWindowMinutes: 180,
     });
   });
 });

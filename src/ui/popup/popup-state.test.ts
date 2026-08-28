@@ -11,8 +11,18 @@ import {
   describeCall,
   describeMuteOutcome,
   describeMuteRecord,
+  describeEmpty,
+  describeWindowShare,
+  describeCoAuthors,
+  partitionViews,
+  describeFold,
+  hasMutedInFold,
+  describeWindow,
+  windowIndexOf,
+  BURST_WINDOW_CHOICES,
   requestMute,
 } from './popup-state';
+import type { CandidateView } from './popup-state';
 import * as storage from '../../lib/storage';
 import * as domain from '../../types/domain';
 import { DEFAULT_SETTINGS } from '../../types/domain';
@@ -32,6 +42,9 @@ function candidate(suffix: string, clusterSize = 5): Candidate {
     clusterSize,
     burstScore: 0.5,
     emptyAccountRatio: 0.25,
+    // 窓内のいいね 5 件中 4 件がこの顔ぶれ = 80%。
+    // **burstScore(0.5) と別の値にしてある** — 取り違えたら文言テストが落ちる
+    windowShare: { cluster: 4, total: 5 },
     detectedAt: '2026-08-20T03:00:00.000Z',
   };
 }
@@ -155,7 +168,12 @@ describe('loadPopupState', () => {
     // Arrange
     await storage.saveCandidates([candidate('1')]);
     await storage.saveVerdict('example-author-1', 'valid');
-    await storage.saveSettings({ minClusterSize: 8, minSharedItems: 3, lookbackDays: 5 });
+    await storage.saveSettings({
+      ...DEFAULT_SETTINGS,
+      minClusterSize: 8,
+      minSharedItems: 3,
+      lookbackDays: 5,
+    });
     await storage.saveScanResult({
       mode: 'light',
       newItemCount: 25,
@@ -196,17 +214,23 @@ describe('applySettings', () => {
     await storage.saveLikeIndex(clusteredIndex(5));
     // Act & Assert
     expect(
-      await applySettings({ minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 }, NOW),
+      await applySettings(
+        { ...DEFAULT_SETTINGS, minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 },
+        NOW,
+      ),
     ).toHaveLength(1);
     expect(
-      await applySettings({ minClusterSize: 20, minSharedItems: 2, lookbackDays: 3 }, NOW),
+      await applySettings(
+        { ...DEFAULT_SETTINGS, minClusterSize: 20, minSharedItems: 2, lookbackDays: 3 },
+        NOW,
+      ),
     ).toEqual([]);
   });
 
   it('設定と候補を保存する', async () => {
     // Arrange
     await storage.saveLikeIndex(clusteredIndex(5));
-    const settings = { minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 };
+    const settings = { ...DEFAULT_SETTINGS, minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 };
     // Act
     const views = await applySettings(settings, NOW);
     // Assert — Phase 7 の DOM 非表示がこの candidates を読む
@@ -221,7 +245,7 @@ describe('applySettings', () => {
     await storage.saveVerdict('example-author-a', 'valid');
     // Act
     const views = await applySettings(
-      { minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 },
+      { ...DEFAULT_SETTINGS, minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 },
       NOW,
     );
     // Assert — verdict を Candidate に持たせると、この再検出で消える
@@ -552,6 +576,13 @@ describe('describeMuteRecord', () => {
     expect(text).not.toContain('押し直して');
   });
 
+  it('候補の行では解除の案内を繰り返さない（最終スキャンの下に常設した）', () => {
+    // Arrange
+    const record = { outcome: 'not-on-page' as const, at: AT, mutedAt: AT };
+    // Act & Assert — 行ごとに同じ導線を出すと、候補の数だけ同じ文が並ぶ
+    expect(describeMuteRecord(record)).not.toContain('ミュート設定');
+  });
+
   it('成功の記録があれば、menu-unavailable でも言い切る', () => {
     // Arrange — 推測混じりの「〜か、画面構造が変わった可能性」にしない
     const record = { outcome: 'menu-unavailable' as const, at: AT, mutedAt: AT };
@@ -577,5 +608,328 @@ describe('describeMuteRecord', () => {
     const record = { outcome: 'unreachable' as const, at: AT, mutedAt: AT };
     // Act & Assert
     expect(describeMuteRecord(record)).toBe(describeMuteOutcome('unreachable'));
+  });
+});
+
+/**
+ * 折りたたみ（Phase 9）。**表示の設定であって判定ではない。**
+ *
+ * 既定は 'none'。視界から消す方向の変更なので、誤検知でミュートした
+ * アカウントを再評価できなくする失敗（OQ-16）と同じ形を持つ。
+ */
+describe('partitionViews', () => {
+  const AT = '2026-08-25T12:00:00.000Z';
+
+  /** 未評価 / 妥当・ミュート成功 / 誤り の 3 件 */
+  function views(): CandidateView[] {
+    return toViews(
+      [candidate('a'), candidate('b'), candidate('c')],
+      { 'example-author-b': 'valid', 'example-author-c': 'false_positive' },
+      { 'example-author-b': { outcome: 'muted' as const, at: AT, mutedAt: AT } },
+    );
+  }
+
+  it('none なら 1 件も折りたたまない', () => {
+    // Act
+    const { open, folded } = partitionViews(views(), 'none');
+    // Assert
+    expect(open).toHaveLength(3);
+    expect(folded).toEqual([]);
+  });
+
+  it('muted はミュートに成功したものだけを折りたたむ', () => {
+    const { open, folded } = partitionViews(views(), 'muted');
+    expect(folded.map((v) => v.candidate.authorHandle)).toEqual(['example-author-b']);
+    expect(open).toHaveLength(2);
+  });
+
+  it('押し直して not-on-page になっても折りたたまれたまま', () => {
+    // Arrange — ミュートすると記事がトレンドから消えるので、押し直すと必ずこうなる。
+    // outcome で判定すると、押し直した瞬間に折りたたみから飛び出す
+    const list = toViews(
+      [candidate('b')],
+      { 'example-author-b': 'valid' },
+      { 'example-author-b': { outcome: 'not-on-page' as const, at: AT, mutedAt: AT } },
+    );
+    // Act & Assert
+    expect(partitionViews(list, 'muted').folded).toHaveLength(1);
+  });
+
+  it('一度も成功していなければ muted では折りたたまない', () => {
+    // Arrange — mutedAt が無い（試したが失敗した）
+    const list = toViews(
+      [candidate('b')],
+      { 'example-author-b': 'valid' },
+      { 'example-author-b': { outcome: 'not-on-page' as const, at: AT } },
+    );
+    // Act & Assert
+    expect(partitionViews(list, 'muted').folded).toEqual([]);
+  });
+
+  it('valid は「妥当」だけを折りたたむ（「誤り」は一覧に戻る）', () => {
+    const { open, folded } = partitionViews(views(), 'valid');
+    expect(folded.map((v) => v.candidate.authorHandle)).toEqual(['example-author-b']);
+    expect(open.map((v) => v.candidate.authorHandle)).toEqual([
+      'example-author-a',
+      'example-author-c',
+    ]);
+  });
+
+  it('judged は妥当も誤りも折りたたむ', () => {
+    const { open, folded } = partitionViews(views(), 'judged');
+    expect(folded).toHaveLength(2);
+    expect(open.map((v) => v.candidate.authorHandle)).toEqual(['example-author-a']);
+  });
+
+  it('順序を保つ（並べ替えは detector の責務）', () => {
+    const { open } = partitionViews(views(), 'valid');
+    expect(open[0]?.candidate.authorHandle).toBe('example-author-a');
+  });
+
+  it('空配列でも例外を投げない', () => {
+    expect(partitionViews([], 'judged')).toEqual({ open: [], folded: [] });
+  });
+});
+
+describe('describeFold', () => {
+  it('none なら空文字（器ごと出さない）', () => {
+    expect(describeFold('none', 3)).toBe('');
+  });
+
+  it('0 件なら空文字', () => {
+    expect(describeFold('judged', 0)).toBe('');
+  });
+
+  it('対象ごとに言い分ける', () => {
+    expect(describeFold('muted', 2)).toContain('ミュート済み');
+    expect(describeFold('valid', 2)).toContain('妥当');
+    expect(describeFold('judged', 2)).toContain('評価済み');
+  });
+
+  it('件数を出す', () => {
+    expect(describeFold('judged', 7)).toContain('7');
+  });
+});
+
+/**
+ * 「誤り」を押しても Qiita 側のミュートは解除されない。
+ * 折りたたみは視界から消す機能なので、解除の導線を必ず添える（OQ-16）。
+ */
+describe('hasMutedInFold', () => {
+  const AT = '2026-08-25T12:00:00.000Z';
+
+  it('ミュート済みが 1 件でもあれば true', () => {
+    // Arrange
+    const list = toViews(
+      [candidate('b')],
+      {},
+      { 'example-author-b': { outcome: 'muted' as const, at: AT, mutedAt: AT } },
+    );
+    // Act & Assert
+    expect(hasMutedInFold(list)).toBe(true);
+  });
+
+  it('押し直して not-on-page でも true（成功の事実は消えない）', () => {
+    const list = toViews(
+      [candidate('b')],
+      {},
+      { 'example-author-b': { outcome: 'not-on-page' as const, at: AT, mutedAt: AT } },
+    );
+    expect(hasMutedInFold(list)).toBe(true);
+  });
+
+  it('ミュート済みが 1 件も無ければ false（関係ない注意書きを常駐させない）', () => {
+    const list = toViews([candidate('a')], { 'example-author-a': 'valid' });
+    expect(hasMutedInFold(list)).toBe(false);
+  });
+
+  it('試したが成功していないだけなら false', () => {
+    const list = toViews(
+      [candidate('b')],
+      {},
+      { 'example-author-b': { outcome: 'no-trend-tab' as const, at: AT } },
+    );
+    expect(hasMutedInFold(list)).toBe(false);
+  });
+
+  it('空配列なら false', () => {
+    expect(hasMutedInFold([])).toBe(false);
+  });
+});
+
+/** 幅が可変になった以上、数字だけでは意味が読めない */
+describe('describeWindowShare', () => {
+  it('分母（窓内のいいね総数）と分子を実件数で出す', () => {
+    // Arrange — フィクスチャは窓内 5 人中 4 人
+    const text = describeWindowShare(candidate('a'), 180);
+    // Act & Assert — **見出しと同じ「アカウント」単位で、分子/分母の形で書く**
+    expect(text).toContain('4/5 アカウント (80%)');
+  });
+
+  it('幅を文言に出す', () => {
+    expect(describeWindowShare(candidate('a'), 60)).toContain('60 分以内');
+    expect(describeWindowShare(candidate('a'), 1440)).toContain('1 日以内');
+  });
+
+  it('分母がクラスタではなく記事だと読める形にする', () => {
+    // **burstScore と取り違えると強さを誤って伝える。**
+    // burstScore は 0.5 なので、それを使っていれば 50% が出る
+    const text = describeWindowShare(candidate('a'), 180);
+    expect(text).toContain('が同じメンバー');
+    expect(text).not.toContain('50%');
+  });
+
+  it('「顔ぶれ」という語を使わない', () => {
+    // **語感も判断に影響する。**断定しない（約束 6）は文言だけの規則ではない
+    expect(describeWindowShare(candidate('a'), 180)).not.toContain('顔ぶれ');
+    expect(describeCoAuthors(['example-author-b'])).not.toContain('顔ぶれ');
+  });
+
+  it('見出しと同じアカウント単位で数える（いいねの件数ではない）', () => {
+    // **(アカウント × 記事) の組で数えると、3 記事とも押した人が 3 回数えられ、
+    // 見出しの「N アカウント」と食い違う**（2026-08-25 のユーザー指摘）
+    const text = describeWindowShare(candidate('a'), 180);
+    expect(text).toContain('アカウント');
+    expect(text).not.toContain('件');
+  });
+
+  it('どの記事の話かを行だけで読める', () => {
+    // 見出しは「3 記事に重なった」と言っているので、この行にも範囲を書く
+    expect(describeWindowShare(candidate('a'), 180)).toContain('該当記事の');
+  });
+
+  it('測れないときは 0% と言わない', () => {
+    // **「測れない」と「測ったら 0 だった」は別物。**取り違えると
+    // 条件を動かす方向が逆になる（適合率の分母 0 と同じ話）
+    const text = describeWindowShare({ ...candidate('a'), windowShare: null }, 180);
+    expect(text).toContain('測れません');
+    expect(text).not.toContain('0%');
+  });
+
+  it('窓内に誰も居なければ「測れない」ではなく「まだいません」', () => {
+    const empty = { ...candidate('a'), windowShare: { cluster: 0, total: 0 } };
+    const text = describeWindowShare(empty, 180);
+    expect(text).toContain('まだいません');
+    expect(text).not.toContain('測れません');
+  });
+
+  it('保存済みの古い候補（フィールドが無い）でも落ちない', () => {
+    // getCandidates は形を検証しない（`list as Candidate[]`）ので、
+    // このフィールドを持たない候補が来る経路が実在する
+    const legacy: Candidate = { ...candidate('a') };
+    Reflect.deleteProperty(legacy, 'windowShare');
+    expect(describeWindowShare(legacy, 180)).toContain('測れません');
+  });
+
+  it('端数は四捨五入する', () => {
+    // 2/3 = 0.666… は 67%
+    const twoThirds = { ...candidate('a'), windowShare: { cluster: 2, total: 3 } };
+    expect(describeWindowShare(twoThirds, 180)).toContain('67%');
+  });
+});
+
+/**
+ * 空アカウント率は**画面に出さない**（2026-08-25 に削除）。
+ *
+ * 実測で、検出された 31 人の空率 61% に対し **同じ記事群の liker 全体が 54%**、
+ * 集団の外側だけでも 50% あった。**比較相手を決めない割合は強さを誤って伝える。**
+ * `Candidate.emptyAccountRatio` の記録は続けるので、同形の基準線が用意できたら
+ * 戻せる。ここでは「出さない」ことだけを固定する。
+ */
+describe('空アカウント率', () => {
+  it('占有率の文言に混ぜない', () => {
+    const text = describeWindowShare(candidate('a'), 180);
+    expect(text).not.toContain('プロフィール');
+    expect(text).not.toContain('記事 0 本');
+  });
+});
+
+describe('describeEmpty', () => {
+  it('蓄積が無ければトレンドページを開くよう案内する', () => {
+    expect(describeEmpty(false)).toContain('トレンドページ');
+  });
+
+  it('蓄積があるのにゼロなら条件をゆるめるよう案内する', () => {
+    expect(describeEmpty(true)).toContain('ゆるめる');
+  });
+
+  it('折りたたみの中に居るなら、条件をいじらせない', () => {
+    // Arrange & Act
+    const text = describeEmpty(true, 2);
+    // Assert — 何もしていない人に条件を触らせるのは的外れ
+    expect(text).toContain('折りたたみ');
+    expect(text).not.toContain('ゆるめる');
+  });
+});
+
+describe('loadPopupState の折りたたみ設定', () => {
+  it('未設定なら none', async () => {
+    await expect(loadPopupState(NOW)).resolves.toHaveProperty('foldTarget', 'none');
+  });
+
+  it('保存済みの値を返す', async () => {
+    await storage.saveFoldTarget('valid');
+    await expect(loadPopupState(NOW)).resolves.toHaveProperty('foldTarget', 'valid');
+  });
+});
+
+/**
+ * 「投稿から何分以内」の目盛り（Phase 9）。
+ *
+ * 分は等間隔に並ばない（60 → 2880）ので、スライダーは **添字** を持つ。
+ * 分を value にすると 60 と 120 のあいだに 59 個の無意味な目盛りができる。
+ */
+describe('BURST_WINDOW_CHOICES', () => {
+  it('昇順で重複が無い', () => {
+    // Act & Assert — 添字と分の対応が一意でないと windowIndexOf が壊れる
+    for (let i = 1; i < BURST_WINDOW_CHOICES.length; i += 1) {
+      expect(BURST_WINDOW_CHOICES[i]).toBeGreaterThan(BURST_WINDOW_CHOICES[i - 1] ?? 0);
+    }
+  });
+
+  it('既定値が目盛りの上に乗っている', () => {
+    // 乗っていないと、開いた直後のつまみが最も近い別の値を指す
+    expect(BURST_WINDOW_CHOICES).toContain(DEFAULT_SETTINGS.burstWindowMinutes);
+  });
+
+  it('60 分から 2 日まで', () => {
+    expect(BURST_WINDOW_CHOICES[0]).toBe(60);
+    expect(BURST_WINDOW_CHOICES[BURST_WINDOW_CHOICES.length - 1]).toBe(60 * 24 * 2);
+  });
+});
+
+describe('describeWindow', () => {
+  it('1 日未満は分で言う', () => {
+    expect(describeWindow(60)).toBe('60 分');
+    expect(describeWindow(720)).toBe('720 分');
+  });
+
+  it('1 日以上は日で言う（「1440 分」は読めない）', () => {
+    expect(describeWindow(1440)).toBe('1 日');
+    expect(describeWindow(2880)).toBe('2 日');
+  });
+
+  it('割り切れない値は分のまま（嘘の「1 日」を出さない）', () => {
+    expect(describeWindow(1500)).toBe('1500 分');
+  });
+});
+
+describe('windowIndexOf', () => {
+  it('目盛りの上の値はその添字', () => {
+    BURST_WINDOW_CHOICES.forEach((minutes, index) => {
+      expect(windowIndexOf(minutes)).toBe(index);
+    });
+  });
+
+  it('目盛りに無い値は最も近いものに寄せる', () => {
+    // Arrange — 選択肢を変えたときに、保存済みの値がどこにも無くなりうる
+    // Act & Assert — 先頭へ倒すとユーザーの設定が黙って最短に変わる
+    expect(windowIndexOf(100)).toBe(BURST_WINDOW_CHOICES.indexOf(120));
+    expect(windowIndexOf(1300)).toBe(BURST_WINDOW_CHOICES.indexOf(1440));
+  });
+
+  it('範囲の外でも端に寄せる', () => {
+    expect(windowIndexOf(1)).toBe(0);
+    expect(windowIndexOf(999999)).toBe(BURST_WINDOW_CHOICES.length - 1);
   });
 });
