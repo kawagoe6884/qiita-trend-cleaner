@@ -110,7 +110,7 @@
 
 ## 現在地
 
-**Phase 2〜8 complete（4 を除く）。ミュートまで実機で動いている。次は Phase 9（適合率計測）／Phase 10（記事化）。**
+**Phase 2〜9 complete（4 を除く）。窓内占有率まで実機で動いている。次は「取得ページが逆だった」の修正（下記）／Phase 10（記事化）。**
 
 - 設計: [PRD](.claude/PRPs/prds/qiita-trend-guard.prd.md) — **改訂 6**。意思決定ログと未解決事項はここ
 - 完了した計画: `.claude/PRPs/plans/completed/`
@@ -126,7 +126,7 @@
 | **5b-2 著者をまたぐ共起** | **complete**（実機で記事 1 本の著者を検出） — [report](.claude/PRPs/reports/cross-author-clusters-report.md) |
 | **7 DOM 非表示** | **complete**（実機確認済み） — 評価済みを隠す / トグルで戻す / 妥当なカードに色 — [report](.claude/PRPs/reports/dom-hiding-report.md) |
 | **8 ミュート実行（「妥当」と同時）** | **complete**（実機確認済み 2026-08-25） — [report](.claude/PRPs/reports/mute-on-valid-report.md)。既定オフのチェックで「妥当」と同時実行（一括は作らない）。**起動は message passing**（`storage.onChanged` では押し直しが効かない）。**ブロックがミュートの直上にあるので、末尾一致でのみ特定する**。**実測 → 修正を 3 周**して初めて動いた（描画待ち／アイコンのリガチャ／器ではなく中の button） |
-| **9 判定基準をユーザーに開放する** | **実装完了・実機確認待ち**（2026-08-25 — [report](.claude/PRPs/reports/user-configurable-thresholds-report.md)）。**開発者が閾値を追い込むのをやめた。**「投稿から何分以内」（60/120/180/360/720 分/1 日/2 日・**既定 180 分**）と折りたたみの対象（既定なし）をユーザーが決める。**設定は options ページに集約**し、折りたたみの 4 択には図解を添えた。**burstScore の下限は実装後に撤回**（120 分待てば回避できる＝変数を攻撃側が握っている）。空アカウント率・組織名も**開放しない** |
+| **9 判定基準をユーザーに開放する** | **complete**（実機確認済み 2026-08-25・**全 51 項目を 1 周で通過** — [report](.claude/PRPs/reports/user-configurable-thresholds-report.md)）。**開発者が閾値を追い込むのをやめた。**「投稿から何分以内」（60/120/180/360/720 分/1 日/2 日・**既定 180 分**）と折りたたみの対象（既定なし）をユーザーが決める。**設定は options ページに集約**し、折りたたみの 4 択には図解を添えた。**burstScore の下限は実装後に撤回**（120 分待てば回避できる＝変数を攻撃側が握っている）。空アカウント率・組織名も**開放しない** |
 | 10 記事化 | pending |
 
 **検出エンジン（`src/detect/`）は 4b の影響を受けない。** インデックスを受け取るだけで出所を問わない設計にしてあるため。
