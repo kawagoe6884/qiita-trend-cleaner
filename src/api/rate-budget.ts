@@ -21,7 +21,8 @@ export const RATE_LIMIT_ANON = 60;
 export const RATE_LIMIT_AUTH = 1000;
 
 /**
- * 1 リクエストで要求する件数（`per_page`）。Qiita API の上限が 100。
+ * 1 リクエストで要求する件数（`per_page`）。Qiita API の上限が 100 で、
+ * **101 以上を指定するとエラーになる**（増やして枠を節約する道は無い）。
  *
  * 【なぜ qiita-client ではなくここに置くか】
  * **完全性の判定に使うため** `detect/burst.ts` からも参照する。

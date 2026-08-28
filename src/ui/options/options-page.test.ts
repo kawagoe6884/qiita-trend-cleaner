@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { init, describeToggleState } from './options-page';
 import { loadState, submitToken, removeToken } from './token-form';
+import { logger } from '../../lib/logger';
 // 実際に配布される HTML をそのまま読む（Vite の ?raw）。
 // setupDom() は骨格のモックなので、**順序は実ファイルに対して検査する**
 import indexHtml from './index.html?raw';
@@ -532,6 +533,61 @@ describe('候補の見え方の設定', () => {
  * **色だけで状態を伝えない。**色覚や表示環境（強制カラー・モノクロ印刷）では
  * 色の差が届かず、つまみの移動も 20px でしかない。
  */
+describe('見え方の設定 — 保存に失敗したときのログ水準', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let debugSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+  });
+
+  /** 次の 1 回だけ storage の書き込みを失敗させる */
+  function failNextWrite(): void {
+    // set はモックの vi.fn そのもので this を使わない（src/test/setup.ts）
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    vi.mocked(chrome.storage.local.set).mockRejectedValueOnce(
+      new Error('Extension context invalidated'),
+    );
+  }
+
+  it('トグルの保存が失敗しても error / warn には載せない', async () => {
+    // Arrange — 拡張がリロードされた瞬間に options タブが残っていると起きる。
+    // **ユーザーの操作が失敗しただけで、拡張が壊れているわけではない**
+    await init();
+    failNextWrite();
+    const toggle = el<HTMLInputElement>('#mute-on-valid');
+    // Act
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change'));
+    // Assert — Chrome は warn も chrome://extensions のエラー欄に集める
+    await vi.waitFor(() => {
+      expect(debugSpy).toHaveBeenCalledWith('failed to save mute setting:', expect.any(Error));
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('折りたたみの保存が失敗しても error / warn には載せない', async () => {
+    // Arrange — 経路が 2 本あるので 2 本とも検査する。
+    // **ログ水準の修正は経路ごとに漏れる**（Phase 4b の 401 と同じ形）
+    await init();
+    failNextWrite();
+    const radio = el<HTMLInputElement>('input[name="fold-target"][value="judged"]');
+    // Act
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      expect(debugSpy).toHaveBeenCalledWith('failed to save fold setting:', expect.any(Error));
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('describeToggleState', () => {
   it('オンは「する」', () => {
     expect(describeToggleState(true)).toBe('する');

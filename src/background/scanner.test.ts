@@ -742,16 +742,54 @@ describe('likes のページング', () => {
   });
 
   it('覆いきれなければ、どこまで覆ったかを記録する', async () => {
-    // Arrange — どのページも窓の内側なので上限まで遡って打ち切る。
+    // Arrange — 総数 550 = 全 6 ページ。どのページも窓の内側なので上限
+    // （4 ページ）まで遡り、**page=2 に届かず打ち切る**。
     // **黙って切ると、狭い範囲を「完全」と報告してしまう**
+    //
+    // 【総数を 450 にしてはいけない】450 は全 5 ページで、page=1 と末尾 4
+    // ページを足すとちょうど全部になる。「覆いきれない」という名前のまま
+    // 覆いきれてしまい、この検査は下の境界テストと同じものになる。
+    likesMock.mockImplementation((_id, _token, p) =>
+      Promise.resolve(page([[`example-liker-${String(p ?? 1)}`, 100]], 550)),
+    );
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert — 取れたのは page=3 まで。覆った範囲はそこで止まる
+    expect(requestedPages()).not.toContain(2);
+    const record = (await getLikeIndex())['example-liker-3']?.likes[0];
+    expect(record?.itemCoveredMinutes).toBe(100);
+  });
+
+  it('上限ちょうどで全ページ取れたときは、覆った範囲を記録しない', async () => {
+    // Arrange — 総数 450 = 全 5 ページ。page=1 と末尾 4 ページで**ちょうど全部**。
+    //
+    // 【なぜこの境界か】complete を「次の周回で page < 2 を見る」形にすると、
+    // ここだけ周回が先に尽きて立たない。全部持っているのに
+    // itemCoveredMinutes が付き、**覆った範囲を過少に申告する**。
     likesMock.mockImplementation((_id, _token, p) =>
       Promise.resolve(page([[`example-liker-${String(p ?? 1)}`, 100]], 450)),
     );
     // Act
     await runScan([trendItem(1)]);
-    // Assert
+    // Assert — page=2 まで取れており、覆った範囲は書かない（総数で判定できる）
+    expect(requestedPages()).toContain(2);
     const record = (await getLikeIndex())['example-liker-2']?.likes[0];
-    expect(record?.itemCoveredMinutes).toBe(100);
+    expect(record?.itemCoveredMinutes).toBeUndefined();
+    expect(record?.itemTotalLikes).toBe(450);
+  });
+
+  it('最終ページが窓の外でも、全ページ持っているなら覆った範囲を書かない', async () => {
+    // Arrange — 総数 150 = 全 2 ページ。page=2 の最も新しいいいねが最大の窓
+    // （2 日）より外にある。**打ち切りの条件と完全性は別の話**で、
+    // 「もう窓の外だから止める」ことと「全部持っている」ことは両立する。
+    likesMock.mockImplementation((_id, _token, p) =>
+      Promise.resolve(page([[`example-liker-${String(p ?? 1)}`, 9000]], 150)),
+    );
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert — 9000 分を「そこまでしか覆っていない」と書くと過少申告になる
+    const record = (await getLikeIndex())['example-liker-2']?.likes[0];
+    expect(record?.itemCoveredMinutes).toBeUndefined();
   });
 
   it('全ページ取れたときは覆った範囲を記録しない（総数で判定できる）', async () => {
@@ -836,5 +874,50 @@ describe('likes のページング', () => {
     await runScan([broken]);
     // Assert
     expect(likesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('途中ページで 429 を踏んだら、その記事は page=1 ごと捨てる', async () => {
+    // Arrange — 総数 250 = 全 3 ページ。page=1 は取れるが末尾ページで枠切れ。
+    //
+    // 【この経路は今まで一度も走っていなかった】既存の 429 テストは
+    // totalCount が 2 以下のフィクスチャなので lastPage <= 1 になり、
+    // 末尾ページのループに入らない。**1 記事が最大 5 リクエストになって
+    // 初めて、記事の「途中」で 429 を踏みうるようになった。**
+    likesMock.mockImplementation((_id, _token, p) =>
+      p === undefined || p === 1
+        ? Promise.resolve(page([['example-liker-a', 10]], 250))
+        : Promise.reject(new RateLimitError(1787104432)),
+    );
+    // Act
+    const result = await runScan(TWO_ITEMS);
+    // Assert — page=1 で取れた liker も保存しない。**部分データには
+    // itemCoveredMinutes を付けようがなく**、覆った範囲を偽るか過少に言うかの
+    // 二択になる。捨てて次回やり直す方を選んでいる
+    expect(Object.keys(await getLikeIndex())).toEqual([]);
+    expect(result?.scannedItemCount).toBe(0);
+    expect(await getRateLimitedUntil()).toBe(1787104432);
+  });
+
+  it('途中ページの 429 で捨てた記事は、次のスキャンで取り直す', async () => {
+    // Arrange — 捨ててよいのは**次に必ず拾えるから**。
+    //
+    // 【何をこのテストが守り、何を守らないか】
+    // 守る: 部分データを保存してしまう変異（末尾ページの 429 を握り潰す等）。
+    //       保存されると 2 回目が「既知」で飛ばされ、呼び出し回数 0 で落ちる。
+    // 守らない: catch の中で `seen.add` する変異。**等価変異である。**
+    //       seen は collectKnownItemIds が保存済みインデックスから毎回導出し、
+    //       どこにも永続化されない。しかも 429 のあと著者巡回は
+    //       `!progress.rateLimited` で飛ばされるので、その Set は二度と読まれない。
+    //       **いいねを保存せずに既知にする経路が構造的に無い。**
+    likesMock.mockImplementationOnce(() => Promise.resolve(page([['example-liker-a', 10]], 250)));
+    likesMock.mockImplementationOnce(() => Promise.reject(new RateLimitError(1787104432)));
+    await runScan([trendItem(1)]);
+    vi.clearAllMocks();
+    likesMock.mockResolvedValue(page([['example-liker-a', 10]], 1));
+    // Act — 同じ記事をもう一度渡す
+    await runScan([trendItem(1)]);
+    // Assert — 既知として飛ばさず、取り直して保存する
+    expect(likesMock).toHaveBeenCalledTimes(1);
+    expect(Object.keys(await getLikeIndex())).toEqual(['example-liker-a']);
   });
 });

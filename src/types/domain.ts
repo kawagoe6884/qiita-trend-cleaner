@@ -320,7 +320,15 @@ const MINUTES_PER_DAY = 60 * 24;
  * 記事では末尾から遡って取る。どこまで遡るかは「ユーザーが選びうる最大の窓」で
  * 決まる。UI と取得層の 2 箇所に同じ目盛りを持つと、片方だけ直す事故が必ず起きる。
  */
-export const BURST_WINDOW_CHOICES = [60, 120, 180, 360, 720, MINUTES_PER_DAY, MINUTES_PER_DAY * 2];
+export const BURST_WINDOW_CHOICES = [
+  60,
+  120,
+  180,
+  360,
+  720,
+  MINUTES_PER_DAY,
+  MINUTES_PER_DAY * 2,
+] as const;
 
 /**
  * ユーザーが選びうる最大の窓（分）。**取得の射程を決める。**

@@ -136,7 +136,11 @@ interface ScanProgress {
 }
 
 /**
- * 429 を受けたときの進捗。ここで止めるだけで、取得済みの分は捨てない。
+ * 429 を受けたときの進捗。ここで止めるだけで、**畳み終えた記事**は捨てない。
+ *
+ * 「取得済みの分」ではなく「畳み終えた記事」と書くのは、**取得中の記事 1 件は
+ * 捨てるから**（理由は scanOneItem の catch を見ること）。1 記事が最大 5
+ * リクエストになった以上、この 2 つは同じではない。
  *
  * 【なぜ warn ではなく debug か】
  * ライトモードの枠は 60 req/h、1 スキャンは約 30 req。トレンドページを
@@ -223,14 +227,20 @@ async function collectLikes(item: TrendItem, token: string | null): Promise<Coll
 
   for (let i = 0; i < MAX_TAIL_PAGES; i += 1) {
     const page = lastPage - i;
-    if (page < 2) {
-      // 2 ページ目まで遡った = page=1 と合わせて全部持っている
-      complete = true;
-      break;
-    }
     const res = await fetchLikes(item.itemId, token, page);
     rate = res.rate ?? rate;
     for (const like of res.data) byUser.set(like.user.id, like);
+
+    if (page <= 2) {
+      // 2 ページ目まで遡った = page=1 と合わせて全部持っている。
+      //
+      // **取った時点で立てる。**「次の周回で page < 2 を見る」形にすると、
+      // 上限ちょうどで足りたとき（lastPage=5）に周回が先に尽きて立たない。
+      // また delta の判定より前に置く — 最終ページで
+      // `delta > MAX_BURST_WINDOW_MINUTES` を踏んでも、全部持っている事実は変わらない。
+      complete = true;
+      break;
+    }
 
     const delta = newestDeltaMinutes(res.data, postedMs);
     // 時刻が読めなければ判断材料が無い。**進めても覆った範囲を主張できない**
@@ -272,6 +282,12 @@ async function scanOneItem(
       scannedItemCount: progress.scannedItemCount + 1,
     };
   } catch (error) {
+    // 【途中ページで 429 を踏んだら、その記事の page=1 も捨てる】意図的な選択。
+    // 部分データを保存すると itemCoveredMinutes が「そこまで覆った」と言えず、
+    // 覆っていない範囲を覆ったことにするか、覆った範囲を過少に言うかの二択になる。
+    // seen に入れないので次回まるごと取り直せばよく、**損は 1 記事ぶんの
+    // 1 リクエストだけ**。この分岐は必ず scanItems のループを止めるので、
+    // 同じスキャン内で 2 件以上が無駄になることはない。
     if (error instanceof RateLimitError) return haltOnRateLimit(progress, error);
     // 1 記事の失敗でスキャン全体を止めない。
     //

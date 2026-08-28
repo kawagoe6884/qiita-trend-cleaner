@@ -258,7 +258,7 @@ function attachPrefListeners(): void {
     // 保存を待たずに映す。storage の往復を待つと、押した瞬間の文言が古いまま残る
     renderToggleState(checked);
     saveMuteOnValid(checked).catch((error: unknown) => {
-      logger.error('failed to save mute setting:', error);
+      logger.debug('failed to save mute setting:', error);
     });
   });
 
@@ -268,7 +268,7 @@ function attachPrefListeners(): void {
       // 知らない値は捨てる。HTML を書き換えられても storage に入らない
       if (!isFoldTarget(value)) return;
       saveFoldTarget(value).catch((error: unknown) => {
-        logger.error('failed to save fold setting:', error);
+        logger.debug('failed to save fold setting:', error);
       });
     });
   }
