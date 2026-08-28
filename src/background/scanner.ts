@@ -159,12 +159,23 @@ const MAX_TAIL_PAGES = 4;
 
 const MS_PER_MINUTE = 60 * 1000;
 
-/** 降順のページで最も新しい要素の、投稿からの経過（分）。求まらなければ null */
+/**
+ * そのページで**最も新しいいいね**の、投稿からの経過（分）。求まらなければ null。
+ *
+ * **`likes[0]` を使わない。**降順であることは実測（2026-08-25）だが、
+ * **順序が変わればエラーにならずに違う値を返す。**打ち切りの判断がここに
+ * 乗っているので、「失敗したら null」（設計上の約束 3）が効かない壊れ方になる。
+ * 最大値を取れば並び順に依存しない — 降順なら結果は同じで、依存が 1 つ減る。
+ */
 function newestDeltaMinutes(likes: QiitaLike[], postedMs: number): number | null {
-  const newest = likes[0];
-  if (newest === undefined) return null;
-  const liked = toEpochMs(newest.created_at);
-  return liked === null ? null : Math.round((liked - postedMs) / MS_PER_MINUTE);
+  let newest: number | null = null;
+  for (const like of likes) {
+    const liked = toEpochMs(like.created_at);
+    if (liked === null) continue;
+    const delta = Math.round((liked - postedMs) / MS_PER_MINUTE);
+    if (newest === null || delta > newest) newest = delta;
+  }
+  return newest;
 }
 
 interface CollectedLikes {

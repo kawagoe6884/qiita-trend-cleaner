@@ -767,6 +767,58 @@ describe('likes のページング', () => {
     expect(record?.itemTotalLikes).toBe(150);
   });
 
+  it('並び順が降順でなくても打ち切りを誤らない', async () => {
+    // Arrange — **降順は実測であって契約ではない。**順序が変わったときに
+    // 「エラーにならずに違う値を返す」壊れ方をしないことを固定する。
+    // 昇順で返す（page() の sort を通さず、古い順に並べる）
+    likesMock.mockImplementation((_id, _token, p) => {
+      const minutes = p === 5 ? [10, 5000] : [8000, 9000];
+      return Promise.resolve({
+        data: minutes.map((m, i) => likeAfter(`example-liker-${String(p ?? 1)}-${String(i)}`, m)),
+        totalCount: 450,
+        rate: { limit: 60, remaining: 55, resetAt: null },
+      });
+    });
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert — page=5 の最も新しいものは 5000 分（末尾にある）。
+    // 先頭の 10 分を見てしまうと打ち切れず、page=4 以降も取ってしまう
+    expect(likesMock).toHaveBeenCalledTimes(2);
+    expect(requestedPages()).not.toContain(4);
+  });
+
+  it('時刻が読めないレコードが混ざっても、ページ全体は捨てない', async () => {
+    // Arrange — page=5 に壊れた時刻が 1 件。**ページごと捨てると覆った範囲を
+    // 主張できなくなり、測れるはずの記事が「測れません」になる**
+    likesMock.mockImplementation((_id, _token, p) => {
+      const data =
+        p === 5
+          ? [
+              {
+                created_at: 'not-a-date',
+                user: {
+                  id: 'example-liker-broken',
+                  items_count: 0,
+                  followers_count: 1,
+                  description: null,
+                },
+              },
+              likeAfter('example-liker-early', 5000),
+            ]
+          : [likeAfter('example-liker-late', 9000)];
+      return Promise.resolve({
+        data,
+        totalCount: 450,
+        rate: { limit: 60, remaining: 55, resetAt: null },
+      });
+    });
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert — 壊れた 1 件を飛ばして 5000 分を読み、覆った範囲を記録する
+    const record = (await getLikeIndex())['example-liker-early']?.likes[0];
+    expect(record?.itemCoveredMinutes).toBe(5000);
+  });
+
   it('同じ liker が 2 ページに現れても 1 件にする', async () => {
     // Arrange — 取得中にいいねが増えるとページ境界がずれ、同じ人が重複しうる
     likesMock.mockResolvedValue(page([['example-liker-a', 10]], 250));
