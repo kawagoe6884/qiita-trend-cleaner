@@ -156,8 +156,12 @@ async function readArray<T>(
 export async function fetchLikes(
   itemId: string,
   token: string | null,
+  page = 1,
 ): Promise<ApiResponse<QiitaLike[]>> {
-  const path = `/items/${toSafeSegment(itemId, 'itemId')}/likes?per_page=${String(PER_PAGE)}`;
+  // **降順（新しい順）で返る**（2026-08-25 実測）。page=1 は「最も新しい 100 件」で、
+  // 投稿直後のいいねは最終ページに居る。どこまで遡るかは scanner の責務にする
+  // （窓の値は Settings 側にあり、この層はそれを知らない）
+  const path = `/items/${toSafeSegment(itemId, 'itemId')}/likes?per_page=${String(PER_PAGE)}&page=${String(page)}`;
   const response = await request(path, token);
   return readArray(response, isQiitaLike, `likes(${itemId})`);
 }

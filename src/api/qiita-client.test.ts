@@ -53,7 +53,7 @@ describe('fetchLikes', () => {
     const mock = stubFetch([]);
     await fetchLikes('0123456789abcdef0123', null);
     expect(mock.mock.calls[0]?.[0]).toBe(
-      'https://qiita.com/api/v2/items/0123456789abcdef0123/likes?per_page=100',
+      'https://qiita.com/api/v2/items/0123456789abcdef0123/likes?per_page=100&page=1',
     );
   });
 

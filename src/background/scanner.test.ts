@@ -671,3 +671,118 @@ describe('runScan の過去記事の絞り込み', () => {
     expect(fetchedItemIds()).not.toContain('0123456789abcdef0301');
   });
 });
+
+/**
+ * likes は**降順（新しい順）**で返るので `page=1` は「最も新しい 100 件」。
+ * 100 件を超える記事では**投稿直後のいいねが 1 件も入らない**（2026-08-25 実測:
+ * 642 いいねの記事で 180 分以内が 0/100 件、最終ページには 5/42 件）。
+ * エラーは 1 行も出ないので、テストでしか捕まえられない。
+ */
+describe('likes のページング', () => {
+  const POSTED_MS = new Date('2026-08-18T10:00:00+09:00').getTime();
+
+  /** 投稿から minutes 分後にいいねした合成レコード */
+  function likeAfter(handle: string, minutes: number) {
+    return {
+      created_at: new Date(POSTED_MS + minutes * 60 * 1000).toISOString(),
+      user: { id: handle, items_count: 0, followers_count: 1, description: null },
+    };
+  }
+
+  /** 1 ページぶんの応答。**降順に並べる**（実 API と同じ向き） */
+  function page(entries: [string, number][], total: number) {
+    return {
+      data: entries
+        .map(([h, m]) => likeAfter(h, m))
+        .sort((a, b) => b.created_at.localeCompare(a.created_at)),
+      totalCount: total,
+      rate: { limit: 60, remaining: 55, resetAt: null },
+    };
+  }
+
+  /** fetchLikes に渡された page 引数の一覧 */
+  function requestedPages(): unknown[] {
+    return likesMock.mock.calls.map((call) => call[2]);
+  }
+
+  it('100 件以下なら 1 リクエストで済ませる', async () => {
+    // Arrange — 今までと同じコストであることが後方互換の条件
+    likesMock.mockResolvedValue(page([['example-liker-a', 10]], 1));
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert
+    expect(likesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('100 件を超えたら最終ページまで遡る', async () => {
+    // Arrange — 総数 250 = 全 3 ページ。最終ページに投稿直後のいいねが居る
+    likesMock.mockImplementation((_id, _token, p) => {
+      if (p === 3) return Promise.resolve(page([['example-liker-early', 5]], 250));
+      return Promise.resolve(page([['example-liker-late', 6000]], 250));
+    });
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert — page=1 のあと最終ページを取り、**投稿直後の liker が入る**
+    expect(requestedPages()).toContain(3);
+    expect(Object.keys(await getLikeIndex())).toContain('example-liker-early');
+  });
+
+  it('最大の窓を覆ったら、それより手前のページは取らない', async () => {
+    // Arrange — 総数 450 = 全 5 ページ。page=5 の最も新しいいいねが
+    // 最大の目盛り（2 日 = 2880 分）を超えているので、そこで打ち切れる
+    likesMock.mockImplementation((_id, _token, p) => {
+      if (p === 5) return Promise.resolve(page([['example-liker-early', 5000]], 450));
+      return Promise.resolve(page([['example-liker-late', 9000]], 450));
+    });
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert — page=1 と page=5 の 2 回だけ。page=4 以下は取らない
+    expect(likesMock).toHaveBeenCalledTimes(2);
+    expect(requestedPages()).not.toContain(4);
+  });
+
+  it('覆いきれなければ、どこまで覆ったかを記録する', async () => {
+    // Arrange — どのページも窓の内側なので上限まで遡って打ち切る。
+    // **黙って切ると、狭い範囲を「完全」と報告してしまう**
+    likesMock.mockImplementation((_id, _token, p) =>
+      Promise.resolve(page([[`example-liker-${String(p ?? 1)}`, 100]], 450)),
+    );
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert
+    const record = (await getLikeIndex())['example-liker-2']?.likes[0];
+    expect(record?.itemCoveredMinutes).toBe(100);
+  });
+
+  it('全ページ取れたときは覆った範囲を記録しない（総数で判定できる）', async () => {
+    // Arrange — 総数 150 = 全 2 ページ。page=2 まで遡れば全部持っている
+    likesMock.mockImplementation((_id, _token, p) =>
+      Promise.resolve(page([[`example-liker-${String(p ?? 1)}`, 10]], 150)),
+    );
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert
+    const record = (await getLikeIndex())['example-liker-2']?.likes[0];
+    expect(record?.itemCoveredMinutes).toBeUndefined();
+    expect(record?.itemTotalLikes).toBe(150);
+  });
+
+  it('同じ liker が 2 ページに現れても 1 件にする', async () => {
+    // Arrange — 取得中にいいねが増えるとページ境界がずれ、同じ人が重複しうる
+    likesMock.mockResolvedValue(page([['example-liker-a', 10]], 250));
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert
+    expect((await getLikeIndex())['example-liker-a']?.likes).toHaveLength(1);
+  });
+
+  it('投稿時刻が読めなければ遡らない（枠を無駄にしない）', async () => {
+    // Arrange — 打ち切りの判断ができないまま遡ると、上限まで枠を使って終わる
+    likesMock.mockResolvedValue(page([['example-liker-a', 10]], 250));
+    const broken = { ...trendItem(1), publishedAt: 'not-a-date' };
+    // Act
+    await runScan([broken]);
+    // Assert
+    expect(likesMock).toHaveBeenCalledTimes(1);
+  });
+});

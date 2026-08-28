@@ -14,7 +14,7 @@ import * as storage from '../../lib/storage';
 import { detectCandidates } from '../../detect/detector';
 import { RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from '../../api/rate-budget';
 import { isTrendPage } from '../../dom/trend-reader';
-import { isMuteOutcome } from '../../types/domain';
+import { isMuteOutcome, BURST_WINDOW_CHOICES } from '../../types/domain';
 import type {
   AccountHandle,
   Candidate,
@@ -251,16 +251,17 @@ export function describeEmpty(hasIndex: boolean, foldedCount = 0): string {
 const MINUTES_PER_DAY = 60 * 24;
 
 /**
- * 「投稿から何分以内」で選べる値（分）。**等間隔ではない。**
+ * 「投稿から何分以内」で選べる値（分）。**定義は `types/domain.ts` にある。**
  *
- * 短い側は 1 時間刻みで細かく、長い側は日単位まで伸ばす。組織票の
- * signature は「投稿から間もない集中」だが、**手口を知られれば時刻はずらせる**
- * ので、遅い側も見られる必要がある（burst.ts のヘッダー）。
+ * 取得層（`scanner.ts` の `collectLikes`）が最大値を必要とするため移した。
+ * 100 件を超える記事は末尾から遡って取るので、どこまで遡るかが
+ * 「ユーザーが選びうる最大の窓」で決まる。**UI と取得層に同じ目盛りを 2 つ持つと、
+ * 片方だけ直して「選べるのに測れない窓」ができる。**
  *
- * スライダーは**この配列の添字**を値にする。分そのものを value にすると、
- * 60→2880 を等間隔の目盛りに載せられない。
+ * ここで再 export しているのは、呼び出し側（popup-page とテスト）を
+ * 書き換えずに済ませるため。
  */
-export const BURST_WINDOW_CHOICES = [60, 120, 180, 360, 720, MINUTES_PER_DAY, MINUTES_PER_DAY * 2];
+export { BURST_WINDOW_CHOICES };
 
 /** 幅の表示。1 日以上は日で言う（「1440 分」は読めない） */
 export function describeWindow(minutes: number): string {

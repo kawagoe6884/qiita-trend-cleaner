@@ -325,6 +325,35 @@ describe('windowShare', () => {
     expect(windowShare(index, HIT, 60)).toEqual({ cluster: 2, total: 2 });
   });
 
+  /**
+   * 100 件を超える記事は末尾から遡って取るので、**真ん中が欠けたまま
+   * 「投稿から N 分後までは全部」**という形になる。「全部持っているか」では
+   * 完全性を判定できず、そのままだと永久に測れない。
+   */
+  function tailFetched(n: number, minutesAfterPost: number, reach: number): LikeRecord {
+    return record(n, minutesAfterPost, { itemTotalLikes: 250, itemCoveredMinutes: reach });
+  }
+
+  it('窓を覆っていれば、全部持っていなくても測れる', () => {
+    // Arrange — 総数 250 のうち 2 人ぶんしか持っていないが、300 分後までは全部
+    const index: LikeIndex = {
+      'example-liker-1': entry([tailFetched(1, 10, 300), tailFetched(2, 10, 300)]),
+      'example-liker-2': entry([tailFetched(1, 10, 300), tailFetched(2, 10, 300)]),
+    };
+    // Act & Assert — 180 分は 300 分の内側
+    expect(windowShare(index, HIT, 180)).toEqual({ cluster: 2, total: 2 });
+  });
+
+  it('窓が覆った範囲を超えていれば測らない', () => {
+    // Arrange — 同じデータでも 720 分は 300 分の外側。**そこは取りこぼしている**
+    const index: LikeIndex = {
+      'example-liker-1': entry([tailFetched(1, 10, 300), tailFetched(2, 10, 300)]),
+      'example-liker-2': entry([tailFetched(1, 10, 300), tailFetched(2, 10, 300)]),
+    };
+    // Act & Assert
+    expect(windowShare(index, HIT, 720)).toBeNull();
+  });
+
   it('投稿より前のいいね（データ不整合）は分母からも除く', () => {
     // Arrange — **部外者の唯一のいいねを Δ<0 にする。**クラスタ側に置くと、
     // その人は別の記事で窓内に入るので、除外されたか判別できない。

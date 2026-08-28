@@ -25,13 +25,15 @@ import { RateLimitError } from '../lib/errors';
 import { updateBadge } from '../lib/badge';
 import { authorsToVisit, recordVisits, pruneVisits } from './author-visits';
 import { fetchLikes, fetchUserItems } from '../api/qiita-client';
-import { decideMode } from '../api/rate-budget';
+import { decideMode, API_PER_PAGE } from '../api/rate-budget';
 import {
   mergeLikeIndex,
   purgeLikeIndex,
   countRecords,
   isWithinRetention,
+  toEpochMs,
 } from '../detect/like-index';
+import { MAX_BURST_WINDOW_MINUTES } from '../types/domain';
 import { detectCandidates } from '../detect/detector';
 import * as storage from '../lib/storage';
 import type { RateState } from '../api/rate-budget';
@@ -68,6 +70,7 @@ function foldLikes(
   item: TrendItem,
   likes: QiitaLike[],
   totalCount: number | null,
+  coveredMinutes: number | null,
 ): number {
   for (const like of likes) {
     const handle = like.user.id;
@@ -87,6 +90,9 @@ function foldLikes(
       // ヘッダーが欠けたらフィールドごと付けず「不明」に倒す
       // （exactOptionalPropertyTypes のため undefined 代入はできない）
       ...(totalCount === null ? {} : { itemTotalLikes: totalCount }),
+      // **末尾から遡ったときだけ入る。**「投稿から何分後までを全部持っているか」。
+      // 1 ページに収まったときは付けない（そちらは itemTotalLikes で判定できる）
+      ...(coveredMinutes === null ? {} : { itemCoveredMinutes: coveredMinutes }),
     });
     index[handle] = entry;
   }
@@ -142,6 +148,99 @@ function haltOnRateLimit(progress: ScanProgress, error: RateLimitError): ScanPro
   return { ...progress, rateLimited: true, resetAt: error.resetAt };
 }
 
+/**
+ * 末尾から遡るページ数の上限。
+ *
+ * ライトモードの枠は 60 req/h で 1 スキャン約 30 req。1 記事に無制限に使うと
+ * 他の記事が取れなくなる。**打ち切ったことは coveredMinutes に現れる**ので、
+ * 狭い範囲を黙って「完全」と報告することはない。
+ */
+const MAX_TAIL_PAGES = 4;
+
+const MS_PER_MINUTE = 60 * 1000;
+
+/** 降順のページで最も新しい要素の、投稿からの経過（分）。求まらなければ null */
+function newestDeltaMinutes(likes: QiitaLike[], postedMs: number): number | null {
+  const newest = likes[0];
+  if (newest === undefined) return null;
+  const liked = toEpochMs(newest.created_at);
+  return liked === null ? null : Math.round((liked - postedMs) / MS_PER_MINUTE);
+}
+
+interface CollectedLikes {
+  likes: QiitaLike[];
+  rate: RateState | null;
+  totalCount: number | null;
+  /** 投稿から何分後までを全部持っているか。**全部持っているなら null** */
+  coveredMinutes: number | null;
+}
+
+/**
+ * 記事 1 件の likes を、**投稿直後を含む形で**集める。
+ *
+ * 【なぜ 1 ページで足りないのか】
+ * likes は降順（新しい順）で返るので `page=1` は「最も新しい 100 件」。
+ * 100 件を超える記事では**投稿直後のいいねが 1 件も入らない**（2026-08-25 実測:
+ * 642 いいねの記事で 180 分以内が 0/100 件、最終ページには 5/42 件）。
+ * `burstScore` も窓内占有率もそこにしか意味が無く、**エラーは 1 行も出ない。**
+ *
+ * 最終ページから遡り、**そのページで最も新しいいいねが
+ * `MAX_BURST_WINDOW_MINUTES` を超えたら打ち切る。**ユーザーが選びうる最大の窓を
+ * 覆えば、それ以上は判定に使われない。並びが単調降順であることは実測済み。
+ *
+ * **100 件以下なら今までと同じ 1 リクエストで完全。**追加コストは大きい記事だけ。
+ */
+async function collectLikes(item: TrendItem, token: string | null): Promise<CollectedLikes> {
+  const first = await fetchLikes(item.itemId, token);
+  const total = first.totalCount;
+  const postedMs = toEpochMs(item.publishedAt);
+  const lastPage = total === null ? 1 : Math.ceil(total / API_PER_PAGE);
+
+  // 1 ページに収まった / 総数が不明 / 投稿時刻が読めない → 遡らない。
+  // **投稿時刻が無いと打ち切りの判断ができず、枠だけ使って終わる**
+  if (lastPage <= 1 || postedMs === null) {
+    return { likes: first.data, rate: first.rate, totalCount: total, coveredMinutes: null };
+  }
+
+  // ページ境界は取得中に増えたいいねでずれる。**user.id で重複排除する**
+  const byUser = new Map<string, QiitaLike>();
+  for (const like of first.data) byUser.set(like.user.id, like);
+
+  let rate = first.rate;
+  let covered: number | null = null;
+  let complete = false;
+
+  for (let i = 0; i < MAX_TAIL_PAGES; i += 1) {
+    const page = lastPage - i;
+    if (page < 2) {
+      // 2 ページ目まで遡った = page=1 と合わせて全部持っている
+      complete = true;
+      break;
+    }
+    const res = await fetchLikes(item.itemId, token, page);
+    rate = res.rate ?? rate;
+    for (const like of res.data) byUser.set(like.user.id, like);
+
+    const delta = newestDeltaMinutes(res.data, postedMs);
+    // 時刻が読めなければ判断材料が無い。**進めても覆った範囲を主張できない**
+    if (delta === null) break;
+    covered = delta;
+    if (delta > MAX_BURST_WINDOW_MINUTES) break;
+  }
+
+  if (!complete && (covered === null || covered <= MAX_BURST_WINDOW_MINUTES)) {
+    // 上限まで遡っても最大の窓を覆えなかった。**黙って切らない**（想定内なので debug）
+    logger.debug('like pages truncated:', item.itemId, 'covered minutes:', covered);
+  }
+
+  return {
+    likes: [...byUser.values()],
+    rate,
+    totalCount: total,
+    coveredMinutes: complete ? null : covered,
+  };
+}
+
 /** 記事 1 件の likers を取得してインデックスに畳む */
 async function scanOneItem(
   item: TrendItem,
@@ -151,13 +250,14 @@ async function scanOneItem(
   progress: ScanProgress,
 ): Promise<ScanProgress> {
   try {
-    const response = await fetchLikes(item.itemId, token);
+    const response = await collectLikes(item, token);
     seen.add(item.itemId);
     return {
       ...progress,
       rate: response.rate ?? progress.rate,
       likeRecordCount:
-        progress.likeRecordCount + foldLikes(index, item, response.data, response.totalCount),
+        progress.likeRecordCount +
+        foldLikes(index, item, response.likes, response.totalCount, response.coveredMinutes),
       scannedItemCount: progress.scannedItemCount + 1,
     };
   } catch (error) {

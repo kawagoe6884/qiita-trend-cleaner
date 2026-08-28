@@ -142,6 +142,8 @@ export function windowShare(
   const held = new Map<ItemId, number>();
   /** 記事ごとの、取得時の総いいね数（Total-Count） */
   const totals = new Map<ItemId, number>();
+  /** 記事ごとの、投稿から何分後までを全部持っているか */
+  const covered = new Map<ItemId, number>();
 
   /**
    * 窓内に根拠記事のどれかをいいねしたアカウント。**実人数を数える。**
@@ -161,6 +163,13 @@ export function windowShare(
         // 古い値を採ると「揃っている」と誤判定する
         totals.set(record.itemId, Math.max(totals.get(record.itemId) ?? 0, record.itemTotalLikes));
       }
+      if (record.itemCoveredMinutes !== undefined) {
+        // 再取得でより広く覆えていれば新しい方が正しい
+        covered.set(
+          record.itemId,
+          Math.max(covered.get(record.itemId) ?? 0, record.itemCoveredMinutes),
+        );
+      }
 
       const liked = toEpochMs(record.likedAt);
       const posted = toEpochMs(record.itemPostedAt);
@@ -175,6 +184,12 @@ export function windowShare(
 
   // **1 記事でも取りこぼしていれば測らない。**部分的な分母は過大な占有率を出す
   for (const itemId of shared) {
+    // **窓の範囲を覆っていれば、全部持っている必要は無い。**
+    // 100 件を超える記事は末尾から遡って取るので、真ん中が欠けたまま
+    // 「投稿から N 分後までは全部」という形になる（scanner の collectLikes）
+    const reach = covered.get(itemId);
+    if (reach !== undefined && windowMinutes <= reach) continue;
+
     const count = held.get(itemId) ?? 0;
     const known = totals.get(itemId);
     if (known !== undefined) {
