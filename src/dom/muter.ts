@@ -173,13 +173,30 @@ function isMuteLabel(text: string | null): boolean {
  * ミュートの項目だけを返す。一致しなければ null。
  *
  * 既にミュート済みなら文言が解除側に変わって一致せず、**何も押さない。**
- * 解除の文言は実装に持ち込まない（持ち込むとそれを押す経路ができる）。
+ * **押す対象を決めるのはこの関数だけ**で、ここは `MENU_TEXT.mute` しか見ない。
  */
 export function findMuteItem(menu: ParentNode): HTMLElement | null {
   for (const item of menu.querySelectorAll<HTMLElement>(SELECTORS.menuItem)) {
     if (isMuteLabel(item.textContent)) return item;
   }
   return null;
+}
+
+/**
+ * 解除側の項目があるか。**あれば「いまミュート中」という事実。**
+ *
+ * ⚠️ **要素ではなく boolean を返す。**要素を返すと呼び出し側が押せてしまう。
+ * 押せない形で返すことが、「解除の文言は読むためだけに持つ」という約束を
+ * コードで担保する唯一の方法（`MENU_TEXT.unmute` の JSDoc）。
+ *
+ * 押す経路は `findMuteItem` 1 本のままで、そこは `endsWith(MENU_TEXT.mute)`
+ * なので解除側には決して一致しない。
+ */
+export function isAlreadyMuted(menu: ParentNode): boolean {
+  for (const item of menu.querySelectorAll<HTMLElement>(SELECTORS.menuItem)) {
+    if ((item.textContent ?? '').trim().endsWith(MENU_TEXT.unmute)) return true;
+  }
+  return false;
 }
 
 /**
@@ -233,8 +250,13 @@ export async function muteAuthor(
     if (menu === null) return 'menu-unavailable';
 
     const item = findMuteItem(menu);
-    // 一致しなければ何も押さない。既にミュート済みならここに来る
-    if (item === null) return 'menu-unavailable';
+    if (item === null) {
+      // 一致しなければ何も押さない。**押さないまま、なぜ無いのかだけ見分ける** —
+      // 解除側があるなら「いまミュート中」という事実で、画面構造の変化ではない。
+      // ここを分けないと、UI が「既にミュート済みか、構造が変わったか」と
+      // 推測を並べるしかなくなる（2026-08-29 の方針転換）
+      return isAlreadyMuted(menu) ? 'already-muted' : 'menu-unavailable';
+    }
 
     // **器ではなく中身を押す。**li を押しても何も起きない（actionOf の理由）
     actionOf(item).click();

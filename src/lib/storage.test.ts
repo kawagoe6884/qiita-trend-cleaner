@@ -553,6 +553,32 @@ describe('recordMuteOutcome の mutedAt', () => {
     expect(log['example-author-a']?.mutedAt).toBeUndefined();
   });
 
+  it('already-muted でも立つ（押していないが、ミュート中だと確認できている）', async () => {
+    // Arrange — 拡張は押していない。メニューの項目が解除側だっただけ。
+    // **mutedAt は「いつ押したか」ではなく「いつミュート中だと確認できたか」**
+    // Act
+    const log = await storage.recordMuteOutcome('example-author-a', 'already-muted', FIRST);
+    // Assert
+    expect(log['example-author-a']?.mutedAt).toBe('2026-08-24T12:00:00.000Z');
+  });
+
+  it('already-muted は確認のたびに更新する', async () => {
+    // Arrange — 1 時間後にもう一度「妥当」を押して、まだミュート中だと分かった
+    await storage.recordMuteOutcome('example-author-a', 'muted', FIRST);
+    // Act
+    const log = await storage.recordMuteOutcome('example-author-a', 'already-muted', SECOND);
+    // Assert — 確認できた最新の時刻に進む
+    expect(log['example-author-a']?.mutedAt).toBe('2026-08-24T13:00:00.000Z');
+  });
+
+  it('menu-unavailable では立たない（画面構造の変化は確認ではない）', async () => {
+    // Arrange — already-muted と混ぜると、壊れているのに「ミュート中」と記録する
+    // Act
+    const log = await storage.recordMuteOutcome('example-author-a', 'menu-unavailable', FIRST);
+    // Assert
+    expect(log['example-author-a']?.mutedAt).toBeUndefined();
+  });
+
   it('成功し直したら更新する', async () => {
     await storage.recordMuteOutcome('example-author-a', 'muted', FIRST);
     const log = await storage.recordMuteOutcome('example-author-a', 'muted', SECOND);

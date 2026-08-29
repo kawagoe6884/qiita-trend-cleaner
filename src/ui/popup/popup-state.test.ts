@@ -418,9 +418,20 @@ describe('describeMuteOutcome', () => {
     expect(texts.filter((text) => /不正|スパム|悪質/.test(text))).toEqual([]);
   });
 
-  it('既にミュート済みの可能性を隠さずに書く', () => {
-    // 見分けようとすると解除の文言を実装に持ち込むことになり、押す経路ができる
-    expect(describeMuteOutcome('menu-unavailable')).toContain('既にミュート済み');
+  it('menu-unavailable では既にミュート済みの可能性を並べない', () => {
+    // **2026-08-29 に逆転した。**解除側の文言を読んで already-muted を返すように
+    // なったので、menu-unavailable は画面構造の変化だけを指す。ここに推測を
+    // 残すと、直すべき不具合が「ミュート済みかも」で薄まる
+    const text = describeMuteOutcome('menu-unavailable');
+    expect(text).not.toContain('既にミュート済み');
+    expect(text).toContain('画面構造');
+  });
+
+  it('already-muted は拡張が押していないことが分かる文言にする', () => {
+    // 「ミュートしました」だけだと、拡張が操作したように読める
+    const text = describeMuteOutcome('already-muted');
+    expect(text).toContain('既に');
+    expect(text).not.toContain('画面構造');
   });
 });
 
@@ -583,12 +594,21 @@ describe('describeMuteRecord', () => {
     expect(describeMuteRecord(record)).not.toContain('ミュート設定');
   });
 
-  it('成功の記録があれば、menu-unavailable でも言い切る', () => {
-    // Arrange — 推測混じりの「〜か、画面構造が変わった可能性」にしない
+  it('成功の記録があっても、menu-unavailable は言い換えない', () => {
+    // Arrange — **2026-08-29 に逆転した。**以前は「既にミュート済みなら
+    // menu-unavailable に落ちる」ことを根拠に言い換えていたが、その前提が
+    // already-muted の新設で消えた。いま menu-unavailable まで言い換えると、
+    // **画面構造が変わったことを「ミュート済みです」で隠す**
     const record = { outcome: 'menu-unavailable' as const, at: AT, mutedAt: AT };
     // Act & Assert
-    expect(describeMuteRecord(record)).toContain('ミュート済み');
-    expect(describeMuteRecord(record)).not.toContain('画面構造');
+    expect(describeMuteRecord(record)).toContain('画面構造');
+  });
+
+  it('already-muted は押していないことが記録の文言にも出る', () => {
+    // Arrange — 押していないので「ミュートしました」にはしない
+    const record = { outcome: 'already-muted' as const, at: AT, mutedAt: AT };
+    // Act & Assert
+    expect(describeMuteRecord(record)).toBe(describeMuteOutcome('already-muted'));
   });
 
   it('成功の記録が無ければ、従来どおり押し直しを促す', () => {

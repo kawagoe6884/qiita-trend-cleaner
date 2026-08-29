@@ -221,6 +221,10 @@ export async function getMuteLog(): Promise<MuteLog> {
  * なっても取り消されない（ミュートすると Qiita が記事をトレンドから外すので、
  * 押し直すと必ず `not-on-page` になる）。上書きすると UI が
  * 「まだミュートできていない」と誤って案内する。
+ *
+ * **`already-muted` でも mutedAt を立てる。**押してはいないが、メニューの文言が
+ * 解除側だったのだから**その時点でミュート中だと確認できている**。
+ * `mutedAt` は「いつ押したか」ではなく「**いつミュート中だと確認できたか**」。
  */
 export async function recordMuteOutcome(
   handle: AccountHandle,
@@ -229,7 +233,8 @@ export async function recordMuteOutcome(
 ): Promise<MuteLog> {
   const at = now.toISOString();
   const previous = await getMuteLog();
-  const mutedAt = outcome === 'muted' ? at : previous[handle]?.mutedAt;
+  const confirmed = outcome === 'muted' || outcome === 'already-muted';
+  const mutedAt = confirmed ? at : previous[handle]?.mutedAt;
   const muteLog: MuteLog = {
     ...previous,
     [handle]: mutedAt === undefined ? { outcome, at } : { outcome, at, mutedAt },

@@ -34,6 +34,39 @@ describe('MENU_TEXT', () => {
     expect(MENU_TEXT.mute.includes(MENU_TEXT.block)).toBe(false);
     expect(MENU_TEXT.block.includes(MENU_TEXT.mute)).toBe(false);
   });
+
+  /**
+   * 解除側の文言（2026-08-29 に追加）。**読むためだけに持つ。**
+   *
+   * `findMuteItem` は `endsWith(MENU_TEXT.mute)` で押す対象を決める。
+   * ここが崩れると**解除を押してミュートを外す** — つまり「妥当」と評価した
+   * 著者がトレンドに戻ってくる。文言が変わったら気づけるよう機械的に固定する。
+   */
+  it('解除の文言はミュートの文言で終わらない（endsWith で選んでも押さない）', () => {
+    expect(MENU_TEXT.unmute.endsWith(MENU_TEXT.mute)).toBe(false);
+  });
+
+  it('ミュートの文言は解除の文言で終わらない（逆向きも塞ぐ）', () => {
+    expect(MENU_TEXT.mute.endsWith(MENU_TEXT.unmute)).toBe(false);
+  });
+
+  it('ブロックと解除も別物である', () => {
+    expect(MENU_TEXT.unmute).not.toBe(MENU_TEXT.block);
+    expect(MENU_TEXT.unmute.includes(MENU_TEXT.block)).toBe(false);
+  });
+
+  /**
+   * ユーザーページの文言（「ミュートする」「ミュートを解除する」）は**持たない。**
+   * 拡張はユーザーページを開かないうえ、**両ページの文言が一文字も重ならないこと
+   * 自体が、誤ってその DOM を掴んでも何も押さない保証**になっている。
+   */
+  it('ユーザーページの文言を持ち込んでいない', () => {
+    const values: string[] = Object.values(MENU_TEXT);
+    expect(values).not.toContain('ミュートする');
+    expect(values).not.toContain('ミュートを解除する');
+    // 末尾一致で選ぶので、「ミュートする」で終わる値があってはならない
+    expect(values.filter((value) => value.endsWith('ミュートする'))).toEqual([]);
+  });
 });
 
 describe('readSnackbarMessage', () => {

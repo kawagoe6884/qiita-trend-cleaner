@@ -539,12 +539,16 @@ export async function requestMute(handle: AccountHandle, now: Date): Promise<Mut
  * outcome だけを見ると「次に出てきたときに押し直してください」と案内してしまうが、
  * **ミュート済みの著者はもう出てこない。**起こり得ないことを促す文言だった。
  *
- * `menu-unavailable` も同じで、成功の記録があるなら「既にミュート済み」と
- * 言い切ってよい（推測混じりの「〜か、画面構造が変わった可能性」にしない）。
+ * 【`menu-unavailable` を特例から外した】（2026-08-29）
+ * 以前は「既にミュート済みなら `menu-unavailable` に落ちる」ことを根拠に、
+ * ここで言い換えていた。**その前提が成立しなくなった** — 解除側の文言を読んで
+ * `already-muted` を返すようになったので、`menu-unavailable` は**本当に画面
+ * 構造が変わったときだけ**に絞られる。言い換えを続けると、直すべき不具合を
+ * 「ミュート済みです」で隠してしまう。
  */
 export function describeMuteRecord(record: MuteRecord): string {
   if (record.mutedAt === undefined) return describeMuteOutcome(record.outcome);
-  if (record.outcome === 'not-on-page' || record.outcome === 'menu-unavailable') {
+  if (record.outcome === 'not-on-page') {
     return 'ミュート済みです。ミュートした著者の記事はトレンドから外れるので、ここには出てきません。';
   }
   return describeMuteOutcome(record.outcome);
@@ -562,12 +566,19 @@ export function describeMuteOutcome(outcome: MuteOutcome): string {
   switch (outcome) {
     case 'muted':
       return 'Qiita 側でミュートしました。';
+    case 'already-muted':
+      // **押していない。**メニューの項目が解除側だったので、その時点で
+      // ミュート中だと確認できた。**解除の導線はここに書かない**
+      // （最終スキャンの下に常設してある。候補の数だけ同じ文が並ぶのを避ける）
+      return '既に Qiita 側でミュート済みでした。';
     case 'not-on-page':
       return 'いま開いているトレンドページにこの著者の記事が無いため、ミュートできませんでした。次に出てきたときに押し直してください。';
     case 'no-trend-tab':
       return 'トレンドページを開いてから押してください。';
     case 'menu-unavailable':
-      return 'ミュートのメニューが見つかりませんでした。既にミュート済みか、Qiita の画面構造が変わった可能性があります。';
+      // **「既にミュート済みか」を外した。**それは already-muted で言い分ける
+      // ようになったので、ここに残すと直すべき不具合を推測で薄めることになる
+      return 'ミュートのメニューが見つかりませんでした。Qiita の画面構造が変わった可能性があります。';
     case 'timeout':
       return '完了の通知を確認できませんでした。ミュート設定で結果を確認してください。';
     case 'unreachable':

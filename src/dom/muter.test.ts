@@ -28,7 +28,14 @@ const ITEM = {
   mute: { key: 'mute', icon: ICON.mute, label: MENU_TEXT.mute },
   /** アイコンが無い素のラベル。将来アイコンを外されても動くこと */
   mutePlain: { key: 'mute-plain', icon: '', label: MENU_TEXT.mute },
-  /** 既にミュート済みのときに出る側。**実装は知らないが、テストは知っていてよい** */
+  /**
+   * 既にミュート済みのときに出る側。
+   *
+   * **`MENU_TEXT.unmute` を参照せず実測値を直書きする。**定数を使うと、
+   * 定数そのものを書き換える変異を検査できなくなる（実装とテストが同じ値を
+   * 見て一致してしまう）。2026-08-29 に実装もこの文言を持つようになったが、
+   * **テスト側は独立した実測値のままにしておく。**
+   */
   unmute: { key: 'unmute', icon: ICON.unmute, label: '投稿ユーザーのミュートを解除' },
   /** 接尾辞が付いた形。**includes で選ぶ実装はここで解除を押す** */
   muteSuffixed: { key: 'mute-suffixed', icon: ICON.unmute, label: `${MENU_TEXT.mute}を解除` },
@@ -229,12 +236,23 @@ describe('muteAuthor', () => {
     expect(itemClicks()).toEqual(['mute-plain-1']);
   });
 
-  it('「ミュートを解除」しか無ければ何もクリックしない', async () => {
+  it('「ミュートを解除」しか無ければ何もクリックせず、ミュート中と判定する', async () => {
     // Arrange — 既にミュート済みの状態
     mountCard(1, { items: [ITEM.follow, ITEM.block, ITEM.unmute] });
     // Act
     const outcome = await muteAuthor('example-author-1', document, TIMEOUT_MS);
-    // Assert
+    // Assert — **押さないことは変えていない。**変わったのは「なぜ押さなかったか」を
+    // 言えるようになった点だけ（2026-08-29）
+    expect(outcome).toBe('already-muted');
+    expect(itemClicks()).toEqual([]);
+  });
+
+  it('どちらの文言も無ければ menu-unavailable（画面構造の変化）', async () => {
+    // Arrange — ミュートも解除も無い = Qiita 側が変わった
+    mountCard(1, { items: [ITEM.follow, ITEM.block] });
+    // Act
+    const outcome = await muteAuthor('example-author-1', document, TIMEOUT_MS);
+    // Assert — already-muted と混ぜない。混ぜると直すべき不具合が隠れる
     expect(outcome).toBe('menu-unavailable');
     expect(itemClicks()).toEqual([]);
   });
