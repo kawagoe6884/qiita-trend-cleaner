@@ -255,4 +255,4 @@ CLAUDE.md の設計上の約束 4 も訂正した。
 
 *Generated: 2026-08-19*
 *Plan: `.claude/PRPs/plans/completed/token-settings-ui.plan.md`*
-*Source PRD: `.claude/PRPs/prds/qiita-trend-guard.prd.md` — Phase 3*
+*Source PRD: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md` — Phase 3*

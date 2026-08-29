@@ -22,7 +22,7 @@ So that 自分の基準で絞り込み、その結果が当たっていたかを
 ## Metadata
 
 - **Complexity**: Medium
-- **Source PRD**: `.claude/PRPs/prds/qiita-trend-guard.prd.md`（改訂 6・Phase 9）
+- **Source PRD**: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md`（改訂 6・Phase 9）
 - **PRD Phase**: Phase 9 判定基準をユーザーに開放する
 - **Estimated Files**: 実装 7 / テスト 5 / ドキュメント 2 = **14 ファイル**
 - **Depends**: Phase 8（complete）
@@ -362,7 +362,7 @@ expect(conditions).toBeLessThan(list);
 | `src/lib/storage.test.ts` | UPDATE | 新項目の検証・**0 が既定値に倒れないこと**・`foldTarget` |
 | `src/ui/popup/popup-state.test.ts` | UPDATE | `partitionViews` / `describeFold` / `foldNote` / `describeScores` |
 | `src/ui/popup/popup-page.test.ts` | UPDATE | `setupDom()` 更新 / スライダー 2 本 / 折りたたみの操作 / レイアウト順序 |
-| `.claude/PRPs/prds/qiita-trend-guard.prd.md` | UPDATE | Phase 表を complete に |
+| `.claude/PRPs/prds/qiita-trend-cleaner.prd.md` | UPDATE | Phase 表を complete に |
 | `CLAUDE.md` | UPDATE | 現在地の表 / 教訓 |
 
 ## NOT Building

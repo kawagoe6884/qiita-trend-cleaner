@@ -21,7 +21,7 @@ So that 組織ぐるみの相互いいねを取りこぼさない.
 ## Metadata
 
 - **Complexity**: Medium
-- **Source PRD**: `.claude/PRPs/prds/qiita-trend-guard.prd.md`
+- **Source PRD**: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md`
 - **PRD Phase**: Phase 5b-2（OQ-18 + OQ-19）
 - **調査**: [cross-author-collusion-investigation.md](../reports/cross-author-collusion-investigation.md)
 - **Estimated Files**: 12（新規 2 / 更新 10）

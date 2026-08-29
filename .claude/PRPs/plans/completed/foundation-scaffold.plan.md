@@ -19,7 +19,7 @@ So that **以降のフェーズが「動くかどうか」ではなく「何を�
 ## Metadata
 
 - **Complexity**: **Medium**（新規ファイル 18 件前後、ロジックは薄いが規約決定が多い）
-- **Source PRD**: `.claude/PRPs/prds/qiita-trend-guard.prd.md`
+- **Source PRD**: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md`
 - **PRD Phase**: Phase 2 — 基盤構築
 - **Estimated Files**: 18 (すべて CREATE)
 - **Dependencies**: なし（PRD 上 Phase 2 は依存なし。Phase 1 は complete）
@@ -33,7 +33,7 @@ So that **以降のフェーズが「動くかどうか」ではなく「何を�
 ```
 $ ls -R
 Qiita API v2.txt
-.claude/PRPs/prds/qiita-trend-guard.prd.md
+.claude/PRPs/prds/qiita-trend-cleaner.prd.md
 ```
 
 したがって本計画の「Patterns」セクションは、**発見したパターンではなく、これから確立し以降のフェーズが踏襲するパターン**である。実在しないファイルへの `SOURCE:` 参照は一切書かない。以降のフェーズの計画では、本フェーズで作られた実ファイルを `SOURCE:` として参照すること。
@@ -92,7 +92,7 @@ Qiita API v2.txt
 
 | Priority | File | Lines | Why |
 |---|---|---|---|
-| **P0** | `.claude/PRPs/prds/qiita-trend-guard.prd.md` | 「DOM セレクタ戦略」節 | **`.style-*` 使用禁止の根拠と代替セレクタの優先順位。Task 6 の全内容がここに依存** |
+| **P0** | `.claude/PRPs/prds/qiita-trend-cleaner.prd.md` | 「DOM セレクタ戦略」節 | **`.style-*` 使用禁止の根拠と代替セレクタの優先順位。Task 6 の全内容がここに依存** |
 | **P0** | 同上 | 「Architecture Notes」「ストレージ設計」節 | service worker / content script の責務分担、`storage.local` と `storage.sync` の使い分け、データ構造 |
 | **P1** | 同上 | 「Technical Risks」表 | フェイルセーフ方針（取得失敗時は**何もしない**）。Task 6 の設計方針 |
 | **P1** | 同上 | 「Implementation Phases」表 | Phase 3〜10 が本フェーズの成果物に何を期待しているか |
@@ -880,4 +880,4 @@ EXPECT: `permissions: ["storage","alarms"]`、`host_permissions: ["https://qiita
 ---
 
 *Generated: 2026-08-18*
-*Source: `.claude/PRPs/prds/qiita-trend-guard.prd.md` — Phase 2*
+*Source: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md` — Phase 2*

@@ -224,4 +224,4 @@ Console にログが出ていなかったのは、**DevTools をページ読み�
 
 *Generated: 2026-08-18*
 *Plan: `.claude/PRPs/plans/completed/foundation-scaffold.plan.md`*
-*Source PRD: `.claude/PRPs/prds/qiita-trend-guard.prd.md` — Phase 2*
+*Source PRD: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md` — Phase 2*

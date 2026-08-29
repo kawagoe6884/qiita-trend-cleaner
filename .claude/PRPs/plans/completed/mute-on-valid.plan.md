@@ -19,7 +19,7 @@ So that 拡張が入っていない環境でもトレンドから消え、手動
 ## Metadata
 
 - **Complexity**: **Large**（13 ファイル・新規 1 モジュール・新しい経路が 2 本）
-- **Source PRD**: `.claude/PRPs/prds/qiita-trend-guard.prd.md`
+- **Source PRD**: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md`
 - **PRD Phase**: Phase 8 — 一括ミュート実行
 - **Estimated Files**: 13（実装 8 / テスト 5）
 

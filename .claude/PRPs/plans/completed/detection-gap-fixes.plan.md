@@ -21,7 +21,7 @@ So that 記事が複数ある著者を取りこぼさずに検出できる.
 ## Metadata
 
 - **Complexity**: Medium
-- **Source PRD**: `.claude/PRPs/prds/qiita-trend-guard.prd.md`
+- **Source PRD**: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md`
 - **PRD Phase**: Phase 5b（1/2）
 - **調査**: [cross-author-collusion-investigation.md](../reports/cross-author-collusion-investigation.md)
 - **Estimated Files**: 10（新規 2 / 更新 8）

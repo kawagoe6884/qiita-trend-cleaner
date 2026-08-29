@@ -389,4 +389,4 @@ H-1 の修正で「多層防御」としてエンコードを入れたが、**`e
 
 *Generated: 2026-08-19*
 *Plan: `.claude/PRPs/plans/completed/data-fetch-layer.plan.md`*
-*Source PRD: `.claude/PRPs/prds/qiita-trend-guard.prd.md` — Phase 4*
+*Source PRD: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md` — Phase 4*

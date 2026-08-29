@@ -19,7 +19,7 @@ So that 利用規約に触れずに組織票検出の材料が揃い、トーク
 ## Metadata
 
 - **Complexity**: Large
-- **Source PRD**: `.claude/PRPs/prds/qiita-trend-guard.prd.md`（改訂 4）
+- **Source PRD**: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md`（改訂 4）
 - **PRD Phase**: Phase 4 — データ取得層
 - **Estimated Files**: 15（CREATE 13 / UPDATE 2）
 - **Depends**: Phase 2（complete）
@@ -58,7 +58,7 @@ So that 利用規約に触れずに組織票検出の材料が揃い、トーク
 | P1 | `src/content/content-script.ts` | 9-33 | **境界で型ガードを使う**パターン。外部データ検証の手本 |
 | P2 | `tsconfig.json` | 全 22 行 | `noUncheckedIndexedAccess` / `exactOptionalPropertyTypes` / `verbatimModuleSyntax` が実装を縛る |
 | P2 | `eslint.config.js` | 全 21 行 | `no-console` / `no-explicit-any` / `consistent-type-imports` が error |
-| P2 | `.claude/PRPs/prds/qiita-trend-guard.prd.md` | 「レート制限の試算」「トークンの有無によるモード」「API 制約」 | モード定義の一次情報 |
+| P2 | `.claude/PRPs/prds/qiita-trend-cleaner.prd.md` | 「レート制限の試算」「トークンの有無によるモード」「API 制約」 | モード定義の一次情報 |
 
 ---
 
@@ -787,4 +787,4 @@ CLAUDE.md の設計上の約束 9 に対応する。ライトとフルの違い�
 ---
 
 *Generated: 2026-08-19*
-*Source PRD: `.claude/PRPs/prds/qiita-trend-guard.prd.md` — Phase 4*
+*Source PRD: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md` — Phase 4*

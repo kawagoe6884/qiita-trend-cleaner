@@ -21,7 +21,7 @@ So that 閾値を勘ではなく実測した適合率で調整できる。
 ## Metadata
 
 - **Complexity**: Large
-- **Source PRD**: `.claude/PRPs/prds/qiita-trend-guard.prd.md`（改訂 6）
+- **Source PRD**: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md`（改訂 6）
 - **PRD Phase**: Phase 6（候補 UI・設定 UI）— depends on 5
 - **Estimated Files**: 新規 4 / 変更 10
 

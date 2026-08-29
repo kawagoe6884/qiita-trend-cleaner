@@ -19,7 +19,7 @@ So that レート枠の制約を理解した上で、検出の射程を自分で
 ## Metadata
 
 - **Complexity**: Medium
-- **Source PRD**: `.claude/PRPs/prds/qiita-trend-guard.prd.md`（改訂 4）
+- **Source PRD**: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md`（改訂 4）
 - **PRD Phase**: Phase 3 — トークン設定 UI
 - **Estimated Files**: 6（CREATE 2 / UPDATE 4）
 - **Depends**: Phase 2（complete）。Phase 4 の `verifyToken` / `storage.saveToken` を利用する（実装済み）
@@ -103,7 +103,7 @@ So that レート枠の制約を理解した上で、検出の射程を自分で
 | P1 | `src/api/rate-budget.ts` | 15-55 | `RATE_LIMIT_ANON` / `RATE_LIMIT_AUTH` / `decideMode`。UI の文言に使う数値の出所 |
 | P1 | `src/lib/storage.test.ts` | 15-45 | storage のテストの書き方（chrome モックは `setup.ts` 任せ） |
 | P2 | `src/test/setup.ts` | 全 51 行 | jsdom + chrome モック。`document` は使えるが `fetch` は各テストで stub する |
-| P2 | `.claude/PRPs/prds/qiita-trend-guard.prd.md` | 「トークンの有無によるモード」 | 文言の一次情報 |
+| P2 | `.claude/PRPs/prds/qiita-trend-cleaner.prd.md` | 「トークンの有無によるモード」 | 文言の一次情報 |
 
 ## External Documentation
 
@@ -535,4 +535,4 @@ Phase 5（検出エンジン）は `storage.getToken()` の結果を直接は見
 ---
 
 *Generated: 2026-08-19*
-*Source PRD: `.claude/PRPs/prds/qiita-trend-guard.prd.md` — Phase 3*
+*Source PRD: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md` — Phase 3*

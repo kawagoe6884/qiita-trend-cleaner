@@ -22,7 +22,7 @@ So that ミュートを実行する前から、読みたい記事だけが並ぶ
 ## Metadata
 
 - **Complexity**: Medium
-- **Source PRD**: `.claude/PRPs/prds/qiita-trend-guard.prd.md`
+- **Source PRD**: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md`
 - **PRD Phase**: Phase 7（DOM 非表示）
 - **Estimated Files**: 8（新規 2 / 更新 6）
 

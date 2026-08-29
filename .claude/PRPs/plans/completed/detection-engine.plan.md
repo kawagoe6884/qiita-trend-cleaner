@@ -21,7 +21,7 @@ So that 増え続けるアカウントを手動で潰し続ける運用から解
 ## Metadata
 
 - **Complexity**: Large
-- **Source PRD**: `.claude/PRPs/prds/qiita-trend-guard.prd.md`
+- **Source PRD**: `.claude/PRPs/prds/qiita-trend-cleaner.prd.md`
 - **PRD Phase**: Phase 5（検出エンジン）— depends on 3, 4（両方 complete）
 - **Estimated Files**: 新規 8 / 変更 4
 

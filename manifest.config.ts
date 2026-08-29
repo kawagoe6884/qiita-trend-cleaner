@@ -3,7 +3,7 @@ import pkg from './package.json' with { type: 'json' };
 
 export default defineManifest({
   manifest_version: 3,
-  name: 'Qiita Trend Guard',
+  name: 'Qiita Trend Cleaner',
   version: pkg.version,
   description: 'Qiita のトレンドから、不自然ないいねパターンが検出された記事を隠します。',
   icons: {

@@ -1,5 +1,5 @@
 {
-  "name": "qiita-trend-guard",
+  "name": "qiita-trend-cleaner",
   "version": "0.1.0",
   "private": true,
   "type": "module",
