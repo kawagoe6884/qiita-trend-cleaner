@@ -3,7 +3,6 @@
 Qiita のトレンドから、**不自然ないいねパターン**が見られる記事を検出して隠す Chrome 拡張機能。
 
 > 旧称 **Qiita Trend Guard**。2026-08-29 にリポジトリ名へ合わせて改名しました。
-> 完了済みの計画書・実装レポート（`.claude/PRPs/` 配下）は当時の記録なので旧称のままです。
 
 ## これは何をするか
 
@@ -83,8 +82,12 @@ npm run build
 | `npm run lint`      | ESLint                  |
 | `npm run format`    | Prettier                |
 
-設計と意思決定の記録は [PRD](.claude/PRPs/prds/qiita-trend-cleaner.prd.md) にあります。
-実装の経緯は `.claude/PRPs/plans/completed/` と `.claude/PRPs/reports/` を参照してください。
+設計の意図はソースコードのコメントに書いてあります。**なぜそう書いたか**を残す方針なので、
+`src/dom/selectors.ts`（DOM への依存をここだけに閉じる理由）と `src/detect/`（判定の組み立て）から
+読むのが早いはずです。
+
+> 設計文書（PRD・実装レポート）はこのリポジトリには含めていません。
+> 開発の経緯は別途 Qiita の記事にまとめる予定です。
 
 ## ライセンス
 
