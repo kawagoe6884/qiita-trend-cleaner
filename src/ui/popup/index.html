@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Qiita Trend Cleaner</title>
+    <style>
+      /* 【窓の寸法を変えさせる要因を消す】
+
+         実測（DevTools）:
+           候補あり  scrollHeight 623 → innerWidth 567
+           候補なし  scrollHeight 485 → innerWidth 552
+
+         Chrome は窓の幅を body の幅（552）で決め、**中身が 600px を超えたときだけ**
+         スクロールバーぶんの 15px を外側に足す。ポップアップは右端がツールバーの
+         アイコンに固定されているので、窓が広がると全体が左へ 15px ずれる。
+
+         html に overflow-y: scroll や scrollbar-gutter を書いても直らない。
+         溝の確保自体は効く（候補なしで html.offsetWidth が 537 = 552 − 15）が、
+         **Chrome の窓の寸法決めはそれを見ていない**（実測で確認）。
+
+         そこで min-height で **常に 600px を超えさせ**、スクロールバーを
+         出しっぱなしにする。またがなければ幅は変わらない。
+
+         569 + padding 32 = **601px**。上限 600 をちょうど 1px だけ超える値に
+         してある。超えれば目的は果たせるので、余分に高くすると候補が少ないときの
+         空白が増えるだけになる。padding を変えたらこの値も変えること。 */
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        padding: 16px;
+        width: 520px;
+        min-height: 569px; /* + padding 32px = 601px */
+        line-height: 1.6;
+      }
+      /* display を指定すると hidden 属性（UA の [hidden]{display:none}）が
+         作者スタイルに負けて効かなくなる。必ず明示的に打ち消す */
+      [hidden] {
+        display: none !important;
+      }
+      #notice {
+        border-left: 4px solid currentColor;
+        padding: 8px 12px;
+        margin: 0 0 12px;
+        font-size: 0.9rem;
+      }
+      /* 動作モードとトークンの案内。**上に置く。**
+         下に置くと、なぜトークンを設定するのかが候補の後ろに埋もれる */
+      /* 余白の使い分け:
+           12px = 関係のある要素どうし（見出しと補足など）
+           32px = 区画のあいだ
+         ここは「拡張の状態」と「検出の結果」の境目なので区画の間隔を使う。
+         同じ 12px にすると、トークンの案内が候補の見出しと 1 かたまりに見える */
+      .mode {
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 8px 12px 10px;
+        margin: 0 0 32px;
+      }
+      #mode-title {
+        font-weight: 700;
+        font-size: 0.9rem;
+        margin: 0 0 2px;
+      }
+      #mode-detail {
+        font-size: 0.8rem;
+        margin: 0;
+        opacity: 0.85;
+      }
+      .mode button {
+        margin-top: 8px;
+      }
+      #summary {
+        font-weight: 700;
+        margin: 0;
+      }
+      /* 何をすればよいかの一言。数字の直後に置いて、結果ゾーンの入口にする */
+      #call {
+        margin: 2px 0 0;
+        font-size: 0.85rem;
+      }
+      #last-scan {
+        margin: 0 0 12px;
+        font-size: 0.8rem;
+        opacity: 0.75;
+      }
+      /* 内側にスクロール領域を作らない。ポップアップ全体で 1 本のスクロールにする。
+         入れ子のスクロールは、どちらが動くのか分からなくなる */
+      #candidates {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      /* 折りたたみの中の候補も同じ見た目にする。**候補の行は 2 箇所に出る** */
+      #candidates li,
+      #folded-candidates li {
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+      }
+      #candidates p,
+      #folded-candidates p {
+        margin: 0 0 2px;
+      }
+      .author {
+        font-weight: 700;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .stats {
+        font-size: 0.9rem;
+      }
+      /* 窓内占有率。**候補で唯一のスコア行。**
+         「早い時間帯をこの集団が占めたか」は実測で唯一 2 人の著者を
+         区別できた指標（burstScore は区別できなかった）。
+         空アカウント率の行（.scores）は 2026-08-25 に削除した —
+         比較相手を決めない割合は強さを誤って伝える */
+      .share {
+        font-size: 0.85rem;
+      }
+      /* 著者をまたぐ共起のときだけ出る行。**display は指定しない** —
+         指定すると UA の [hidden]{display:none} に勝ってしまう（Phase 6 で踏んだ） */
+      .co-authors {
+        font-size: 0.85rem;
+      }
+      .evidence {
+        font-size: 0.85rem;
+      }
+      /* 「この検出は [妥当] [誤り]」。**ラベルを左に置く** —
+         ボタンだけだと、何に対する「妥当」なのかが読み取れない */
+      .actions {
+        margin-top: 6px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .verdict-prompt {
+        font-size: 0.85rem;
+      }
+      /* 文中に置く操作。button の既定の見た目を打ち消してリンクに寄せる */
+      .link-button {
+        padding: 0;
+        border: none;
+        background: none;
+        font: inherit;
+        color: inherit;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      button {
+        padding: 4px 14px;
+        font-family: inherit;
+        font-size: 0.9rem;
+        cursor: pointer;
+      }
+      button[aria-pressed='true'] {
+        font-weight: 700;
+        outline: 2px solid currentColor;
+      }
+      #empty {
+        font-size: 0.9rem;
+        opacity: 0.75;
+      }
+      /* 判定の条件は一覧の **上** に置く。下に置くと、ドラッグ中に候補の件数が
+         変わって一覧の高さが変わり、つまみが指の下から逃げてスライドできない */
+      #conditions {
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 6px 12px;
+        margin: 0 0 12px;
+      }
+      #conditions[open] {
+        padding-bottom: 12px;
+      }
+      summary {
+        font-size: 0.85rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .slider {
+        display: grid;
+        /* 3 列目は出力。「360 分」と「無効」が入る幅が要る。
+           2.5em では折り返す（既存 3 本は 2 桁なので広げても位置は変わらない） */
+        grid-template-columns: 11em 1fr 4.5em;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+      }
+      .slider output {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .footnote {
+        font-size: 0.8rem;
+        opacity: 0.75;
+        margin: 0 0 12px;
+      }
+      /* ミュートの結果。実行したものにだけ出る。**display は指定しない** —
+         指定すると UA の [hidden]{display:none} に勝ってしまう */
+      .mute-status {
+        font-size: 0.85rem;
+      }
+      /* 評価が済んだ候補の置き場。**中身が 0 件のときは hidden。**
+         display は指定しない（UA の [hidden]{display:none} に勝ってしまう） */
+      #folded {
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 6px 12px;
+        margin: 12px 0 0;
+      }
+      #folded[open] {
+        padding-bottom: 12px;
+      }
+      #folded-candidates {
+        list-style: none;
+        margin: 8px 0 0;
+        padding: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <p id="notice" hidden></p>
+
+    <section class="mode">
+      <p id="mode-title"></p>
+      <p id="mode-detail"></p>
+      <button type="button" id="open-options">トークンを設定する</button>
+    </section>
+
+    <p id="summary">読み込み中…</p>
+    <p id="call" hidden></p>
+    <p id="last-scan"></p>
+    <!-- **設定への入口をトークンの導線に相乗りさせない。**
+         「トークンを設定する」しか無いと、トークンを使わない人が
+         表示の設定に辿り着けない。
+
+         **Qiita の「設定」と区別するため「拡張機能の設定」と書く。**
+         1 文にまとめたことで、同じ文の中に Qiita 側の「ミュート設定」が
+         並ぶようになった。区別は前より効いていなければならない。
+
+         中の button は #mute-note のクリック処理を通るが、handleLinkClick は
+         closest('a[href]') で判定するので反応しない（button に a の先祖は無い）。 -->
+    <p class="footnote" id="mute-note">
+      ミュートは
+      <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a>
+      から一覧・解除ができます。表示や動作は
+      <button type="button" class="link-button" id="open-settings">拡張機能の設定</button>
+      から変えられます。
+    </p>
+
+    <details id="conditions">
+      <summary id="conditions-summary">判定の条件</summary>
+      <p class="slider">
+        <label for="min-cluster">何アカウントそろったら</label>
+        <input type="range" id="min-cluster" min="2" max="30" step="1" />
+        <output id="min-cluster-value"></output>
+      </p>
+      <p class="slider">
+        <label for="min-shared">何記事に共通していたら</label>
+        <input type="range" id="min-shared" min="2" max="10" step="1" />
+        <output id="min-shared-value"></output>
+      </p>
+      <p class="slider">
+        <label for="lookback">さかのぼる日数</label>
+        <input type="range" id="lookback" min="1" max="7" step="1" />
+        <output id="lookback-value"></output>
+      </p>
+      <p class="slider">
+        <label for="burst-window">投稿から何分以内</label>
+        <!-- **値は分ではなく BURST_WINDOW_CHOICES の添字。**
+             60→2880 分は等間隔ではないので、分を value にすると目盛りに載らない -->
+        <input type="range" id="burst-window" min="0" max="6" step="1" />
+        <output id="burst-window-value"></output>
+      </p>
+      <p class="footnote">
+        条件を変えても Qiita には問い合わせません。すでに集めたデータで判定をやり直すだけです。
+      </p>
+      <!-- **幅は候補を絞らない。**下限を設けない理由は burst.ts のヘッダーに書いてある
+           （いつ押すかを握っているのは相手側なので、下限は盲点になる）。
+           絞り込みだと誤解されると、ユーザーは件数が変わるのを待ち続けることになる -->
+      <p class="footnote">
+        「投稿から何分以内」は候補の件数を変えません。同じ著者でも時間を延ばすとスコアが上がることがあり、いいねの時刻がずらされているかを見る目安になります。
+      </p>
+    </details>
+
+    <ul id="candidates"></ul>
+    <p id="empty" hidden>
+      いまの条件に当てはまる候補はありません。トレンドページを開くと蓄積が増えます。
+    </p>
+
+    <details id="folded" hidden>
+      <summary id="folded-summary"></summary>
+      <!-- 解除の導線。**文言を JS で組み立てず、ここにリンクごと置く**
+           （#mute-note と同じ形）。textContent で書くとリンクにならず、
+           誤検知でミュートしたアカウントを回収する経路が押せなくなる -->
+      <p class="footnote" id="fold-note" hidden>
+        ここで「誤り」を押しても、Qiita 側のミュートは解除されません。解除は
+        <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a>
+        から行ってください。
+      </p>
+      <ul id="folded-candidates"></ul>
+    </details>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

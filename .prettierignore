@@ -1,0 +1,7 @@
+node_modules/
+dist/
+package-lock.json
+# PRD と実装計画は手で整形している。Prettier のテーブル整形で崩さない。
+# CLAUDE.md も同じ理由で除外する（ルートにあるので .claude/ では拾えない）
+.claude/
+CLAUDE.md

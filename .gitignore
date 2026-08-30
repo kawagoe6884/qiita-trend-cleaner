@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+*.local
+*.local.md
+coverage/
+
+# 開発プロセスの記録。**手元には残すが公開しない。**
+# 公開リポジトリには拡張機能そのものに必要なものだけを置く方針（2026-08-29）。
+# 記事化の素材としてローカルで参照し続けるので、削除はしない
+.claude/
+CLAUDE.md
+Qiita API v2.txt

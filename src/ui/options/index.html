@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Qiita Trend Cleaner の設定</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        padding: 24px;
+        max-width: 640px;
+        line-height: 1.7;
+      }
+      h1 {
+        font-size: 1.25rem;
+      }
+      .mode {
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 24px;
+      }
+      .mode-title {
+        font-weight: 700;
+        margin: 0 0 4px;
+      }
+      .mode-detail {
+        margin: 0;
+        font-size: 0.9rem;
+      }
+      label {
+        display: block;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+      input[type='password'] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 8px;
+        font-family: inherit;
+        font-size: 1rem;
+      }
+      button {
+        margin-top: 8px;
+        padding: 8px 16px;
+        font-family: inherit;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+      button[disabled] {
+        cursor: progress;
+        opacity: 0.6;
+      }
+      /* 削除の対象（マスク済みトークン）と操作を同じ行に置く。
+         離すと「何を削除するのか」が一瞬曖昧になる */
+      /* display を指定すると hidden 属性（UA の [hidden]{display:none}）が
+         作者スタイルに負けて効かなくなる。必ず明示的に打ち消す */
+      .saved[hidden] {
+        display: none;
+      }
+      .saved {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        margin-bottom: 24px;
+      }
+      .saved-label {
+        font-size: 0.9rem;
+      }
+      #masked {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        padding: 2px 8px;
+        border: 1px solid currentColor;
+        border-radius: 4px;
+      }
+      /* 行内に置くので button の既定の上マージンを打ち消す */
+      .saved button {
+        margin-top: 0;
+      }
+      .hint {
+        font-size: 0.85rem;
+        margin-top: 4px;
+      }
+      #message:not(:empty) {
+        border-left: 4px solid currentColor;
+        padding-left: 12px;
+        margin-top: 16px;
+      }
+      details {
+        margin-top: 32px;
+        font-size: 0.9rem;
+      }
+      /* ── 候補の見え方（Phase 9 でポップアップから移した） ──
+         ポップアップは候補を読む場所。設定はここに集める */
+      .prefs {
+        margin-top: 32px;
+        border-top: 1px solid currentColor;
+        padding-top: 24px;
+      }
+      .prefs h2 {
+        font-size: 1rem;
+        margin: 0 0 4px;
+      }
+      .prefs > .hint {
+        margin: 0 0 20px;
+      }
+      /* トグル。チェックボックスは見た目だけ差し替え、
+         **要素そのものは <input type="checkbox"> のまま**にする
+         （キーボード操作と支援技術の扱いを自前で作らない） */
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        cursor: pointer;
+        font-weight: 400;
+        margin-bottom: 8px;
+      }
+      .toggle input {
+        /* 見えなくするが、フォーカスは受け取れる位置に残す */
+        position: absolute;
+        opacity: 0;
+        width: 44px;
+        height: 24px;
+        margin: 0;
+        cursor: pointer;
+      }
+      .track {
+        flex: none;
+        width: 44px;
+        height: 24px;
+        border: 1px solid currentColor;
+        border-radius: 12px;
+        position: relative;
+        transition: background-color 120ms;
+      }
+      /* オンの色は hider.ts の琥珀（rgba(255,170,0,...)）と同じ色相。
+         **緑にしない** — 緑は「良い」と読める。ここでオンにするのは
+         「拡張が Qiita 側のアカウントを変更する」という副作用の有効化で、
+         安心させる色ではなく**目に留まる色**が正しい。
+         **赤も使わない**（断定しない・約束 6）。オフは中立のまま */
+      .toggle input:checked + .track {
+        background: rgba(255, 170, 0, 0.55);
+      }
+      /* 「する」「しない」。**色だけで状態を伝えない** */
+      .toggle-state {
+        font-variant-numeric: tabular-nums;
+        min-width: 3em;
+      }
+      .toggle:has(input:checked) .toggle-state {
+        text-decoration: underline;
+      }
+      .track::after {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: currentColor;
+        transition: transform 120ms;
+      }
+      .toggle input:checked + .track::after {
+        transform: translateX(20px);
+      }
+      .toggle input:focus-visible + .track {
+        outline: 2px solid currentColor;
+        outline-offset: 2px;
+      }
+      /* 折りたたみの 4 択。**図を添えて選ばせる** —
+         文言だけだと「何がどう消えるのか」が想像できない */
+      .fold-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin: 0 0 12px;
+      }
+      .fold-option {
+        display: block;
+        border: 1px solid currentColor;
+        border-radius: 8px;
+        padding: 10px 12px;
+        cursor: pointer;
+        font-weight: 400;
+        margin: 0;
+      }
+      .fold-option:has(input:checked) {
+        outline: 2px solid currentColor;
+      }
+      .fold-option input {
+        margin-right: 6px;
+      }
+      .fold-option svg {
+        display: block;
+        margin-top: 8px;
+        width: 100%;
+        height: auto;
+      }
+      .fold-caption {
+        font-size: 0.85rem;
+        margin: 0 0 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Qiita Trend Cleaner</h1>
+
+    <section class="mode">
+      <p class="mode-title" id="mode-title"></p>
+      <p class="mode-detail" id="mode-detail"></p>
+    </section>
+
+    <section id="saved" class="saved" hidden>
+      <span class="saved-label">設定済みのトークン</span>
+      <code id="masked"></code>
+      <button type="button" id="remove">削除する</button>
+    </section>
+
+    <form id="token-form">
+      <label for="token">アクセストークン (任意)</label>
+      <!-- name を付けない: 万一ネイティブ送信が起きてもトークンをクエリに載せないため -->
+      <input type="password" id="token" autocomplete="off" spellcheck="false" />
+      <p class="hint">
+        設定すると著者の過去記事まで辿れるようになり、検出の射程が広がります。未設定でも検出は動きます。
+      </p>
+      <button type="submit" id="save">保存する</button>
+    </form>
+
+    <p id="message" role="status" aria-live="polite"></p>
+
+    <details>
+      <summary>トークンの取得手順</summary>
+      <ol>
+        <li>
+          Qiita の
+          <a href="https://qiita.com/settings/applications" target="_blank" rel="noreferrer">
+            設定 → アプリケーション
+          </a>
+          を開く
+        </li>
+        <li>「個人用アクセストークン」を発行する</li>
+        <li>
+          スコープは <code>read_qiita</code> だけで足ります。この拡張は Qiita に書き込みを行いません
+        </li>
+      </ol>
+    </details>
+
+    <section class="prefs">
+      <h2>候補の見え方</h2>
+      <p class="hint">ポップアップの候補一覧の見え方と、評価したときの動作を決めます。</p>
+
+      <!-- 状態は色と文言の両方で出す。**色だけに頼らない** —
+           色覚や表示環境で差が伝わらないことがある -->
+      <label class="toggle">
+        <input type="checkbox" id="mute-on-valid" />
+        <span class="track"></span>
+        <span>「妥当」と同時に Qiita 側でもミュート</span>
+        <strong class="toggle-state" id="mute-on-valid-state"></strong>
+      </label>
+      <p class="hint">
+        既定はオフです。オンにすると、「妥当」を押した著者をその場で
+        <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a>
+        に追加します。一覧と解除も同じページから行えます。
+      </p>
+
+      <h2 style="margin-top: 24px">評価が済んだものは</h2>
+      <!-- **実スクショを置かない。**実アカウント名が配布物に入る。
+           図は「4 件の候補がどう分かれるか」だけを示す -->
+      <p class="fold-caption">
+        例: 未評価 1 件 / 妥当 (ミュート済み) 1 件 / 妥当 1 件 / 誤り 1 件 のとき
+      </p>
+      <div class="fold-grid">
+        <label class="fold-option">
+          <input type="radio" name="fold-target" value="none" />そのまま一覧に出す
+          <svg viewBox="0 0 168 70" role="img" aria-hidden="true" focusable="false">
+            <rect
+              x="1"
+              y="1"
+              width="166"
+              height="14"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <rect
+              x="1"
+              y="19"
+              width="166"
+              height="14"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <rect
+              x="1"
+              y="37"
+              width="166"
+              height="14"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <rect
+              x="1"
+              y="55"
+              width="166"
+              height="14"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              opacity="0.55"
+            />
+          </svg>
+        </label>
+        <label class="fold-option">
+          <input type="radio" name="fold-target" value="muted" />ミュート済みだけ
+          <svg viewBox="0 0 168 70" role="img" aria-hidden="true" focusable="false">
+            <rect
+              x="1"
+              y="1"
+              width="166"
+              height="14"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <rect
+              x="1"
+              y="19"
+              width="166"
+              height="14"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <rect
+              x="1"
+              y="37"
+              width="166"
+              height="14"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <rect x="1" y="55" width="166" height="14" rx="3" fill="currentColor" opacity="0.12" />
+            <path d="M7 59 l4 3 l-4 3 z" fill="currentColor" opacity="0.7" />
+            <text x="16" y="65" font-size="9" fill="currentColor" opacity="0.8">1 件</text>
+          </svg>
+        </label>
+        <label class="fold-option">
+          <input type="radio" name="fold-target" value="valid" />「妥当」だけ
+          <svg viewBox="0 0 168 52" role="img" aria-hidden="true" focusable="false">
+            <rect
+              x="1"
+              y="1"
+              width="166"
+              height="14"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <rect
+              x="1"
+              y="19"
+              width="166"
+              height="14"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <rect x="1" y="37" width="166" height="14" rx="3" fill="currentColor" opacity="0.12" />
+            <path d="M7 41 l4 3 l-4 3 z" fill="currentColor" opacity="0.7" />
+            <text x="16" y="47" font-size="9" fill="currentColor" opacity="0.8">2 件</text>
+          </svg>
+        </label>
+        <label class="fold-option">
+          <input type="radio" name="fold-target" value="judged" />評価済みをすべて
+          <svg viewBox="0 0 168 34" role="img" aria-hidden="true" focusable="false">
+            <rect
+              x="1"
+              y="1"
+              width="166"
+              height="14"
+              rx="3"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              opacity="0.55"
+            />
+            <rect x="1" y="19" width="166" height="14" rx="3" fill="currentColor" opacity="0.12" />
+            <path d="M7 23 l4 3 l-4 3 z" fill="currentColor" opacity="0.7" />
+            <text x="16" y="29" font-size="9" fill="currentColor" opacity="0.8">3 件</text>
+          </svg>
+        </label>
+      </div>
+      <p class="hint">
+        折りたたんだ中でも「誤り」に押し直せます。ただし
+        <strong>「誤り」を押しても Qiita 側のミュートは解除されません。</strong>
+      </p>
+    </section>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
