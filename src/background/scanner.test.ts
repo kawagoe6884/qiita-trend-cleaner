@@ -13,6 +13,9 @@ import {
 import { RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { countRecords } from '../detect/like-index';
+// **rate-budget から取る。**qiita-client はこのファイルが vi.mock しているので、
+// そちらから定数を import すると実行時に undefined になる
+import { API_PER_PAGE } from '../api/rate-budget';
 import { DEFAULT_SETTINGS } from '../types/domain';
 import type { TrendItem } from '../types/domain';
 
@@ -681,6 +684,16 @@ describe('runScan の過去記事の絞り込み', () => {
 describe('likes のページング', () => {
   const POSTED_MS = new Date('2026-08-18T10:00:00+09:00').getTime();
 
+  /**
+   * フィクスチャの now は投稿の 26 時間後。**全部持っているときに覆える範囲**は
+   * ここまでで、それより先のいいねはまだ存在しない。
+   *
+   * テスト名に分を書かず、ここから導く。名前に値を書くと、フィクスチャを
+   * 動かしたとき**名前だけが嘘になる**（既定値を 60 → 180 に変えたときに
+   * 同じ形の誤りを 5 箇所つくった）。
+   */
+  const AGE_MINUTES = 26 * 60;
+
   /** 投稿から minutes 分後にいいねした合成レコード */
   function likeAfter(handle: string, minutes: number) {
     return {
@@ -712,6 +725,81 @@ describe('likes のページング', () => {
     await runScan([trendItem(1)]);
     // Assert
     expect(likesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('総数が読めないまま上限ちょうど返ってきたら、覆った範囲を書かない', async () => {
+    // Arrange — Total-Count ヘッダーが欠けると lastPage が 1 に潰れ、遡らない。
+    // **page=1 は「最も新しい 100 件」なので、投稿直後のいいねが 1 件も
+    // 入っていないかもしれない。**それを「取得時点まで覆った」と書くと、
+    // windowShare が新しい経路でそれを信じ、**窓内が丸ごと欠けたまま
+    // 占有率を出す。**ヘッダー欠落は想定内なのでエラーは 1 行も出ない。
+    const full: [string, number][] = Array.from({ length: API_PER_PAGE }, (_, i) => [
+      `example-liker-${String(i)}`,
+      i,
+    ]);
+    likesMock.mockResolvedValue({ ...page(full, 0), totalCount: null });
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert — 遡れないので取得は 1 回。覆った範囲は主張しない
+    expect(likesMock).toHaveBeenCalledTimes(1);
+    const record = (await getLikeIndex())['example-liker-0']?.likes[0];
+    expect(record?.itemCoveredMinutes).toBeUndefined();
+  });
+
+  it('総数が読めなくても上限未満なら、それが全部なので覆った範囲を書く', async () => {
+    // Arrange — 上限未満＝取得時点の全部（windowShare の古い経路と同じ判断）。
+    // ここまで安全側に倒すと、ヘッダーが欠けた記事は永久に測れなくなる
+    likesMock.mockResolvedValue({ ...page([['example-liker-a', 10]], 0), totalCount: null });
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert
+    const record = (await getLikeIndex())['example-liker-a']?.likes[0];
+    expect(record?.itemCoveredMinutes).toBe(AGE_MINUTES);
+  });
+
+  it('1 ページに収まった記事にも覆った範囲を書く', async () => {
+    // Arrange — 遡る必要は無いが、**覆った範囲は「取得の瞬間まで」で有限**。
+    //
+    // ここを書かずにいたせいで、windowShare が「全部持っている＝窓を覆った」と
+    // 誤って扱っていた。投稿 20 分後に取った記事は、その時点の全部を持っていても
+    // 180 分の窓を覆えていない（2026-08-30 実測: 窓を 60 分から 2 日まで
+    // 動かしても同じ 3/5 と burst 1.00 を返した）。
+    likesMock.mockResolvedValue(page([['example-liker-a', 10]], 1));
+    // Act
+    await runScan([trendItem(1)]);
+    // Assert
+    const record = (await getLikeIndex())['example-liker-a']?.likes[0];
+    expect(record?.itemCoveredMinutes).toBe(AGE_MINUTES);
+  });
+
+  it('投稿時刻が読めない記事は保存されない（覆った範囲を問う前に落ちる）', async () => {
+    // Arrange — 起点が無ければ「投稿から何分後まで」は求まらない。
+    //
+    // **ここで覆った範囲そのものは検査できない。**purgeLikeIndex（filterByCutoff）が
+    // itemPostedAt をパースできないレコードを保存の直前に必ず落とすので、
+    // ageMinutes が null を返しても 0 を返しても storage には何も残らない。
+    // 変異テストで確認済み（「投稿時刻が読めないときに 0 分覆ったと言う」変異は
+    // 生き残る）。**ageMinutes の null は防御的な既定であって、この経路では
+    // 観測できない**ことを、ここに書き残しておく。
+    //
+    // 代わりに固定するのは、観測できる方の性質 — **記録ごと残らない**。
+    likesMock.mockResolvedValue(page([['example-liker-a', 10]], 1));
+    // Act
+    await runScan([{ ...trendItem(1), publishedAt: 'not-a-date' }]);
+    // Assert — アカウントごと残らない（likes が 0 件になった entry は捨てられる）
+    expect(await getLikeIndex()).toEqual({});
+  });
+
+  it('投稿時刻が未来なら覆った範囲を書かない', async () => {
+    // Arrange — 時計のずれかデータの破損。**負の値を書くと、windowShare の
+    // 「windowMinutes <= reach」が必ず偽になり、静かに測定不能へ倒れる**。
+    // 同じ結果でも、理由が「壊れている」であることを undefined で表す
+    likesMock.mockResolvedValue(page([['example-liker-a', 10]], 1));
+    // Act — now は 2026-08-19T12:00+09:00
+    await runScan([{ ...trendItem(1), publishedAt: '2026-08-20T12:00:00+09:00' }]);
+    // Assert
+    const record = (await getLikeIndex())['example-liker-a']?.likes[0];
+    expect(record?.itemCoveredMinutes).toBeUndefined();
   });
 
   it('100 件を超えたら最終ページまで遡る', async () => {
@@ -760,25 +848,25 @@ describe('likes のページング', () => {
     expect(record?.itemCoveredMinutes).toBe(100);
   });
 
-  it('上限ちょうどで全ページ取れたときは、覆った範囲を記録しない', async () => {
+  it('上限ちょうどで全ページ取れたら、覆った範囲は打ち切りの値ではなく取得時点', async () => {
     // Arrange — 総数 450 = 全 5 ページ。page=1 と末尾 4 ページで**ちょうど全部**。
     //
     // 【なぜこの境界か】complete を「次の周回で page < 2 を見る」形にすると、
-    // ここだけ周回が先に尽きて立たない。全部持っているのに
-    // itemCoveredMinutes が付き、**覆った範囲を過少に申告する**。
+    // ここだけ周回が先に尽きて立たない。全部持っているのに打ち切り側の値
+    // （どのページも 100 分）が入り、**覆った範囲を過少に申告する**。
     likesMock.mockImplementation((_id, _token, p) =>
       Promise.resolve(page([[`example-liker-${String(p ?? 1)}`, 100]], 450)),
     );
     // Act
     await runScan([trendItem(1)]);
-    // Assert — page=2 まで取れており、覆った範囲は書かない（総数で判定できる）
+    // Assert — page=2 まで取れている。100（打ち切りの値）ではなく取得時点まで
     expect(requestedPages()).toContain(2);
     const record = (await getLikeIndex())['example-liker-2']?.likes[0];
-    expect(record?.itemCoveredMinutes).toBeUndefined();
+    expect(record?.itemCoveredMinutes).toBe(AGE_MINUTES);
     expect(record?.itemTotalLikes).toBe(450);
   });
 
-  it('最終ページが窓の外でも、全ページ持っているなら覆った範囲を書かない', async () => {
+  it('最終ページが窓の外でも、全ページ持っているなら打ち切りの値を書かない', async () => {
     // Arrange — 総数 150 = 全 2 ページ。page=2 の最も新しいいいねが最大の窓
     // （2 日）より外にある。**打ち切りの条件と完全性は別の話**で、
     // 「もう窓の外だから止める」ことと「全部持っている」ことは両立する。
@@ -787,21 +875,23 @@ describe('likes のページング', () => {
     );
     // Act
     await runScan([trendItem(1)]);
-    // Assert — 9000 分を「そこまでしか覆っていない」と書くと過少申告になる
+    // Assert — 9000 を書くと、まだ来ていない未来まで覆ったことになる
     const record = (await getLikeIndex())['example-liker-2']?.likes[0];
-    expect(record?.itemCoveredMinutes).toBeUndefined();
+    expect(record?.itemCoveredMinutes).toBe(AGE_MINUTES);
+    expect(record?.itemCoveredMinutes).not.toBe(9000);
   });
 
-  it('全ページ取れたときは覆った範囲を記録しない（総数で判定できる）', async () => {
+  it('全ページ取れたら、覆った範囲は取得時点まで', async () => {
     // Arrange — 総数 150 = 全 2 ページ。page=2 まで遡れば全部持っている
     likesMock.mockImplementation((_id, _token, p) =>
       Promise.resolve(page([[`example-liker-${String(p ?? 1)}`, 10]], 150)),
     );
     // Act
     await runScan([trendItem(1)]);
-    // Assert
+    // Assert — 「その時点の全部」であって「窓を覆った」ではない。
+    // 取得時点より先のいいねは、まだ存在しないので持ちようがない
     const record = (await getLikeIndex())['example-liker-2']?.likes[0];
-    expect(record?.itemCoveredMinutes).toBeUndefined();
+    expect(record?.itemCoveredMinutes).toBe(AGE_MINUTES);
     expect(record?.itemTotalLikes).toBe(150);
   });
 
