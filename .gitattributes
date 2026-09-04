@@ -1,0 +1,17 @@
+# 改行は LF に固定する。
+#
+# 【なぜ要るか】
+# core.autocrlf=true の Windows では、git がチェックアウトのたびに CRLF へ
+# 変換する。一方 Prettier の既定は endOfLine: "lf" なので、**git が触った
+# ファイルは必ず format ゲートで落ちる。**2026-08-31 に git stash / pop を
+# 挟んだだけで 6 ファイルが CRLF になり、npm run format が全滅した。
+#
+# 踏むかどうかが各自の core.autocrlf に依存するのが厄介で、Windows で
+# クローンした人だけが落ちる。eol=lf はリポジトリ側で固定するので、
+# 手元の設定に関係なく揃う。
+#
+# **既存の blob はすべて LF なので、内容の再正規化は起きない**（59 件検査済み）。
+* text=auto eol=lf
+
+# バイナリ。text=auto の自動判定に任せず明示する（差分もマージも取らない）
+*.png binary

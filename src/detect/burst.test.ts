@@ -354,6 +354,39 @@ describe('windowShare', () => {
     expect(windowShare(index, HIT, 720)).toBeNull();
   });
 
+  /**
+   * **投稿直後に取った記事**。取りこぼしは 1 件も無い（保持 2 件 = 総数 2）が、
+   * 取ったのが投稿 20 分後なので、それより先のいいねは**まだ存在していない**。
+   *
+   * 記事は 1 度しか取らない（scanner の known / seen）ので、この欠けは
+   * 取り直さない限り永久に埋まらない。
+   */
+  function freshlyFetched(n: number, minutesAfterPost: number): LikeRecord {
+    return record(n, minutesAfterPost, { itemTotalLikes: 2, itemCoveredMinutes: 20 });
+  }
+
+  it('全部持っていても、窓が取得時点より先なら測らない', () => {
+    // Arrange — 「全部持っているか」で判定していたころは、ここが素通りしていた。
+    // 2026-08-30 実測: 窓を 60 分から 2 日まで動かしても同じ 3/5 と burst 1.00
+    const index: LikeIndex = {
+      'example-liker-1': entry([freshlyFetched(1, 10), freshlyFetched(2, 10)]),
+      'example-liker-2': entry([freshlyFetched(1, 10), freshlyFetched(2, 10)]),
+    };
+    // Act & Assert — 既定の 180 分は、取得時点（20 分）のはるか先
+    expect(windowShare(index, HIT, 180)).toBeNull();
+  });
+
+  it('取得時点までの窓なら、同じデータで測れる', () => {
+    // Arrange — 上と 1 文字も違わないデータ。**変えたのは窓だけ。**
+    // 測れないのはデータが壊れているからではなく、問うている範囲が広いから
+    const index: LikeIndex = {
+      'example-liker-1': entry([freshlyFetched(1, 10), freshlyFetched(2, 10)]),
+      'example-liker-2': entry([freshlyFetched(1, 10), freshlyFetched(2, 10)]),
+    };
+    // Act & Assert — 20 分ちょうどは覆っている（境界は測れる側）
+    expect(windowShare(index, HIT, 20)).toEqual({ cluster: 2, total: 2 });
+  });
+
   it('投稿より前のいいね（データ不整合）は分母からも除く', () => {
     // Arrange — **部外者の唯一のいいねを Δ<0 にする。**クラスタ側に置くと、
     // その人は別の記事で窓内に入るので、除外されたか判別できない。

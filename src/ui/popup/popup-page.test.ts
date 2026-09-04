@@ -26,6 +26,13 @@ const verdictMock = vi.mocked(recordVerdict);
 const SETTINGS = { ...DEFAULT_SETTINGS, minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 };
 const NO_PRECISION = { valid: 0, falsePositive: 0, ratio: null };
 
+/**
+ * 蓄積の著者の内訳。**モード説明以外のテストでは値そのものに意味は無い**が、
+ * 蓄積があることになっている状態（hasIndex: true）と辻褄を合わせておく。
+ * 0 人にすると「蓄積はあるのに著者が 1 人も居ない」という実機に無い形になる。
+ */
+const COVERAGE = { total: 3, solo: 2 };
+
 /** 合成の候補。実アカウント名・実 item_id は使わない */
 function candidate(handle = 'example-author-a'): Candidate {
   return {
@@ -122,6 +129,7 @@ beforeEach(() => {
     lastScanAt: '2026-08-20T03:00:00.000Z',
     hasToken: false,
     hasIndex: true,
+    authorCoverage: COVERAGE,
     muteOnValid: false,
     foldTarget: 'none' as const,
   });
@@ -150,6 +158,7 @@ describe('init の描画', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
     });
@@ -165,6 +174,11 @@ describe('init の描画', () => {
     expect(el('#mode-detail').textContent).toContain('著者の過去記事');
     expect(el('#mode-detail').textContent).toContain('60 → 1000');
     expect(el('#open-options').textContent).toBe('トークンを設定する');
+    // 蓄積の実数が状態から文言まで届いていること。**ここを見ないと、
+    // renderMode に空の内訳を渡す変更が誰にも捕まらない**
+    expect(el('#mode-detail').textContent).toContain(
+      `${String(COVERAGE.total)} 人の著者のうち ${String(COVERAGE.solo)} 人`,
+    );
   });
 
   it('トークン設定済みならフルモードと表示し、ボタンの文言も変える', async () => {
@@ -177,6 +191,7 @@ describe('init の描画', () => {
       lastScanAt: null,
       hasToken: true,
       hasIndex: true,
+      authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
     });
@@ -203,6 +218,7 @@ describe('init の描画', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
     });
@@ -235,6 +251,7 @@ describe('init の描画', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
     });
@@ -278,6 +295,7 @@ describe('init の XSS 対策', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
     });
@@ -486,6 +504,7 @@ describe('候補一覧への一言', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
     });
@@ -664,6 +683,8 @@ describe('候補ゼロの案内', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex,
+      // 蓄積が無いなら著者も 0 人。**hasIndex と食い違わせない**
+      authorCoverage: hasIndex ? COVERAGE : { total: 0, solo: 0 },
       muteOnValid: false,
       foldTarget: 'none' as const,
     };
@@ -840,6 +861,7 @@ describe('coAuthors の行', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
     };
@@ -901,6 +923,7 @@ describe('「妥当」と同時のミュート', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      authorCoverage: COVERAGE,
       muteOnValid,
       foldTarget: 'none' as const,
     };
@@ -1111,6 +1134,7 @@ describe('既にミュート済みの候補の表示', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      authorCoverage: COVERAGE,
       muteOnValid,
       foldTarget: 'none' as const,
     };
@@ -1303,6 +1327,7 @@ describe('評価済みの折りたたみ', () => {
       lastScanAt: null,
       hasToken: false,
       hasIndex: true,
+      authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget,
     };

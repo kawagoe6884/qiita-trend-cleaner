@@ -37,6 +37,7 @@ import {
   rateLimitNotice,
 } from './popup-state';
 import type { CandidateView, Precision } from './popup-state';
+import type { AuthorCoverage } from '../../detect/like-index';
 import { DEFAULT_SETTINGS } from '../../types/domain';
 import type { FoldTarget, MuteRecord, Settings, Verdict } from '../../types/domain';
 
@@ -109,8 +110,8 @@ function formatPrecision(precision: Precision): string {
  * 下に置くと「なぜトークンを設定するのか」が候補の後ろに埋もれ、
  * 429 に当たってから初めて存在に気づくことになる。
  */
-function renderMode(hasToken: boolean): void {
-  const copy = describeMode(hasToken);
+function renderMode(hasToken: boolean, coverage: AuthorCoverage): void {
+  const copy = describeMode(hasToken, coverage);
   setText(SELECTORS.modeTitle, copy.title);
   setText(SELECTORS.modeDetail, copy.detail);
   setText(SELECTORS.openOptions, copy.action);
@@ -643,7 +644,7 @@ export async function init(): Promise<void> {
     currentMuteOnValid = state.muteOnValid;
     // **renderCandidates より前に代入する。**あとにすると初回だけ折りたたまれない
     currentFoldTarget = state.foldTarget;
-    renderMode(state.hasToken);
+    renderMode(state.hasToken, state.authorCoverage);
     renderSliderInputs(state.settings);
     renderSettingLabels(state.settings);
     renderCandidates(state.views);

@@ -6,15 +6,33 @@
  * 判断をテスト可能な形で 1 箇所に集める。
  *
  * 【なぜ蓄積が要るか】
- * ライトモードは 1 回のスキャンでは原理的に発火しない。
- * トレンド 30 件の中に同一著者の記事が 2 本入ることが稀で、M=2 を満たせないため。
- * PRD はこれを「直近 3 日 = トレンドセット 6 回分」の蓄積で解いている。
+ * 著者内クラスタは「同じ著者の M 本以上」を要求するので、その著者の記事が
+ * 1 本しか無いあいだは成立しない。**トレンドに同じ著者が何本出ているかは
+ * 日によって大きく振れる。**
+ *
+ *   2026-08-20: 5 著者が 30 枠のうち 13 を占めた（初回スキャンで 5 候補・OQ-12）
+ *   2026-08-30: 3 著者が 30 枠のうち 7。**26 著者のうち 23 人は記事 1 本**
+ *
+ * つまり **1 回のスキャンで成立することもあれば、ほとんど成立しない日もある。**
+ * 以前ここには「同一著者が 2 本入るのは稀だから 1 回のスキャンでは原理的に
+ * 発火しない」と書いてあったが、前者の実測がそれを否定し、後者は 2 倍の
+ * 開きがあることを示した。蓄積（RETENTION_DAYS 日ぶん）は、この振れを
+ * 日をまたいで均すためにある。
+ *
+ * 記事が 1 本のままの著者は、**著者をまたぐ共起**（cross-cluster.ts）が拾う。
  *
  * 【now を引数で受け取る理由】
  * 関数内で new Date() を呼ぶとテストが実行時刻に依存して壊れる。
  * 呼び出し側が時刻を決め、この層は受け取った時刻だけを見る。
  */
-import type { AccountIndexEntry, IsoDateTime, LikeIndex, LikeRecord } from '../types/domain';
+import type {
+  AccountHandle,
+  AccountIndexEntry,
+  IsoDateTime,
+  ItemId,
+  LikeIndex,
+  LikeRecord,
+} from '../types/domain';
 
 /**
  * storage に残す期間。
@@ -162,4 +180,40 @@ export function countRecords(index: LikeIndex): number {
   let total = 0;
   for (const entry of Object.values(index)) total += entry.likes.length;
   return total;
+}
+
+/** 蓄積に現れる著者の内訳。**数えるのは著者で、いいねでもレコードでもない** */
+export interface AuthorCoverage {
+  /** 蓄積に現れる著者の数 */
+  total: number;
+  /** そのうち記事が 1 本しか無い著者の数 */
+  solo: number;
+}
+
+/**
+ * 蓄積を著者ごとに数える。
+ *
+ * 記事が 1 本しか無い著者は、著者内クラスタでは成立しない
+ * （`minSharedItems` >= 2 を満たせない）。**ライトモードではその著者を
+ * 著者をまたぐ共起でしか見られず、フルモードは過去記事を辿って本数を増やす。**
+ * つまり solo は「トークンを設定すると何人ぶん単独で判定できるようになるか」に
+ * そのまま対応する。ポップアップのモード説明はこれを出す。
+ *
+ * 実測では日によって大きく振れる（2026-08-30 のトレンドは 26 著者中 23 人が
+ * 記事 1 本、2026-08-20 は 5 著者が 30 枠中 13 を占めた）。**固定の文言では
+ * その日の状況を伝えられない。**
+ */
+export function countAuthorCoverage(index: LikeIndex): AuthorCoverage {
+  const itemsByAuthor = new Map<AccountHandle, Set<ItemId>>();
+  for (const entry of Object.values(index)) {
+    for (const record of entry.likes) {
+      const items = itemsByAuthor.get(record.authorHandle) ?? new Set<ItemId>();
+      items.add(record.itemId);
+      itemsByAuthor.set(record.authorHandle, items);
+    }
+  }
+
+  let solo = 0;
+  for (const items of itemsByAuthor.values()) if (items.size === 1) solo += 1;
+  return { total: itemsByAuthor.size, solo };
 }

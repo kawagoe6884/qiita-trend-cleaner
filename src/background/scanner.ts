@@ -90,8 +90,10 @@ function foldLikes(
       // ヘッダーが欠けたらフィールドごと付けず「不明」に倒す
       // （exactOptionalPropertyTypes のため undefined 代入はできない）
       ...(totalCount === null ? {} : { itemTotalLikes: totalCount }),
-      // **末尾から遡ったときだけ入る。**「投稿から何分後までを全部持っているか」。
-      // 1 ページに収まったときは付けない（そちらは itemTotalLikes で判定できる）
+      // 「投稿から何分後までのいいねを全部持っているか」。**1 ページに収まった
+      // ときも入る**（値は取得時点の経過分）。取得の瞬間より先のいいねは
+      // まだ存在しないので、「その時点の全部」と「窓を覆った」は別物になる。
+      // 付けないのは、投稿時刻が読めない / 未来 / 覆った範囲を主張できないときだけ
       ...(coveredMinutes === null ? {} : { itemCoveredMinutes: coveredMinutes }),
     });
     index[handle] = entry;
@@ -182,11 +184,45 @@ function newestDeltaMinutes(likes: QiitaLike[], postedMs: number): number | null
   return newest;
 }
 
+/**
+ * 投稿から now までの経過（分）。求まらなければ null。
+ *
+ * **負なら null に倒す。**記事の投稿時刻が未来になるのは時計のずれかデータの
+ * 破損で、そこから「何分ぶん覆っている」とは言えない。こちらはテストで
+ * 固定してある（未来の投稿時刻で覆った範囲を書かない）。
+ *
+ * **パースできない側（postedMs === null）は runScan からは観測できない。**
+ * purgeLikeIndex が itemPostedAt を読めないレコードを保存の直前に必ず落とすので、
+ * ここで null を返しても 0 を返しても storage の中身は変わらない
+ * （変異テストで確認済み）。null にしてあるのは負の場合と揃えた防御であって、
+ * テストに守られてはいない。
+ *
+ * **投稿時刻はパース済みの値で受け取る。**呼び出し側が既に `toEpochMs` して
+ * いるので、文字列から取り直すと同じ値を 2 回パースすることになり、
+ * **両者の null 性が「たまたま一致している」だけ**になる。
+ */
+function ageMinutes(postedMs: number | null, now: Date): number | null {
+  if (postedMs === null) return null;
+  const delta = Math.round((now.getTime() - postedMs) / MS_PER_MINUTE);
+  return delta < 0 ? null : delta;
+}
+
 interface CollectedLikes {
   likes: QiitaLike[];
   rate: RateState | null;
   totalCount: number | null;
-  /** 投稿から何分後までを全部持っているか。**全部持っているなら null** */
+  /**
+   * 投稿から何分後までのいいねを全部持っているか。**求まらなければ null。**
+   *
+   * **1 ページに収まったときも入れる**（値は取得時点の経過分）。likes は
+   * 取得した瞬間までのものしか存在しないので、「その時点の全部を持っている」ことと
+   * 「窓を覆っている」ことは別物である。投稿 20 分後に取った記事は、
+   * 全部持っていても 180 分の窓を覆えていない。
+   *
+   * ここを「全部持っているなら null」にしていたせいで、windowShare が
+   * **窓が経過する前に取った記事を「測れた」として扱っていた**（2026-08-30 実測。
+   * 窓を 60 分から 2 日まで動かしても同じ 3/5 と burst 1.00 を返した）。
+   */
   coveredMinutes: number | null;
 }
 
@@ -205,16 +241,38 @@ interface CollectedLikes {
  *
  * **100 件以下なら今までと同じ 1 リクエストで完全。**追加コストは大きい記事だけ。
  */
-async function collectLikes(item: TrendItem, token: string | null): Promise<CollectedLikes> {
+async function collectLikes(
+  item: TrendItem,
+  token: string | null,
+  now: Date,
+): Promise<CollectedLikes> {
   const first = await fetchLikes(item.itemId, token);
   const total = first.totalCount;
   const postedMs = toEpochMs(item.publishedAt);
   const lastPage = total === null ? 1 : Math.ceil(total / API_PER_PAGE);
+  // 全部持っていたときに覆えている範囲。**取得の瞬間より先は存在しない**
+  const age = ageMinutes(postedMs, now);
 
   // 1 ページに収まった / 総数が不明 / 投稿時刻が読めない → 遡らない。
   // **投稿時刻が無いと打ち切りの判断ができず、枠だけ使って終わる**
   if (lastPage <= 1 || postedMs === null) {
-    return { likes: first.data, rate: first.rate, totalCount: total, coveredMinutes: null };
+    // **page=1 だけで「取得時点の全部」と言えるか。**
+    //
+    // `Total-Count` が読めれば `lastPage <= 1` がそのまま全部を意味する。
+    // 読めないと lastPage は 1 に潰れるので、**応答の件数で見るしかない。**
+    // ちょうど上限のときは切り詰められたのか偶然一致かが分からない
+    // （windowShare の古い経路とまったく同じ判断）。
+    //
+    // ここを見ずに age を付けると、**page=1 は「最も新しい 100 件」なので
+    // 窓内（投稿直後）が丸ごと欠けている記事を「覆っている」と主張する。**
+    // ヘッダーが欠けるのは想定内で、エラーは 1 行も出ない。
+    const pageOneIsAll = total !== null || first.data.length < API_PER_PAGE;
+    return {
+      likes: first.data,
+      rate: first.rate,
+      totalCount: total,
+      coveredMinutes: pageOneIsAll ? age : null,
+    };
   }
 
   // ページ境界は取得中に増えたいいねでずれる。**user.id で重複排除する**
@@ -258,7 +316,9 @@ async function collectLikes(item: TrendItem, token: string | null): Promise<Coll
     likes: [...byUser.values()],
     rate,
     totalCount: total,
-    coveredMinutes: complete ? null : covered,
+    // 全ページ揃ったなら覆っているのは「取得の瞬間まで」。それより先は存在しない。
+    // 打ち切ったなら、最後に取ったページで最も新しいいいねまで
+    coveredMinutes: complete ? age : covered,
   };
 }
 
@@ -269,9 +329,10 @@ async function scanOneItem(
   index: LikeIndex,
   seen: Set<string>,
   progress: ScanProgress,
+  now: Date,
 ): Promise<ScanProgress> {
   try {
-    const response = await collectLikes(item, token);
+    const response = await collectLikes(item, token, now);
     seen.add(item.itemId);
     return {
       ...progress,
@@ -310,11 +371,12 @@ async function scanItems(
   index: LikeIndex,
   seen: Set<string>,
   initial: ScanProgress,
+  now: Date,
 ): Promise<ScanProgress> {
   let progress = initial;
   for (const item of items) {
     if (progress.rateLimited) return progress;
-    progress = await scanOneItem(item, token, index, seen, progress);
+    progress = await scanOneItem(item, token, index, seen, progress, now);
   }
   return progress;
 }
@@ -338,7 +400,7 @@ async function scanAuthor(
       .slice(0, MAX_EXTRA_ITEMS_PER_AUTHOR)
       .map((entry) => toTrendItem(handle, entry.id, entry.created_at));
     const afterListing: ScanProgress = { ...initial, rate: listing.rate ?? initial.rate };
-    return await scanItems(extras, token, index, seen, afterListing);
+    return await scanItems(extras, token, index, seen, afterListing, now);
   } catch (error) {
     if (error instanceof RateLimitError) return haltOnRateLimit(initial, error);
     // scanOneItem と同じ理由で debug。著者 1 人分の欠損は結果を歪めるが、
@@ -580,7 +642,7 @@ async function scanTrend(items: TrendItem[], startedAt: IsoDateTime): Promise<Sc
     scannedItemCount: 0,
   };
 
-  progress = await scanItems(newItems, token, fresh, seen, progress);
+  progress = await scanItems(newItems, token, fresh, seen, progress, now);
 
   // 個々の失敗は debug に留めるため、全滅だけはここで拾う。
   // 30 件中 30 件が落ちるのは通常運転ではなく、API 仕様変更・トークンの全面拒否の
