@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>プライバシーポリシー — Qiita Trend Cleaner</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1a1a1a;
+        --muted: #5a5a5a;
+        --bg: #ffffff;
+        --line: #e2e2e2;
+        --accent: #55c500;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e8e8e8;
+          --muted: #a0a0a0;
+          --bg: #16181c;
+          --line: #30343a;
+        }
+      }
+      body {
+        margin: 0 auto;
+        padding: 2.5rem 1.25rem 5rem;
+        max-width: 44rem;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', Meiryo, sans-serif;
+        line-height: 1.85;
+      }
+      h1 {
+        font-size: 1.6rem;
+        border-bottom: 3px solid var(--accent);
+        padding-bottom: 0.4rem;
+      }
+      h2 {
+        font-size: 1.15rem;
+        margin-top: 2.5rem;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 0.3rem;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 1rem 0;
+        font-size: 0.94rem;
+      }
+      th,
+      td {
+        border: 1px solid var(--line);
+        padding: 0.5rem 0.7rem;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: rgba(85, 197, 0, 0.12);
+        white-space: nowrap;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 0.9em;
+        background: rgba(128, 128, 128, 0.16);
+        padding: 0.1em 0.35em;
+        border-radius: 3px;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+      .note {
+        border-left: 4px solid var(--accent);
+        padding: 0.1rem 0 0.1rem 1rem;
+        margin: 1.5rem 0;
+      }
+      a {
+        color: inherit;
+      }
+      footer {
+        margin-top: 4rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>プライバシーポリシー</h1>
+    <p class="meta">
+      Chrome 拡張機能 <strong>Qiita Trend Cleaner</strong>（以下「本拡張」）／ 最終更新 2026-09-05
+    </p>
+
+    <div class="note">
+      <p>
+        本拡張は <strong>Qiita 株式会社とは無関係の非公式な拡張機能</strong>です。個人が開発・公開しています。
+      </p>
+      <p>
+        <strong>収集したデータを外部のサーバーへ送信することはありません。</strong>通信先は Qiita
+        の公式 API のみで、開発者が運営するサーバーは存在しません。解析ツール・広告・トラッカーの
+        たぐいは一切組み込んでいません。
+      </p>
+    </div>
+
+    <h2>1. 保存する情報</h2>
+
+    <p>本拡張が保存する情報は次のとおりです。いずれもお使いのブラウザの中にのみ保存されます。</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>情報</th>
+          <th>保存先</th>
+          <th>用途と保持期間</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th>Qiita アクセストークン</th>
+          <td><code>chrome.storage.local</code></td>
+          <td>
+            <strong>任意設定です（未設定でも動作します）。</strong>Qiita 公式 API
+            の認証にのみ使用します。<strong>他のいかなる送信先にも送りません。</strong>
+            設定画面からいつでも削除できます。
+          </td>
+        </tr>
+        <tr>
+          <th>いいねの記録</th>
+          <td><code>chrome.storage.local</code></td>
+          <td>
+            「どの Qiita アカウントが、どの記事に、いつ いいね したか」。共起パターンの判定に
+            使用します。<strong>7 日を過ぎたものは自動的に削除されます。</strong>
+          </td>
+        </tr>
+        <tr>
+          <th>検出結果とあなたの評価</th>
+          <td><code>chrome.storage.local</code></td>
+          <td>検出した候補と、それに対してあなたが記録した「妥当 / 誤り」の判断。</td>
+        </tr>
+        <tr>
+          <th>ミュートの記録</th>
+          <td><code>chrome.storage.local</code></td>
+          <td>本拡張から Qiita 側のミュートを実行した結果。</td>
+        </tr>
+        <tr>
+          <th>判定の設定値</th>
+          <td><code>chrome.storage.sync</code></td>
+          <td>
+            閾値の<strong>数値のみ</strong>（人数・記事数・遡る日数・時間の幅）。
+            <strong>Chrome の同期機能の対象</strong>なので、同期を有効にしている場合は Google の
+            サーバーを経由してお使いの他の端末にも反映されます。
+            <strong>個人を識別する情報は含みません。</strong>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>2. 他の利用者のアカウント情報について</h2>
+
+    <p>
+      本拡張は、あなたが表示しているトレンドページの記事に「いいね」した Qiita アカウントの ID を、
+      共起パターンの判定のために記録します。これは第三者の情報にあたるため、次の扱いとしています。
+    </p>
+
+    <ul>
+      <li><strong>外部へ送信しません。</strong>あなたのブラウザの中だけで処理します</li>
+      <li>
+        <strong>7 日を過ぎたものは自動的に削除されます</strong>（保持期間を延ばす設定はありません）
+      </li>
+      <li>他の利用者と共有・配布する機能はありません</li>
+      <li>
+        本拡張は「不自然ないいねパターン」を示すだけで、<strong>不正や規約違反を断定しません。</strong>
+        判断は利用者自身が行います
+      </li>
+    </ul>
+
+    <h2>3. 通信先</h2>
+
+    <p>
+      本拡張が通信するのは <code>https://qiita.com/api/v2</code>（Qiita 公式 API）
+      <strong>のみ</strong>です。
+    </p>
+
+    <p>
+      トレンドページの記事一覧は、<strong>あなたが表示しているページの内容を読み取る</strong>ことで
+      取得します。そのための追加のリクエストは発生しません。HTML ページを自動的に取得する処理
+      （スクレイピング）は行いません。
+    </p>
+
+    <h2>4. 要求する権限とその理由</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>権限</th>
+          <th>理由</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th><code>storage</code></th>
+          <td>上記 1 の情報をブラウザ内に保存するため。</td>
+        </tr>
+        <tr>
+          <th><code>https://qiita.com/*</code></th>
+          <td>
+            Qiita 公式 API へのアクセスと、表示中のトレンドページの読み取り・非表示処理のため。
+            <strong>qiita.com 以外のサイトにはアクセスしません。</strong>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      閲覧履歴を取得する <code>history</code>、タブを操作する <code>tabs</code>、定期実行のための
+      <code>alarms</code> などの権限は<strong>要求していません。</strong>
+    </p>
+
+    <h2>5. 第三者への提供</h2>
+
+    <p>
+      収集した情報を第三者へ提供・販売することはありません。本拡張の単一の目的（Qiita
+      のトレンドから不自然ないいねパターンを検出して隠すこと）と無関係な用途に使用・転送することも
+      ありません。信用調査や融資の判断に使用・転送することもありません。
+    </p>
+
+    <h2>6. データの削除</h2>
+
+    <ul>
+      <li><strong>アクセストークン</strong>: 拡張機能の設定画面から削除できます</li>
+      <li><strong>いいねの記録</strong>: 7 日を過ぎたものは自動的に削除されます</li>
+      <li>
+        <strong>すべて</strong>: 拡張機能をアンインストールすると、
+        <code>chrome.storage.local</code> に保存された情報は削除されます。
+        <code>chrome.storage.sync</code> の設定値は、Chrome の同期の仕組み上、他の端末での反映に
+        時間がかかる場合があります
+      </li>
+    </ul>
+
+    <h2>7. 変更</h2>
+
+    <p>
+      本ポリシーを変更する場合は、このページを更新し、最終更新日を改めます。変更の履歴は
+      ソースコードのリポジトリで確認できます。
+    </p>
+
+    <h2>8. 問い合わせ</h2>
+
+    <p>
+      ご質問・ご指摘は
+      <a href="https://github.com/kawagoe6884/qiita-trend-cleaner/issues">GitHub の Issues</a>
+      へお願いします。
+    </p>
+
+    <footer>
+      <a href="./">Qiita Trend Cleaner</a> ·
+      <a href="https://github.com/kawagoe6884/qiita-trend-cleaner">ソースコード（MIT）</a>
+    </footer>
+  </body>
+</html>

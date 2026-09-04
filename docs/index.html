@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Qiita Trend Cleaner</title>
+    <meta
+      name="description"
+      content="Qiita のトレンドから、不自然ないいねパターンが見られる記事を検出して隠す非公式の Chrome 拡張機能。"
+    />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1a1a1a;
+        --muted: #5a5a5a;
+        --bg: #ffffff;
+        --line: #e2e2e2;
+        --accent: #55c500;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e8e8e8;
+          --muted: #a0a0a0;
+          --bg: #16181c;
+          --line: #30343a;
+        }
+      }
+      body {
+        margin: 0 auto;
+        padding: 3rem 1.25rem 5rem;
+        max-width: 42rem;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Noto Sans JP', Meiryo, sans-serif;
+        line-height: 1.85;
+      }
+      h1 {
+        font-size: 1.8rem;
+        margin-bottom: 0.2rem;
+      }
+      h2 {
+        font-size: 1.15rem;
+        margin-top: 2.5rem;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 0.3rem;
+      }
+      .tag {
+        display: inline-block;
+        background: var(--accent);
+        color: #fff;
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 0.15rem 0.5rem;
+        border-radius: 3px;
+        vertical-align: middle;
+      }
+      .lead {
+        color: var(--muted);
+        margin-top: 0.4rem;
+      }
+      .note {
+        border-left: 4px solid var(--accent);
+        padding: 0.1rem 0 0.1rem 1rem;
+        margin: 1.75rem 0;
+      }
+      ul {
+        padding-left: 1.3rem;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: 0.9em;
+        background: rgba(128, 128, 128, 0.16);
+        padding: 0.1em 0.35em;
+        border-radius: 3px;
+      }
+      a {
+        color: inherit;
+      }
+      nav a {
+        display: inline-block;
+        margin-right: 1.2rem;
+      }
+      footer {
+        margin-top: 4rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Qiita Trend Cleaner <span class="tag">非公式</span></h1>
+    <p class="lead">
+      Qiita のトレンドから、<strong>不自然ないいねパターン</strong>が見られる記事を検出して隠す
+      Chrome 拡張機能です。
+    </p>
+
+    <div class="note">
+      <p>
+        <strong>Qiita 株式会社とは無関係の非公式な拡張機能です。</strong>個人が開発・公開しています。
+      </p>
+    </div>
+
+    <h2>これは何をするか</h2>
+
+    <p>
+      同じ顔ぶれのアカウントが、複数の記事に短時間で集中していいねしている——という
+      <strong>共起のパターン</strong>を、ローカルに蓄積したデータから検出します。検出した著者は
+      一覧に出し、<strong>あなたが「妥当 / 誤り」を判断します。</strong>
+    </p>
+
+    <ul>
+      <li>判定は<strong>あなたが決めた閾値</strong>で行われます</li>
+      <li>
+        「妥当」と評価した著者は、任意で Qiita 側のミュートまで実行できます（<strong>既定はオフ</strong>）
+      </li>
+      <li><strong>一括自動ミュートはしません。</strong>ブロックも行いません</li>
+    </ul>
+
+    <h2>断定はしません</h2>
+
+    <p>
+      この拡張は「<strong>不自然ないいねパターン</strong>」を示すだけで、不正や規約違反を
+      断定しません。同じ組織の人が互いの記事を読んでいいねするのは正常な行動であり、
+      それも同じパターンとして現れます。
+    </p>
+
+    <p><strong>誤検知は起こります。</strong>判断は必ずあなたが行ってください。</p>
+
+    <h2>データの扱い</h2>
+
+    <ul>
+      <li>保存先は<strong>あなたのブラウザの中だけ</strong>です。外部サーバーへの送信はありません</li>
+      <li>通信先は <strong>Qiita の公式 API のみ</strong></li>
+      <li>収集した いいね の記録は<strong>7 日で自動的に破棄</strong>されます</li>
+      <li>権限は <code>storage</code> と <code>https://qiita.com/*</code> だけです</li>
+    </ul>
+
+    <p>詳しくは<a href="./privacy.html">プライバシーポリシー</a>をご覧ください。</p>
+
+    <h2>リンク</h2>
+
+    <nav>
+      <a href="./privacy.html">プライバシーポリシー</a>
+      <a href="https://github.com/kawagoe6884/qiita-trend-cleaner">ソースコード</a>
+      <a href="https://github.com/kawagoe6884/qiita-trend-cleaner/issues">不具合の報告・要望</a>
+    </nav>
+
+    <footer>MIT License · 開発は個人によるものです</footer>
+  </body>
+</html>
