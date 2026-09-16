@@ -956,6 +956,102 @@ describe('likes のページング', () => {
     expect((await getLikeIndex())['example-liker-a']?.likes).toHaveLength(1);
   });
 
+  /**
+   * ★ **取得中にいいねが増えると、最も古い側が最終ページの外へ出る。**
+   *
+   * `lastPage` は page=1 の応答の `Total-Count` から 1 度だけ決める。likes は
+   * 降順なので `page=lastPage` が「最も古い＝投稿直後」を持つが、増えたぶんだけ
+   * 全体が後ろへずれる。総数がページ境界を越えると、最も古い側は
+   * `lastPage + 1` へ移り、こちらは永久に取りに行かない。
+   *
+   * **欠けるのは窓の内側**なので、覆った範囲を主張すると `windowShare` が
+   * 小さい分母のまま高い占有率を出す（2026-09-16 のレビューで発見）。
+   */
+  describe('取得中にいいねが増えたとき', () => {
+    /** ページごとに異なる Total-Count を返す。実 API は毎応答で返す */
+    function growingPages(totals: Record<number, number>, fallback: number) {
+      likesMock.mockImplementation((_id, _token, p) => {
+        const requested = p ?? 1;
+        return Promise.resolve({
+          data: [likeAfter(`example-liker-p${String(requested)}`, requested * 100)],
+          totalCount: totals[requested] ?? fallback,
+          rate: { limit: 60, remaining: 55, resetAt: null },
+        });
+      });
+    }
+
+    it('★ ページ境界を越えて増えたら、覆った範囲を書かない', async () => {
+      // Arrange — page=1 の時点で 200 件（lastPage=2）。page=2 を取るまでに
+      // 201 件へ増えており、**最も古い 1 件は page=3 へ移っている**
+      growingPages({ 1: 200, 2: 201 }, 201);
+      // Act
+      await runScan([trendItem(1)]);
+      // Assert — 0 分から N 分までが揃っているとは言えない
+      const record = (await getLikeIndex())['example-liker-p2']?.likes[0];
+      expect(record?.itemCoveredMinutes).toBeUndefined();
+    });
+
+    it('★ 増えた後の総数を記録する（古い経路が取りこぼしに気づけるように）', async () => {
+      // Arrange — 覆った範囲を書かないだけでは windowShare の古い経路
+      // （保持件数 vs Total-Count）に落ちる。**古い総数のままだと
+      // 「保持件数 >= 総数」が成立して素通りする**
+      growingPages({ 1: 200, 2: 201 }, 201);
+      // Act
+      await runScan([trendItem(1)]);
+      // Assert
+      const record = (await getLikeIndex())['example-liker-p2']?.likes[0];
+      expect(record?.itemTotalLikes).toBe(201);
+    });
+
+    it('境界を越えない増加では、今までどおり覆った範囲を書く', async () => {
+      // Arrange — 250 → 255 は ceil(255/100) = 3 で lastPage と同じ。
+      // **最も古いいいねは page=3 に残っているので、何も取りこぼしていない。**
+      // ここで測定を捨てると、起きてもいない事故を理由に機能が死ぬ
+      growingPages({ 1: 250 }, 255);
+      // Act
+      await runScan([trendItem(1)]);
+      // Assert — page=3 → page=2 と遡って全部揃う
+      const record = (await getLikeIndex())['example-liker-p2']?.likes[0];
+      expect(record?.itemCoveredMinutes).toBe(AGE_MINUTES);
+    });
+
+    it('★ 途中まで覆えていても、そのあとずれたら主張を取り下げる', async () => {
+      // Arrange — **上の 2 件では足りない。**あちらは最初のページでずれを検知して
+      // 抜けるので、`covered` がまだ null のまま。ガードを外しても null が返り、
+      // **変異を入れても落ちない**（2026-09-16 の変異テストで露見）。
+      //
+      // ここでは page=5 を取って `covered` に値が入ったあと、page=4 で
+      // ずれに気づく。**この経路でだけ「主張を取り下げる」が観測できる。**
+      //
+      // 450 → lastPage=5。page=4 の時点で 501 件（ceil=6）なので、
+      // 最も古い側は page=6 へ移っている
+      growingPages({ 1: 450, 4: 501 }, 450);
+      // Act
+      await runScan([trendItem(1)]);
+      // Assert — page=5 の 500 分を握っていても、0 分からの連続が切れている
+      const record = (await getLikeIndex())['example-liker-p5']?.likes[0];
+      expect(record?.itemCoveredMinutes).toBeUndefined();
+    });
+
+    it('Total-Count が読めないページでは増加と誤認しない', async () => {
+      // Arrange — ヘッダーが欠けるのは想定内。**null を「増えた」と読むと、
+      // 測れるはずの記事が測れなくなる**（安全側に倒しすぎる方の失敗）
+      likesMock.mockImplementation((_id, _token, p) => {
+        const requested = p ?? 1;
+        return Promise.resolve({
+          data: [likeAfter(`example-liker-p${String(requested)}`, requested * 100)],
+          totalCount: requested === 1 ? 250 : null,
+          rate: { limit: 60, remaining: 55, resetAt: null },
+        });
+      });
+      // Act
+      await runScan([trendItem(1)]);
+      // Assert
+      const record = (await getLikeIndex())['example-liker-p2']?.likes[0];
+      expect(record?.itemCoveredMinutes).toBe(AGE_MINUTES);
+    });
+  });
+
   it('投稿時刻が読めなければ遡らない（枠を無駄にしない）', async () => {
     // Arrange — 打ち切りの判断ができないまま遡ると、上限まで枠を使って終わる
     likesMock.mockResolvedValue(page([['example-liker-a', 10]], 250));

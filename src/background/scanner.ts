@@ -282,12 +282,41 @@ async function collectLikes(
   let rate = first.rate;
   let covered: number | null = null;
   let complete = false;
+  /**
+   * 取得中にいいねが増え、**最も古いいいねが `lastPage` の外へ出た**か。
+   *
+   * `lastPage` は page=1 の応答の `Total-Count` から 1 度だけ決める。likes は
+   * 降順なので `page=lastPage` が「最も古い＝投稿直後」を持つが、**増えたぶんだけ
+   * 全体が後ろへずれる。**総数がページ境界を越えると、最も古い側が
+   * `lastPage + 1` へ移り、こちらは永久に取りに行かない。
+   *
+   * **欠けるのは投稿直後＝窓の内側**なので、覆った範囲を主張できない。
+   * `windowShare` は「窓を覆った」と信じて分母を確定するため、
+   * **分母が小さいまま高い占有率が出る**（`burst.ts` が「最も危険」と呼ぶ壊れ方）。
+   */
+  let shifted = false;
+  /** 最後に観測した総数。ずれたときだけ更新する（古い経路が気づけるように） */
+  let observedTotal = total;
 
   for (let i = 0; i < MAX_TAIL_PAGES; i += 1) {
     const page = lastPage - i;
     const res = await fetchLikes(item.itemId, token, page);
     rate = res.rate ?? rate;
     for (const like of res.data) byUser.set(like.user.id, like);
+
+    // **`Total-Count` は末尾ページの応答にも載っている**（`readArray` が全応答で
+    // 読む）ので、増加の検知に追加リクエストは要らない。
+    // **境界を越えたときだけ**倒す — 250 → 255 のように同じページに収まる増加では
+    // 何も取りこぼしていないので、測定を捨てる必要がない
+    if (res.totalCount !== null && Math.ceil(res.totalCount / API_PER_PAGE) > lastPage) {
+      shifted = true;
+      // 増えた後の総数を記録する。`itemCoveredMinutes` を書かないだけでは
+      // `windowShare` の古い経路（保持件数 vs `Total-Count`）に落ちるので、
+      // **そちらが取りこぼしに気づけるよう、新しい総数を渡す。**
+      // 古い値のままだと「保持件数 >= 総数」が成立して素通りする
+      observedTotal = res.totalCount;
+      break;
+    }
 
     if (page <= 2) {
       // 2 ページ目まで遡った = page=1 と合わせて全部持っている。
@@ -307,18 +336,27 @@ async function collectLikes(
     if (delta > MAX_BURST_WINDOW_MINUTES) break;
   }
 
-  if (!complete && (covered === null || covered <= MAX_BURST_WINDOW_MINUTES)) {
+  if (shifted) {
+    // **これが実機で何回出るかが、この修正の要否そのもの。**出ないなら
+    // 「起きうるが起きない」と分かり、出るなら取り直しの検討材料になる
+    // （想定内の競合なので debug。約束 11）
+    logger.debug('likes grew past the last page:', item.itemId, total, '->', observedTotal);
+  } else if (!complete && (covered === null || covered <= MAX_BURST_WINDOW_MINUTES)) {
     // 上限まで遡っても最大の窓を覆えなかった。**黙って切らない**（想定内なので debug）
     logger.debug('like pages truncated:', item.itemId, 'covered minutes:', covered);
   }
 
+  // 全ページ揃ったなら覆っているのは「取得の瞬間まで」。それより先は存在しない。
+  // 打ち切ったなら、最後に取ったページで最も新しいいいねまで
+  const reach = complete ? age : covered;
+
   return {
     likes: [...byUser.values()],
     rate,
-    totalCount: total,
-    // 全ページ揃ったなら覆っているのは「取得の瞬間まで」。それより先は存在しない。
-    // 打ち切ったなら、最後に取ったページで最も新しいいいねまで
-    coveredMinutes: complete ? age : covered,
+    totalCount: observedTotal,
+    // **ページ境界を越えて増えていたら何も主張しない。**最も古い側を
+    // 取りこぼしているので、0 分から N 分までが揃っているとは言えない
+    coveredMinutes: shifted ? null : reach,
   };
 }
 
