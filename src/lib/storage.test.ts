@@ -653,10 +653,27 @@ describe('forgetMuteConfirmation', () => {
     expect(log['example-author-a']?.outcome).toBe('menu-unavailable');
   });
 
-  it('読めない時刻では捨てない（証拠が読めないなら残す側に倒す）', async () => {
+  it('スナップショット側の時刻が読めなければ捨てない', async () => {
+    // 証拠が読めないなら残す側に倒す。消しすぎると、ミュート済みの著者に
+    // 「ミュートする」を出すことになる
     await storage.recordMuteOutcome('example-author-a', 'muted', MUTED_AT);
     const log = await storage.forgetMuteConfirmation(['example-author-a'], 'not-a-date');
     expect(log['example-author-a']?.mutedAt).toBe('2026-09-16T10:00:00.000Z');
+  });
+
+  it('★ 記録側の時刻が読めなければ捨てない', async () => {
+    // Arrange — **上のテストとは別の分岐。**getMuteLog は mutedAt を
+    // 「空でない文字列」としか検査しないので、壊れた値はここまで届く。
+    // 2 つの NaN のうち片方しか通していなかったことは変異テストで露見した
+    await chrome.storage.local.set({
+      muteLog: {
+        'example-author-a': { outcome: 'muted', at: '2026-09-16T10:00:00.000Z', mutedAt: 'x' },
+      },
+    });
+    // Act
+    const log = await storage.forgetMuteConfirmation(['example-author-a'], AFTER);
+    // Assert
+    expect(log['example-author-a']?.mutedAt).toBe('x');
   });
 
   it('storage に書き戻る（開き直しても消えたまま）', async () => {
