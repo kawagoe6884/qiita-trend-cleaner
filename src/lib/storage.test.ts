@@ -726,6 +726,8 @@ describe('トレンドのスナップショット', () => {
     });
   });
 
+  // **本番では起きない**（sendTrendItems は items.length > 0 のときだけ送る）。
+  // null と空配列を取り違えないという storage の契約を固定するためのテスト
   it('1 件も読めなかったことは記録できる（null とは別物）', async () => {
     await storage.saveTrendSnapshot([], NOW);
     await expect(storage.getTrendSnapshot()).resolves.toEqual({

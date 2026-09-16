@@ -193,6 +193,29 @@ describe('loadPopupState', () => {
     expect(state.lastScanAt).toBe('2026-08-20T03:00:00.000Z');
   });
 
+  it('★ 保存済みのスナップショットを候補に配線する', async () => {
+    // Arrange — **ここだけがテストの穴だった。**toViews の第 4 引数は省略可能
+    // （既定 null）なので、loadPopupState が渡すのをやめても型は通り、
+    // toViews 自身のテストも popup-page のテスト（loadPopupState をモック）も
+    // 全部通る。**本番だけ静かに死ぬ**（エントリを index.ts にした事故と同じ形）
+    await storage.saveCandidates([candidate('1')]);
+    await storage.saveTrendSnapshot(['example-author-z'], NOW);
+    // Act
+    const state = await loadPopupState(NOW);
+    // Assert — example-author-1 は今日のトレンドに居ない
+    expect(state.views[0]?.offTrendAt).toBe(NOW.toISOString());
+  });
+
+  it('トレンドに居る候補には配線しても null のまま', async () => {
+    // Arrange
+    await storage.saveCandidates([candidate('1')]);
+    await storage.saveTrendSnapshot(['example-author-1'], NOW);
+    // Act
+    const state = await loadPopupState(NOW);
+    // Assert
+    expect(state.views[0]?.offTrendAt).toBeNull();
+  });
+
   it('429 中なら案内を載せる', async () => {
     // Arrange
     await storage.saveRateLimit(Math.floor(NOW.getTime() / 1000) + 600);
