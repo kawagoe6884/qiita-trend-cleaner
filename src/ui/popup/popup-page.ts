@@ -246,7 +246,7 @@ function muteStatusLine(view: CandidateView): HTMLParagraphElement[] {
  * 「**押す前に、いま押しても無駄だと分かる**」ようにしたい。
  */
 function offTrendLine(view: CandidateView): HTMLParagraphElement[] {
-  const text = describeOffTrend(view.offTrendAt);
+  const text = describeOffTrend(view);
   return text === '' ? [] : [paragraph('off-trend', text)];
 }
 

@@ -28,7 +28,7 @@ import * as storage from '../../lib/storage';
 import * as domain from '../../types/domain';
 import { DEFAULT_SETTINGS } from '../../types/domain';
 import { RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from '../../api/rate-budget';
-import type { Candidate, FeedbackLog, LikeIndex } from '../../types/domain';
+import type { Candidate, FeedbackLog, LikeIndex, MuteRecord } from '../../types/domain';
 
 /** 合成の候補。実アカウント名・実 item_id は使わない */
 function candidate(suffix: string, clusterSize = 5): Candidate {
@@ -684,20 +684,57 @@ describe('toViews の offTrendAt', () => {
 describe('describeOffTrend', () => {
   const AT = '2026-09-16T10:00:00.000Z';
 
+  /** 候補 1 件ぶんのビュー。トレンドに居ない状態を既定にする */
+  function offTrendView(mute: MuteRecord | null = null): CandidateView {
+    const [view] = toViews([candidate('a')], {}, {}, { authors: ['example-author-z'], at: AT });
+    if (view === undefined) throw new Error('fixture broken');
+    return { ...view, mute };
+  }
+
   it('出ているときは空文字（行ごと出さない）', () => {
-    expect(describeOffTrend(null)).toBe('');
+    const [view] = toViews([candidate('a')], {}, {}, { authors: ['example-author-a'], at: AT });
+    if (view === undefined) throw new Error('fixture broken');
+    expect(describeOffTrend(view)).toBe('');
   });
 
   it('撮った時刻に紐づけて言う（現在形で断定しない）', () => {
     // Arrange & Act
-    const text = describeOffTrend(AT);
+    const text = describeOffTrend(offTrendView());
     // Assert — トレンドを 2 日開いていなければ、いま出ているかは分からない
     expect(text).toContain(formatJst(AT));
     expect(text).not.toContain('いま出ていません');
   });
 
+  it('★ 押し直しを促さない（ミュート済みの著者には起こり得ない）', () => {
+    // Arrange — 2026-09-16 実機。ユーザーが Qiita 側で手動ミュートすると
+    // 拡張には記録が残らないまま著者がトレンドから消えるので、
+    // 「順番に押し出された」と「ミュート済み」を**区別できない**。
+    // 区別できないものを根拠に行動を約束すると、2026-08-24 の
+    // 「次に出てきたときに押し直してください」を作り直すことになる
+    const text = describeOffTrend(offTrendView());
+    // Assert
+    expect(text).not.toContain('次に出てきたとき');
+    expect(text).toContain('いまは押せません');
+  });
+
+  it('★ 既にミュート済みの可能性に触れる（手動ミュートを説明できるのはここだけ）', () => {
+    expect(describeOffTrend(offTrendView())).toContain('既にミュート');
+  });
+
+  it('★ 拡張がミュート済みだと知っている著者には出さない（理由は mute の行が言う）', () => {
+    // Arrange — 同じことを 2 行で言うと、どちらが理由なのか読めなくなる
+    const record = { outcome: 'muted' as const, at: AT, mutedAt: AT };
+    // Act & Assert
+    expect(describeOffTrend(offTrendView(record))).toBe('');
+  });
+
+  it('ミュートに失敗しただけの記録では出す（まだ理由を言えていない）', () => {
+    const record = { outcome: 'menu-unavailable' as const, at: AT };
+    expect(describeOffTrend(offTrendView(record))).not.toBe('');
+  });
+
   it('候補の行では解除の案内を繰り返さない（最終スキャンの下に常設した）', () => {
-    expect(describeOffTrend(AT)).not.toContain('ミュート設定');
+    expect(describeOffTrend(offTrendView())).not.toContain('ミュート設定');
   });
 });
 

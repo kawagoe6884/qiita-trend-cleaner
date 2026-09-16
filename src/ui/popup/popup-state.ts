@@ -637,10 +637,23 @@ export function describeMuteRecord(record: MuteRecord): string {
  * 【断定しない】
  * 言えるのは「そのスナップショットに居なかった」だけ。いま出ているかは分からない
  * ので、必ず時刻に紐づける。**`mutedAt` の文言と同じ理由。**
+ *
+ * 【★ 押し直しを促さない】（2026-09-16 実機）
+ * 初版は「**次に出てきたときに押してください**」と書いていた。**ミュート済みの
+ * 著者には起こり得ない。**ユーザーが Qiita 側で手動ミュートすると、拡張には
+ * `mutedAt` の記録が残らないまま著者がトレンドから消えるので、
+ * 「順番に押し出された」と「ミュート済み」が**区別できない**。
+ * 区別できないものを根拠に行動を約束しない — 2026-08-24 に
+ * `not-on-page` の文言で直したのと**同じ誤りを、新しい行で作り直していた**。
+ *
+ * 【記録があるなら、そちらが理由を言っている】
+ * `mutedAt` が立っていれば `describeMuteRecord` が説明済みなので出さない。
+ * 同じことを 2 行で言うと、どちらが理由なのか読めなくなる。
  */
-export function describeOffTrend(offTrendAt: IsoDateTime | null): string {
-  if (offTrendAt === null) return '';
-  return `${formatJst(offTrendAt)} に開いたトレンドには出ていませんでした。ミュートは表示中のカードから行うので、次に出てきたときに押してください。`;
+export function describeOffTrend(view: CandidateView): string {
+  if (view.offTrendAt === null) return '';
+  if (view.mute?.mutedAt !== undefined) return '';
+  return `${formatJst(view.offTrendAt)} に開いたトレンドには出ていませんでした。ミュートは表示中のカードから行うので、いまは押せません。Qiita 側で既にミュートした著者もトレンドから外れるので、ここに入ります。`;
 }
 
 /**
