@@ -270,6 +270,11 @@ export async function recordMuteOutcome(
  * 【読めない時刻は捨てない】
  * 証拠が読めないときは、古い記録を残す側に倒す。消しすぎると
  * ミュート済みの著者に「ミュートする」を出すことになる。
+ *
+ * 【ポップアップの `recordMuteOutcome` と同じ muteLog を触る】
+ * 読み直してから書くまでを 1 マイクロタスクに収める（`persistIndexAndDetect`
+ * と同じ扱い）。スナップショットの保存を**先に**済ませてあるのは、その await を
+ * この窓の外に出すため。
  */
 export async function forgetMuteConfirmation(
   handles: readonly AccountHandle[],
