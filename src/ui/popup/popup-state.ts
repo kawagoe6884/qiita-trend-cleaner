@@ -653,7 +653,14 @@ export function describeMuteRecord(record: MuteRecord): string {
 export function describeOffTrend(view: CandidateView): string {
   if (view.offTrendAt === null) return '';
   if (view.mute?.mutedAt !== undefined) return '';
-  return `${formatJst(view.offTrendAt)} に開いたトレンドには出ていませんでした。ミュートは表示中のカードから行うので、いまは押せません。Qiita 側で既にミュートした著者もトレンドから外れるので、ここに入ります。`;
+  // 【短くした】（2026-09-16 ユーザー「長すぎる」）3 文 → 1 行。
+  // **「いまは押せません」を外した。**ミュート連動がオフのとき画面にミュートの
+  // ボタンは無く、押せるのは「妥当 / 誤り」で、それは押して問題ない
+  // （判定は保存され、再びトレンドに出たときに効く）。何が押せないのかが
+  // 読み手に伝わらず、判定まで止めてしまう文だった。
+  // 残したのは ①時刻（現在形にしない）②手動ミュートの可能性（押し直しを
+  // 待たせない）の 2 つだけ
+  return `${formatJst(view.offTrendAt)} 時点でトレンド外（ミュート済みの著者も含む）`;
 }
 
 /**

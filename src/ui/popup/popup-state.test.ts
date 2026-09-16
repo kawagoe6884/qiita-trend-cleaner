@@ -714,11 +714,28 @@ describe('describeOffTrend', () => {
     const text = describeOffTrend(offTrendView());
     // Assert
     expect(text).not.toContain('次に出てきたとき');
-    expect(text).toContain('いまは押せません');
+    expect(text).not.toContain('押してください');
   });
 
-  it('★ 既にミュート済みの可能性に触れる（手動ミュートを説明できるのはここだけ）', () => {
-    expect(describeOffTrend(offTrendView())).toContain('既にミュート');
+  it('★ 判定まで止める文にしない（押せないのはミュートだけ）', () => {
+    // Arrange — 2026-09-16 に「長すぎる」で短くしたとき外した語。
+    // ミュート連動がオフだと画面にミュートのボタンは無く、押せるのは
+    // 「妥当 / 誤り」で、それは押して問題ない（判定は保存され、再び
+    // トレンドに出たときに効く）。「押せません」は何が押せないのか伝わらず、
+    // 判定そのものを止めてしまう
+    const text = describeOffTrend(offTrendView());
+    // Assert
+    expect(text).not.toContain('押せません');
+  });
+
+  it('★ ミュート済みの可能性に触れる（手動ミュートを説明できるのはここだけ）', () => {
+    expect(describeOffTrend(offTrendView())).toContain('ミュート済み');
+  });
+
+  it('1 行に収める（3 文あった頃は「長すぎる」と言われた）', () => {
+    // 句点で文を区切っていたのをやめた。**文字数では固定しない** —
+    // 日時の書式が変わるだけで壊れるテストになる
+    expect(describeOffTrend(offTrendView())).not.toContain('。');
   });
 
   it('★ 拡張がミュート済みだと知っている著者には出さない（理由は mute の行が言う）', () => {
