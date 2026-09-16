@@ -11,6 +11,7 @@ import {
   describeCall,
   describeMuteOutcome,
   describeMuteRecord,
+  describeOffTrend,
   describeEmpty,
   describeWindowShare,
   describeCoAuthors,
@@ -615,12 +616,80 @@ describe('toViews のミュート結果', () => {
 });
 
 /**
- * ★ 2026-08-24 の実機で見つかった文言の誤りの番人。
+ * ★ 候補は 7 日ぶんの蓄積から出るので、トレンドを去った著者も残り続ける。
+ * ミュートは表示中のカードを操作するため、その状態で押すと必ず失敗する。
+ * **押す前に理由が分かるようにする**（ユーザー報告 2026-09-16:
+ * 「現在進行形でトレンドにいない投稿者が候補に表れている」）。
+ */
+describe('toViews の offTrendAt', () => {
+  const AT = '2026-09-16T10:00:00.000Z';
+  const HANDLE = 'example-author-a';
+
+  it('★ スナップショットが無ければ null（全員に「出ていません」と言わない）', () => {
+    // Arrange — 更新直後はまだ一度もトレンドを開いていない。ここで
+    // 「居ない = 出ていない」と読み替えると、**候補 30 件ぶんの嘘が並ぶ**
+    // （itemCoveredMinutes が既存データの上で死んだのと同じ形）
+    // Act
+    const [view] = toViews([candidate('a')], {}, {});
+    // Assert
+    expect(view?.offTrendAt).toBeNull();
+  });
+
+  it('スナップショットに居れば null', () => {
+    const snapshot = { authors: [HANDLE], at: AT };
+    const [view] = toViews([candidate('a')], {}, {}, snapshot);
+    expect(view?.offTrendAt).toBeNull();
+  });
+
+  it('スナップショットに居なければ、撮った時刻を持つ', () => {
+    // Arrange — 別の著者だけが出ていた
+    const snapshot = { authors: ['example-author-z'], at: AT };
+    // Act
+    const [view] = toViews([candidate('a')], {}, {}, snapshot);
+    // Assert — **boolean ではなく時刻。**スナップショット自体が古くなるので、
+    // 「いま出ていない」とは言えない
+    expect(view?.offTrendAt).toBe(AT);
+  });
+
+  it('1 件も読めなかったスナップショットでも時刻を持つ（null とは別物）', () => {
+    const snapshot = { authors: [], at: AT };
+    const [view] = toViews([candidate('a')], {}, {}, snapshot);
+    expect(view?.offTrendAt).toBe(AT);
+  });
+});
+
+describe('describeOffTrend', () => {
+  const AT = '2026-09-16T10:00:00.000Z';
+
+  it('出ているときは空文字（行ごと出さない）', () => {
+    expect(describeOffTrend(null)).toBe('');
+  });
+
+  it('撮った時刻に紐づけて言う（現在形で断定しない）', () => {
+    // Arrange & Act
+    const text = describeOffTrend(AT);
+    // Assert — トレンドを 2 日開いていなければ、いま出ているかは分からない
+    expect(text).toContain(formatJst(AT));
+    expect(text).not.toContain('いま出ていません');
+  });
+
+  it('候補の行では解除の案内を繰り返さない（最終スキャンの下に常設した）', () => {
+    expect(describeOffTrend(AT)).not.toContain('ミュート設定');
+  });
+});
+
+/**
+ * ★ 実機で見つかった文言の誤りの番人。**2 度直している。**
  *
- * ミュートすると Qiita がその著者の記事をトレンドから外す。そのあと同じ候補で
- * 「妥当」を押し直すと not-on-page になるが、outcome だけを見て
- * 「次に出てきたときに押し直してください」と案内していた。
- * ミュート済みの著者はもう出てこないので、起こり得ないことを促していた。
+ * ①2026-08-24: ミュートしたあと押し直すと not-on-page になるのに、outcome だけを
+ * 見て「次に出てきたときに押し直してください」と案内していた。
+ *
+ * ②2026-09-16: その修正で入れた「ミュート済みです。ミュートした著者の記事は
+ * トレンドから外れるので、ここには出てきません。」が**2 文とも偽だった。**
+ * ユーザー実測 — 同一著者の 3 記事のうち 1 件をミュートしても DOM は 3 件のまま
+ * （消えるのはページを読み込み直したとき）。そして Qiita 側で解除すれば当然また
+ * 出てくる。**現在形の状態を主張すると、解除された瞬間に嘘になる。**
+ * 確認できた時刻で言えば偽にならない。
  */
 describe('describeMuteRecord', () => {
   const AT = '2026-08-24T12:00:00.000Z';
@@ -652,11 +721,15 @@ describe('describeMuteRecord', () => {
     expect(describeMuteRecord(record)).toContain('画面構造');
   });
 
-  it('already-muted は押していないことが記録の文言にも出る', () => {
-    // Arrange — 押していないので「ミュートしました」にはしない
+  it('already-muted でも「ミュートした」とは言わない（押していない）', () => {
+    // Arrange — メニューの文言が解除側だったので押していない。
+    // 言えるのは「その時点でミュート中だと確認できた」だけ
     const record = { outcome: 'already-muted' as const, at: AT, mutedAt: AT };
-    // Act & Assert
-    expect(describeMuteRecord(record)).toBe(describeMuteOutcome('already-muted'));
+    // Act
+    const text = describeMuteRecord(record);
+    // Assert
+    expect(text).toContain(formatJst(AT));
+    expect(text).not.toContain('ミュートしました');
   });
 
   it('成功の記録が無ければ、従来どおり押し直しを促す', () => {
@@ -666,9 +739,15 @@ describe('describeMuteRecord', () => {
     expect(describeMuteRecord(record)).toContain('押し直して');
   });
 
-  it('成功そのものは成功の文言のまま', () => {
+  it('ミュート済みは現在形で言わず、確認できた時刻で言う', () => {
+    // Arrange — 「ミュートしました」は、ユーザーが Qiita 側で解除した瞬間に
+    // 嘘になる。しかも拡張はそれを知らない（トレンドに戻るまで証拠が届かない）
     const record = { outcome: 'muted' as const, at: AT, mutedAt: AT };
-    expect(describeMuteRecord(record)).toBe(describeMuteOutcome('muted'));
+    // Act
+    const text = describeMuteRecord(record);
+    // Assert
+    expect(text).toContain(formatJst(AT));
+    expect(text).not.toContain('ミュートしました');
   });
 
   it('成功の記録があっても、届かなかったときは押し直しを促す', () => {

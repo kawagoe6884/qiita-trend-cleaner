@@ -27,6 +27,7 @@ import type {
   MuteOutcome,
   MuteRecord,
   Settings,
+  TrendSnapshot,
   Verdict,
 } from '../../types/domain';
 import type { AuthorCoverage } from '../../detect/like-index';
@@ -94,19 +95,38 @@ export interface CandidateView {
    * 押し直すべきかどうかが分からなくなる（適合率の分母 0 を 0% にしないのと同じ話）。
    */
   mute: MuteRecord | null;
+  /**
+   * **その時点でトレンドに出ていなかった**と確認できたスナップショットの時刻。
+   * 出ていた場合と、**スナップショットをまだ 1 つも持っていない場合**は null。
+   *
+   * 候補は 7 日ぶんの蓄積から出るので、5 日前に検出した著者はトレンドから
+   * 去ったあとも候補に残る。ミュートは表示中のカードを操作するので、
+   * その状態で押しても必ず失敗する。**押す前に理由を出すためのフィールド。**
+   *
+   * 【なぜ boolean ではなく時刻なのか】
+   * スナップショット自体が古くなる。「出ていません」は現在形の主張になり、
+   * 2 日開いていなければ偽になりうる。時刻に紐づければ偽にならない。
+   */
+  offTrendAt: IsoDateTime | null;
 }
 
 /**
  * 候補に判定・根拠リンク・ミュートの結果を重ねる。Candidate 自体は変更しない。
  *
- * muteLog を省略できるようにしてあるのは、ミュートを使わない呼び出し
- * （Phase 6 からの経路）を書き換えずに済ませるため。
+ * muteLog と trendSnapshot を省略できるようにしてあるのは、それらを使わない
+ * 呼び出し（Phase 6 からの経路）を書き換えずに済ませるため。
+ *
+ * **スナップショットが無いときは全員 null。**「まだ一度もトレンドを開いて
+ * いない」を「全員トレンドに出ていない」と読み替えると、更新直後のユーザーに
+ * 候補 30 件ぶんの嘘が並ぶ（itemCoveredMinutes で踏んだのと同じ形）。
  */
 export function toViews(
   candidates: Candidate[],
   feedback: FeedbackLog,
   muteLog: MuteLog = {},
+  trendSnapshot: TrendSnapshot | null = null,
 ): CandidateView[] {
+  const onTrend = trendSnapshot === null ? null : new Set(trendSnapshot.authors);
   return candidates.map((candidate) => ({
     candidate,
     verdict: feedback[candidate.authorHandle] ?? null,
@@ -115,6 +135,10 @@ export function toViews(
       url: `https://qiita.com/${candidate.authorHandle}/items/${itemId}`,
     })),
     mute: muteLog[candidate.authorHandle] ?? null,
+    offTrendAt:
+      trendSnapshot === null || onTrend === null || onTrend.has(candidate.authorHandle)
+        ? null
+        : trendSnapshot.at,
   }));
 }
 
@@ -127,9 +151,13 @@ export interface PartitionedViews {
  * 折りたたむものと出すものに分ける。**純粋関数。順序は保つ。**
  *
  * 【mutedAt で見る。outcome では見ない】
- * ミュートすると Qiita がその著者の記事をトレンドから外すので、押し直すと
- * 必ず `not-on-page` になる（MuteRecord.mutedAt の JSDoc）。outcome で
- * 判定すると、**押し直した瞬間に折りたたみから飛び出す。**
+ * 押し直したときの outcome は、ページを読み込み直したかで `already-muted` にも
+ * `not-on-page` にも転ぶ（MuteRecord.mutedAt の JSDoc）。outcome で判定すると、
+ * **押し直した瞬間に折りたたみから飛び出す。**
+ *
+ * 解除を検知すると記録ごと消えるので（`storage.forgetMuteConfirmation`）、
+ * **解除された著者はここから自然に外れて open 側に戻る。**それが正しい —
+ * もう一度ミュートするかどうかを選べる状態に戻したい。
  *
  * 【'muted' では「誤り」を押しても外れない】
  * 「誤り」を押しても Qiita 側のミュートは解除されない。折りたたみに残るのは
@@ -404,6 +432,7 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
     muteOnValid,
     muteLog,
     foldTarget,
+    trendSnapshot,
   ] = await Promise.all([
     storage.getCandidates(),
     storage.getFeedback(),
@@ -415,9 +444,10 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
     storage.getMuteOnValid(),
     storage.getMuteLog(),
     storage.getFoldTarget(),
+    storage.getTrendSnapshot(),
   ]);
   return {
-    views: toViews(candidates, feedback, muteLog),
+    views: toViews(candidates, feedback, muteLog, trendSnapshot),
     precision: precisionOf(feedback),
     settings,
     rateLimitNotice: rateLimitNotice(until, now),
@@ -556,13 +586,22 @@ export async function requestMute(handle: AccountHandle, now: Date): Promise<Mut
 }
 
 /**
- * 記録 1 件の文言。**成功したことがあるかどうかで言い方を変える。**
+ * 記録 1 件の文言。**ミュート済みだと確認できたことがあるかで言い方を変える。**
  *
  * 【なぜ outcome だけでは足りないのか】
- * **ミュートすると Qiita がその著者の記事をトレンドから外す**（2026-08-24 実機）。
- * そのあと同じ候補で「妥当」を押し直すと、カードが無いので `not-on-page` になる。
- * outcome だけを見ると「次に出てきたときに押し直してください」と案内してしまうが、
- * **ミュート済みの著者はもう出てこない。**起こり得ないことを促す文言だった。
+ * ミュートしたあと押し直すと、**ページを読み込み直す前なら** `already-muted`、
+ * **読み込み直したあとなら** `not-on-page` が返る。outcome だけを見ると
+ * 「次に出てきたときに押し直してください」と案内してしまう。
+ *
+ * 【現在形で言わない】（2026-09-16）
+ * 以前は「ミュート済みです。…ここには出てきません。」と書いていた。
+ * **2 つとも実測で偽になった** — 押した直後の DOM には記事が残っており
+ * （ユーザー実測: 3 件のうち 1 件をミュートしても 3 件のまま）、ユーザーが
+ * Qiita 側で解除すれば当然また出てくる。**現在形の主張は、解除された瞬間に
+ * 嘘になり、しかも拡張はそれを知らない。**確認できた時刻に紐づければ偽にならない。
+ *
+ * 解除を検知できたときは記録ごと消えるので（`storage.forgetMuteConfirmation`）、
+ * ここに来る時点で「解除の証拠はまだ無い」。だから時刻で言うのが最も強い主張。
  *
  * 【`menu-unavailable` を特例から外した】（2026-08-29）
  * 以前は「既にミュート済みなら `menu-unavailable` に落ちる」ことを根拠に、
@@ -573,10 +612,35 @@ export async function requestMute(handle: AccountHandle, now: Date): Promise<Mut
  */
 export function describeMuteRecord(record: MuteRecord): string {
   if (record.mutedAt === undefined) return describeMuteOutcome(record.outcome);
-  if (record.outcome === 'not-on-page') {
-    return 'ミュート済みです。ミュートした著者の記事はトレンドから外れるので、ここには出てきません。';
+  switch (record.outcome) {
+    case 'muted':
+    case 'already-muted':
+    case 'not-on-page':
+      // この 3 つは「ミュート中である」という状態の主張。**現在形をやめて
+      // 時刻に紐づける。**解除の導線はここに書かない（最終スキャンの下に常設）
+      return `${formatJst(record.mutedAt)} にミュート済みであることを確認しました。`;
+    case 'menu-unavailable':
+    case 'timeout':
+    case 'no-trend-tab':
+    case 'unreachable':
+      // **失敗を確認時刻で塗り潰さない。**直すべき不具合か、ユーザーが取れる
+      // 行動があるものばかりで、隠すと気づけなくなる（`menu-unavailable` を
+      // 特例から外したのと同じ理由）
+      return describeMuteOutcome(record.outcome);
   }
-  return describeMuteOutcome(record.outcome);
+}
+
+/**
+ * トレンドに出ていない候補への案内。**出ている／スナップショットが無いなら空文字**
+ * （describeFold と同じ規約で、器ごと出さない）。
+ *
+ * 【断定しない】
+ * 言えるのは「そのスナップショットに居なかった」だけ。いま出ているかは分からない
+ * ので、必ず時刻に紐づける。**`mutedAt` の文言と同じ理由。**
+ */
+export function describeOffTrend(offTrendAt: IsoDateTime | null): string {
+  if (offTrendAt === null) return '';
+  return `${formatJst(offTrendAt)} に開いたトレンドには出ていませんでした。ミュートは表示中のカードから行うので、次に出てきたときに押してください。`;
 }
 
 /**

@@ -1,4 +1,5 @@
 import { logger } from '../lib/logger';
+import * as storage from '../lib/storage';
 import { runScan } from './scanner';
 import type { QtgRequest, QtgResponse } from '../types/messages';
 import type { TrendItem } from '../types/domain';
@@ -59,6 +60,31 @@ function safeScan(items: TrendItem[], trigger: string): void {
   });
 }
 
+/**
+ * 届いた一覧を「いま誰がトレンドに出ているか」の記録として残す。
+ *
+ * 【スキャンとは別の経路にしてある】
+ * `runScan` はレート枠や既知判定で早々に何もせず戻ることがあるが、この記録は
+ * **API を 1 本も使わない**ので、スキャンの成否と無関係に毎回残すのが正しい。
+ *
+ * 【`now` をここで取る】
+ * 撮影時刻はメッセージを**受け取った瞬間**であって、スキャンが終わった時刻では
+ * ない。`runScan` は数秒かかりうるので、その間にユーザーがミュートを押すと、
+ * 「押す前のスナップショット」を根拠に押した記録を消してしまう。
+ */
+function safeRecordTrend(items: TrendItem[]): void {
+  const now = new Date();
+  const handles = items.map((item) => item.authorHandle);
+  void (async () => {
+    const snapshot = await storage.saveTrendSnapshot(handles, now);
+    // ここに居る著者は、その時点でミュートされていない（TrendSnapshot の JSDoc）
+    await storage.forgetMuteConfirmation(handles, snapshot.at);
+  })().catch((error: unknown) => {
+    // 記録に失敗しても検出は動く。想定内なので debug に留める（約束 11）
+    logger.debug('trend snapshot failed:', error);
+  });
+}
+
 chrome.runtime.onInstalled.addListener((details) => {
   // ここでスキャンしない。トレンドページを開いた時点で content script が知らせる
   logger.info('installed:', details.reason, 'version:', VERSION);
@@ -70,6 +96,7 @@ chrome.runtime.onMessage.addListener(
       sendResponse({ type: 'PONG', version: VERSION });
     } else if (message.type === 'TREND_ITEMS') {
       if (isTrendItems(message.items)) {
+        safeRecordTrend(message.items);
         safeScan(message.items, 'trend page');
         sendResponse({ type: 'SCAN_ACCEPTED' });
       } else {

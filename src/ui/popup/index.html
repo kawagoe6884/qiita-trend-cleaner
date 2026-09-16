@@ -125,6 +125,11 @@
       .evidence {
         font-size: 0.85rem;
       }
+      /* いまトレンドに出ていない候補への案内。**display は指定しない**
+         （.co-authors と同じ理由。UA の [hidden]{display:none} に勝ってしまう） */
+      .off-trend {
+        font-size: 0.85rem;
+      }
       /* 「この検出は [妥当] [誤り]」。**ラベルを左に置く** —
          ボタンだけだと、何に対する「妥当」なのかが読み取れない */
       .actions {
@@ -256,7 +261,8 @@
       </p>
       <p class="slider">
         <label for="min-shared">何記事に共通していたら</label>
-        <input type="range" id="min-shared" min="2" max="10" step="1" />
+        <!-- max は popup-page.ts の RANGES と必ず揃える。理由もそちらに書いてある -->
+        <input type="range" id="min-shared" min="2" max="7" step="1" />
         <output id="min-shared-value"></output>
       </p>
       <p class="slider">

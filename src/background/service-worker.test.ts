@@ -152,6 +152,80 @@ describe('service worker のメッセージ処理', () => {
 });
 
 /**
+ * ★ 解除の検知。**ミュート済みの著者は新規ロードのトレンドに載らない**
+ * （2026-09-16 ユーザー実測: 3 記事のうち 1 件をミュートしても DOM は 3 件のまま。
+ * ページを更新すると 0 件）。`TREND_ITEMS` は content script の初期化で 1 回だけ
+ * 送られるので、**ここに載っている著者はその時点でミュートされていない**。
+ *
+ * 三点メニューを開いて文言を読む必要はない — 追加リクエストもクリックも 0。
+ */
+describe('トレンドのスナップショット', () => {
+  function sendTrend(items: unknown): void {
+    const onMessage = firstListener<MessageListener>(chrome.runtime.onMessage);
+    const message = Array.isArray(items)
+      ? ({ type: 'TREND_ITEMS', items: items as TrendItem[] } satisfies QtgRequest)
+      : malformed(items);
+    onMessage(message, null, vi.fn());
+  }
+
+  it('受け取った著者を記録する', async () => {
+    // Arrange
+    await bootServiceWorker();
+    const storage = await import('../lib/storage');
+    // Act
+    sendTrend([ITEM]);
+    // Assert
+    await vi.waitFor(async () => {
+      const snapshot = await storage.getTrendSnapshot();
+      expect(snapshot?.authors).toEqual(['example-author-1']);
+    });
+  });
+
+  it('★ 戻ってきた著者のミュート記録を捨てる（解除された）', async () => {
+    // Arrange — 過去にミュートし、そのあとユーザーが Qiita 側で解除した
+    await bootServiceWorker();
+    const storage = await import('../lib/storage');
+    // **固定の日時を書かない。**service worker はスナップショットの時刻を
+    // 実時刻（new Date()）で取るので、固定値だと実行時刻しだいで未来になり、
+    // 「確認より前のスナップショットでは捨てない」ガードに正しく弾かれる
+    await storage.recordMuteOutcome('example-author-1', 'muted', new Date(Date.now() - 60_000));
+    // Act — 解除したので記事がトレンドに戻ってきた
+    sendTrend([ITEM]);
+    // Assert — 捨てないと「ミュート済みであることを確認しました」と言い続ける
+    await vi.waitFor(async () => {
+      await expect(storage.getMuteLog()).resolves.toEqual({});
+    });
+  });
+
+  it('★ 壊れたメッセージでは記録しない', async () => {
+    // Arrange — 検証を通る前に記録すると、別コンテキストから送られた
+    // 任意の著者名でミュート記録を消せてしまう
+    await bootServiceWorker();
+    const storage = await import('../lib/storage');
+    // Act
+    sendTrend([{ ...ITEM, url: 'javascript:alert(1)' }]);
+    // Assert
+    await expect(storage.getTrendSnapshot()).resolves.toBeNull();
+  });
+
+  it('スキャンが失敗しても記録は残る（API を 1 本も使わないので独立させてある）', async () => {
+    // Arrange
+    const { runScan, logger } = await bootServiceWorker();
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    runScan.mockRejectedValueOnce(new Error('boom'));
+    const storage = await import('../lib/storage');
+    // Act
+    sendTrend([ITEM]);
+    // Assert
+    await vi.waitFor(async () => {
+      const snapshot = await storage.getTrendSnapshot();
+      expect(snapshot?.authors).toEqual(['example-author-1']);
+    });
+    errorSpy.mockRestore();
+  });
+});
+
+/**
  * trend-reader が検証済みでも、**メッセージ境界を越えたら再検証する**。
  * ここを通った itemId はそのまま API のパスに入るため、送り手が本当に
  * 自分の content script だったかを型で保証できない以上、受け側で確かめる。

@@ -26,6 +26,7 @@ import {
   describeEmpty,
   describeCoAuthors,
   describeMuteRecord,
+  describeOffTrend,
   describeWindowShare,
   partitionViews,
   describeFold,
@@ -71,10 +72,25 @@ const SELECTORS = {
 /** 依頼してから応答が返るまでの表示。数秒かかるので、押した直後に出す */
 const MUTE_PENDING_TEXT = 'ミュートしています…';
 
-/** スライダーの可動域。実測（最大クラスタ 16）と保持期間 7 日に合わせる */
+/**
+ * スライダーの可動域。実測（最大クラスタ 16）と保持期間 7 日に合わせる。
+ *
+ * **index.html の min / max と必ず揃える。**片方だけ直すと、表示できる値と
+ * 保存できる値がずれる（`readSettings` はここでクランプする）。
+ *
+ * 【`minSharedItems` の上限が 7 な理由】
+ * この値は 2 つの軸で意味が違う。著者内（cluster.ts）は「**1 人の著者が M 本**」で、
+ * 著者巡回は 1 回の訪問で 2 本ずつしか遡らない（`MAX_EXTRA_ITEMS_PER_AUTHOR`）ので
+ * 8 以上は実質届かない。著者間（cross-cluster.ts）は「**連結成分の合計で M 本**」
+ * なので届く。**8〜10 は片方の軸でしか意味を持っていなかった。**
+ *
+ * なお `storage.getSettings` はここでクランプしない（`asPositiveInt` のみ）。
+ * 既に 8 以上を保存していた場合、判定はその値のまま動き、次に保存した時点で
+ * 7 に下がる。**既定が 2 なので通常は誰にも当たらない。**
+ */
 const RANGES = {
   minClusterSize: { min: 2, max: 30 },
-  minSharedItems: { min: 2, max: 10 },
+  minSharedItems: { min: 2, max: 7 },
   lookbackDays: { min: 1, max: 7 },
 } as const;
 
@@ -207,6 +223,7 @@ function candidateItem(view: CandidateView): HTMLLIElement {
     paragraph('share', describeWindowShare(view.candidate, currentSettings.burstWindowMinutes)),
     ...coAuthorLine(view),
     evidenceLine(view),
+    ...offTrendLine(view),
     ...muteStatusLine(view),
     actions,
   );
@@ -219,6 +236,18 @@ function candidateItem(view: CandidateView): HTMLLIElement {
  */
 function muteStatusLine(view: CandidateView): HTMLParagraphElement[] {
   return view.mute === null ? [] : [paragraph('mute-status', describeMuteRecord(view.mute))];
+}
+
+/**
+ * いまトレンドに出ていない候補への案内。**出ている／スナップショットが無いなら
+ * 行ごと出さない**（muteStatusLine と同じ扱い）。
+ *
+ * **ミュートの行より前に置く。**「なぜ押せなかったか」ではなく
+ * 「**押す前に、いま押しても無駄だと分かる**」ようにしたい。
+ */
+function offTrendLine(view: CandidateView): HTMLParagraphElement[] {
+  const text = describeOffTrend(view.offTrendAt);
+  return text === '' ? [] : [paragraph('off-trend', text)];
 }
 
 /**
