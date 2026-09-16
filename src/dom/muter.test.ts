@@ -507,6 +507,29 @@ describe('muteAuthor がメニューを閉じる', () => {
     expect(card.querySelector(SELECTORS.cardMenu)).not.toBeNull();
   });
 
+  it('★ 既に開いているカードでも、閉じてから開き直してミュートできる', async () => {
+    // Arrange — ユーザーが自分でメニューを開いた状態。**そのまま押すと
+    // トグルが閉じる側に働き、menu-unavailable になる**（この修正の前の挙動）
+    const card = mountCard(1);
+    card.querySelector<HTMLElement>(SELECTORS.cardMenuButton)?.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(card.querySelector(SELECTORS.cardMenu)).not.toBeNull();
+    clicks.length = 0;
+    // Act
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('muted');
+    // Assert — 閉じる → 開く → ミュート → 閉じる
+    expect(clicks).toEqual(['close-1', 'open-1', 'mute-1', 'close-1']);
+  });
+
+  it('閉じているカードでは余計に押さない（開く → ミュート → 閉じる）', async () => {
+    // Arrange — 通常の経路。開く前の closeMenu が 1 クリックも増やさないこと
+    mountCard(1);
+    // Act
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('muted');
+    // Assert
+    expect(clicks).toEqual(['open-1', 'mute-1', 'close-1']);
+  });
+
   it('閉じるときにメニューの項目は 1 つも押さない', async () => {
     // Arrange — ブロックの直上を通る操作なので、押すのは三点ボタンだけに閉じる
     mountCard(1);

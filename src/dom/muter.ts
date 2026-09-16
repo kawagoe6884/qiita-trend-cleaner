@@ -270,6 +270,10 @@ export async function waitForSnackbar(
  * （ブロックはミュートの直上にあり、誤爆すると回収できない）。
  * 順序は「メニューを閉じる → カードを隠す」— メニューはカードの中にあるので、
  * 先に隠すと閉じる操作が届かなくなる。
+ *
+ * **開く前にも閉じる。**三点ボタンはトグルなので、既に開いているカードでそのまま
+ * 押すと閉じてしまう。`closeMenu` は開いているときしか押さないので、
+ * 通常（閉じている）は 1 クリックも増えない。
  */
 export async function muteAuthor(
   handle: AccountHandle,
@@ -283,6 +287,14 @@ export async function muteAuthor(
   try {
     // メニューは Snackbar より短く打ち切る。出ないのは通信ではなく構造の変化で、
     // 待っても状況が変わらない。テストが短い上限を渡したときはそちらに従う
+    // **必ず「閉じている」状態から開く。**トグルなので、既に開いているカードで
+    // そのまま押すと**閉じてしまい** `menu-unavailable` になる（ユーザー指摘 2026-09-16）。
+    // 「開いていたら押さない」ではなく「閉じてから開く」にしてあるのは、
+    // openMenu が**開く瞬間の描画待ち**を前提にしているため（React は同期で描かない）。
+    // closeMenu は `aria-expanded === 'true'` のときしか押さないので、
+    // 閉じているカードでは 1 クリックも増えない。
+    closeMenu(card);
+
     const menu = await openMenu(card, root, Math.min(timeoutMs, MENU_TIMEOUT_MS));
     if (menu === null) return 'menu-unavailable';
 
