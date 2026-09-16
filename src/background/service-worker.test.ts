@@ -208,6 +208,31 @@ describe('トレンドのスナップショット', () => {
     await expect(storage.getTrendSnapshot()).resolves.toBeNull();
   });
 
+  it('★ 記録に失敗しても例外を漏らさず、debug に落とす', async () => {
+    // Arrange — storage の書き込みが失敗しても検出そのものは動く。
+    // **想定内の失敗を warn / error に載せない**（約束 4 / 11）。
+    // Chrome は console.warn も chrome://extensions のエラー欄に集めるので、
+    // ここを warn にすると「拡張が壊れている」と読まれる
+    const { logger } = await bootServiceWorker();
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    mockOf(chrome.storage.local, 'set').mockRejectedValueOnce(new Error('quota exceeded'));
+    // Act — catch し損ねると unhandled rejection になり、原因が追えない
+    expect(() => {
+      sendTrend([ITEM]);
+    }).not.toThrow();
+    // Assert
+    await vi.waitFor(() => {
+      expect(debugSpy).toHaveBeenCalled();
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+    debugSpy.mockRestore();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+
   it('スキャンが失敗しても記録は残る（API を 1 本も使わないので独立させてある）', async () => {
     // Arrange
     const { runScan, logger } = await bootServiceWorker();
