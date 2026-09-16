@@ -151,6 +151,31 @@ async function openMenu(
 }
 
 /**
+ * 開けた三点メニューを閉じる。**開いているときだけ押す。**
+ *
+ * 【なぜトグルではなく状態を見るのか】
+ * 三点ボタンはトグルなので、**閉じている状態で押すと開き直す。**
+ * 「閉じる」つもりの操作が「開く」になるのが最悪で、しかも画面には
+ * メニューが出たまま残る。`aria-expanded` は実測で開閉状態を持っている
+ * （2026-08-24、OQ-9）ので、それが `'true'` のときだけ押す。
+ *
+ * 【読めなければ何もしない】
+ * 属性が無い・値が変わった場合は**開いたまま**にする。これは修正前の挙動
+ * そのものなので、外しても悪化しない。**当て推量で押さない**のは
+ * 設計上の約束 3（失敗したら何もしない）と同じ考え。
+ *
+ * 【Escape を使わない】
+ * ボタンで閉じられることは実測済みだが、Escape で閉じるかは**測っていない**。
+ * 測っていないものをテストの前提に使わない（2026-08-29 の教訓）。
+ */
+function closeMenu(card: HTMLElement): void {
+  const button = card.querySelector<HTMLElement>(SELECTORS.cardMenuButton);
+  if (button === null) return;
+  if (button.getAttribute('aria-expanded') !== 'true') return;
+  button.click();
+}
+
+/**
  * ラベルが「投稿ユーザーをミュート」**で終わる**か。
  *
  * 【なぜ完全一致ではないのか】
@@ -233,6 +258,12 @@ export async function waitForSnackbar(
  *
  * 隠れているカードは一時的に戻し、finally で必ず隠し直す。
  * 途中で何が起きても隠れた状態に復帰する。
+ *
+ * **開けたメニューも finally で閉じる**（2026-09-16 ユーザー要望）。開きっぱなしに
+ * すると、ユーザーが自分で閉じるまで**ブロックの項目が画面に出たまま**になる
+ * （ブロックはミュートの直上にあり、誤爆すると回収できない）。
+ * 順序は「メニューを閉じる → カードを隠す」— メニューはカードの中にあるので、
+ * 先に隠すと閉じる操作が届かなくなる。
  */
 export async function muteAuthor(
   handle: AccountHandle,
@@ -263,6 +294,7 @@ export async function muteAuthor(
     const done = await waitForSnackbar(SNACKBAR_TEXT.muteCompleted, root, timeoutMs);
     return done ? 'muted' : 'timeout';
   } finally {
+    closeMenu(card);
     if (restored) concealCard(card);
   }
 }
