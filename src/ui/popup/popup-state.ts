@@ -696,7 +696,7 @@ export function describeMuteRecord(record: MuteRecord): string {
  * `not-on-page` の文言で直したのと**同じ誤りを、新しい行で作り直していた**。
  *
  * 【記録があるなら、そちらが理由を言っている】
- * `mutedAt` が立っていれば `describeMuteRecord` が説明済みなので出さない。
+ * `mutedAt` が立っていればミュートの行（`describeMuteStatus`）が必ず出ているので出さない。
  * 同じことを 2 行で言うと、どちらが理由なのか読めなくなる。
  */
 export function describeOffTrend(view: CandidateView): string {
@@ -881,7 +881,8 @@ export function describeMuteStatus(view: CandidateView, muteOnValid: boolean): s
 /**
  * 結果ごとの文言。**断定しない**（設計上の約束 6）。
  *
- * 成功の記録がある場合の言い換えは describeMuteRecord が行う。ここは
+ * 確認済み（`mutedAt`）の記録の言い換えは describeConfirmedMute が行う
+ * （describeMuteRecord と describeMuteStatus から呼ぶ）。ここは
  * 「その試行で何が起きたか」だけを言う。
  *
  * default を書かないこと。MuteOutcome に値を足したとき、TypeScript が漏れを教える。
