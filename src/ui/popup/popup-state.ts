@@ -476,16 +476,19 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
  */
 export async function applySettings(settings: Settings, now: Date): Promise<CandidateView[]> {
   // muteLog も読む。読まないと、**つまみを 1 つ動かした瞬間にミュートの結果表示が
-  // 消える**（Candidate.verdict を持たせなかったのと同じ形の失敗）
-  const [index, feedback, muteLog] = await Promise.all([
+  // 消える**（Candidate.verdict を持たせなかったのと同じ形の失敗）。
+  // trendSnapshot も同じ理由で読む — **2026-09-17 まで読んでいなかった。**
+  // loadPopupState にだけ配線し、つまみを動かすとトレンド不在の行が消えていた
+  const [index, feedback, muteLog, trendSnapshot] = await Promise.all([
     storage.getLikeIndex(),
     storage.getFeedback(),
     storage.getMuteLog(),
+    storage.getTrendSnapshot(),
   ]);
   const candidates = detectCandidates(index, settings, now);
   await storage.saveSettings(settings);
   await storage.saveCandidates(candidates);
-  return toViews(candidates, feedback, muteLog);
+  return toViews(candidates, feedback, muteLog, trendSnapshot);
 }
 
 /**

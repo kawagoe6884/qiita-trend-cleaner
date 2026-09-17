@@ -277,6 +277,22 @@ describe('applySettings', () => {
     expect((await loadPopupState(NOW)).precision.ratio).toBe(1);
   });
 
+  it('★ つまみを動かしてもトレンド不在の行が消えない（スナップショットを配線する）', async () => {
+    // Arrange — 2026-09-17 に見つけた穴。スナップショットを loadPopupState にだけ
+    // 配線し、ここを忘れていた。toViews の第 4 引数は省略可能なので型は通る。
+    // **muteLog を読み忘れて「つまみを 1 つ動かした瞬間にミュートの結果表示が
+    // 消える」と書いてあった失敗の、すぐ隣で同じ形を作っていた**
+    await storage.saveLikeIndex(clusteredIndex(5));
+    await storage.saveTrendSnapshot(['example-author-z'], NOW);
+    // Act
+    const views = await applySettings(
+      { ...DEFAULT_SETTINGS, minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 },
+      NOW,
+    );
+    // Assert — example-author-a はそのスナップショットに居ない
+    expect(views[0]?.offTrendAt).toBe(NOW.toISOString());
+  });
+
   it('再検出は API を 1 本も叩かない', async () => {
     // Arrange
     const fetchMock = vi.fn();
