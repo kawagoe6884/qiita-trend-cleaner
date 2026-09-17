@@ -37,7 +37,9 @@
       [hidden] {
         display: none !important;
       }
-      #notice {
+      /* 429 の案内と、押し直せる候補の案内。見た目は揃えるが器は分ける */
+      #notice,
+      #retry-notice {
         border-left: 4px solid currentColor;
         padding: 8px 12px;
         margin: 0 0 12px;
@@ -224,6 +226,9 @@
   </head>
   <body>
     <p id="notice" hidden></p>
+    <!-- 押し直せる候補の案内（2026-09-17）。**#notice とは別の器にする** —
+         #notice は 429 の変更通知で丸ごと書き換わるので、相乗りすると片方が片方を消す -->
+    <p id="retry-notice" hidden></p>
 
     <section class="mode">
       <p id="mode-title"></p>

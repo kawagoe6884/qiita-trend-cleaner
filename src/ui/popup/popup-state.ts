@@ -108,6 +108,15 @@ export interface CandidateView {
    * 2 日開いていなければ偽になりうる。時刻に紐づければ偽にならない。
    */
   offTrendAt: IsoDateTime | null;
+  /**
+   * **その時点でトレンドに出ていた**と確認できたスナップショットの時刻。
+   * 出ていなかった場合と、スナップショットをまだ持っていない場合は null。
+   *
+   * ミュートを押し直せるかの判定（{@link isMuteRetryReady}）にだけ使う。
+   * **押した時刻より後に撮られたスナップショットに居れば**、そのとき表示中の
+   * カードがあり、ミュートもされていない（`storage.forgetMuteConfirmation` と同じ推論）。
+   */
+  onTrendAt: IsoDateTime | null;
 }
 
 /**
@@ -139,6 +148,10 @@ export function toViews(
       trendSnapshot === null || onTrend === null || onTrend.has(candidate.authorHandle)
         ? null
         : trendSnapshot.at,
+    onTrendAt:
+      trendSnapshot !== null && onTrend !== null && onTrend.has(candidate.authorHandle)
+        ? trendSnapshot.at
+        : null,
   }));
 }
 
@@ -162,9 +175,19 @@ export interface PartitionedViews {
  * 【'muted' では「誤り」を押しても外れない】
  * 「誤り」を押しても Qiita 側のミュートは解除されない。折りたたみに残るのは
  * 事実として正しい。解除の導線は foldNote が出す。
+ *
+ * 【押し直せる候補は畳まない】（2026-09-17）
+ * 先頭の案内（describeRetryNotice）が「ミュートがまだの候補があります」と言うのに、
+ * 'valid' / 'judged' ではその候補が畳まれていて、**開いて探すまで押せない。**
+ * まだ済んでいないものを「済んだもの」の置き場に入れない。
  */
-export function partitionViews(views: CandidateView[], target: FoldTarget): PartitionedViews {
+export function partitionViews(
+  views: CandidateView[],
+  target: FoldTarget,
+  muteOnValid: boolean,
+): PartitionedViews {
   const shouldFold = (view: CandidateView): boolean => {
+    if (isMuteRetryReady(view, muteOnValid)) return false;
     switch (target) {
       case 'none':
         return false;
@@ -589,12 +612,33 @@ export async function requestMute(handle: AccountHandle, now: Date): Promise<Mut
 }
 
 /**
+ * トレンド外の候補では**依頼を送らず**、`not-on-page` として記録する。
+ * （2026-09-17 ユーザー「A で直して」）
+ *
+ * 【なぜ送らないのか】
+ * スナップショットに居ない著者のカードは表示中のページに無いので、送っても
+ * content script が `not-on-page` を返すだけ。**送ると結果の文言がずれる** —
+ * トレンドのタブを閉じていれば `no-trend-tab`（「トレンドページを開いてから
+ * 押してください」）になるが、開いても著者は居ないので押し直しは効かない。
+ *
+ * 【スナップショットが古くても取りこぼさない】
+ * 送らなかった著者があとから読み込んだトレンドに居れば、記録より新しい
+ * スナップショットに現れるので {@link isMuteRetryReady} が拾う。
+ *
+ * recordMuteOutcome を通すので、確認済みの `mutedAt` は消えない。
+ */
+export async function skipMute(handle: AccountHandle, now: Date): Promise<MuteLog> {
+  return storage.recordMuteOutcome(handle, 'not-on-page', now);
+}
+
+/**
  * 記録 1 件の文言。**ミュート済みだと確認できたことがあるかで言い方を変える。**
  *
  * 【なぜ outcome だけでは足りないのか】
  * ミュートしたあと押し直すと、**ページを読み込み直す前なら** `already-muted`、
- * **読み込み直したあとなら** `not-on-page` が返る。outcome だけを見ると
- * 「次に出てきたときに押し直してください」と案内してしまう。
+ * **読み込み直したあとなら** `not-on-page` が返る。outcome だけを見ると、
+ * ミュート済みの著者に「ミュートしませんでした」と言ってしまう（2026-09-17 まで
+ * の文言では「次に出てきたときに押し直してください」と案内していた）。
  *
  * 【現在形で言わない】（2026-09-16）
  * 以前は「ミュート済みです。…ここには出てきません。」と書いていた。
@@ -667,6 +711,97 @@ export function describeOffTrend(view: CandidateView): string {
 }
 
 /**
+ * 失敗した試行のうち、**あとから読み込んだトレンドに著者が居れば押し直す価値がある**もの。
+ *
+ * default を書かない（describeMuteOutcome と同じ）。MuteOutcome に値を足したとき、
+ * ここで決め忘れると型エラーになる。
+ */
+function isRetryableOutcome(outcome: MuteOutcome): boolean {
+  switch (outcome) {
+    case 'not-on-page':
+    case 'no-trend-tab':
+    case 'unreachable':
+    case 'timeout':
+      // どれも「押せる状態に無かった」か「効いたか分からない」。新しく読み込んだ
+      // トレンドに居れば、その時点でミュートされておらず、表示中のカードもある
+      return true;
+    case 'menu-unavailable':
+      // 画面構造の変化。押し直しても同じ所で落ちるので、読み込みのたびに促すと
+      // **直すべき不具合を「もう一度押してください」で覆う**
+      return false;
+    case 'muted':
+    case 'already-muted':
+      // 成功した試行。押し直しを促す理由が無い
+      return false;
+  }
+}
+
+type RetryReadyView = CandidateView & { onTrendAt: IsoDateTime };
+
+/**
+ * 「妥当」を押し直せばミュートできる見込みがあるか。**5 つとも満たすときだけ true。**
+ *
+ *   1. ミュート連動がオン — オフだと「妥当」を押してもミュートは走らない
+ *   2. 評価が「妥当」 — 「誤り」に変えた著者を促さない
+ *   3. **試して失敗した記録がある**（記録があり、`mutedAt` が無い）
+ *   4. 失敗の理由が、読み込み直せば解消しうる（isRetryableOutcome）
+ *   5. **押した時刻より後に撮ったスナップショットに居る**
+ *
+ * 【5 を時刻で絞る】
+ * 押す前に撮ったスナップショットに居ただけなら、押した直後に「押し直せます」と
+ * 出てしまう（例: トレンドのタブを閉じてから押して `no-trend-tab` になった直後）。
+ * 読めない時刻は NaN になり、比較が必ず false になる — **促さない側に倒れる。**
+ *
+ * 【記録が無い著者は促さない】
+ * 解除を検知すると記録ごと消える（`storage.forgetMuteConfirmation`）。記録の有無を
+ * 見ずに「妥当・未確認・トレンドに居る」だけで判定すると、**ユーザーが Qiita 側で
+ * 自分で解除した著者に「ミュートがまだ」と言い続ける。**
+ */
+export function isMuteRetryReady(
+  view: CandidateView,
+  muteOnValid: boolean,
+): view is RetryReadyView {
+  const { mute, onTrendAt } = view;
+  if (!muteOnValid || view.verdict !== 'valid') return false;
+  if (mute === null || mute.mutedAt !== undefined || onTrendAt === null) return false;
+  if (!isRetryableOutcome(mute.outcome)) return false;
+  return Date.parse(onTrendAt) > Date.parse(mute.at);
+}
+
+/**
+ * 押し直せる候補の行。**押し直せないなら空文字**（describeOffTrend と同じ規約）。
+ *
+ * 失敗の文言（describeMuteRecord）の**代わりに**出す。押したときの理由
+ * （「トレンドに記事が無く…」）は、あとから撮ったスナップショットで古くなっている。
+ *
+ * 時刻はスナップショットのもの。**「いまトレンドに出ています」とは言わない。**
+ */
+export function describeMuteRetry(view: CandidateView, muteOnValid: boolean): string {
+  if (!isMuteRetryReady(view, muteOnValid)) return '';
+  return `${formatJst(view.onTrendAt)} 時点でトレンドに出ています。「妥当」を押し直すとミュートします。`;
+}
+
+/**
+ * ポップアップの先頭に出す案内。**押し直せる候補が 1 件も無ければ空文字。**
+ *
+ * 【なぜ要るのか】（2026-09-17 ユーザー「A で直して」）
+ * トレンド外の候補で先に「妥当」を押すと、ミュートは走らない（押す対象のカードが
+ * 表示中のページに無い）。その著者がトレンドに戻っても、**拡張がもう一度押す
+ * 契機は無く、ユーザーが気づかなければミュートの意図が黙って失われる。**
+ * 戻ってきたことを知らせ、押すのはユーザーに任せる — **勝手にミュートしない。**
+ *
+ * 【#notice（429）とは別の器に出す】
+ * 429 の案内は storage の変更で丸ごと書き換わる（popup-page の watchRateLimit）。
+ * 同じ器に入れると、枠が戻った瞬間にこちらの案内まで消える。
+ */
+export function describeRetryNotice(views: CandidateView[], muteOnValid: boolean): string {
+  const ready = views.filter((view): view is RetryReadyView => isMuteRetryReady(view, muteOnValid));
+  const [first] = ready;
+  if (first === undefined) return '';
+  return `${formatJst(first.onTrendAt)} 時点のトレンドに、ミュートがまだの候補が ${String(ready.length)} 件出ています。`;
+}
+
+/**
  * 結果ごとの文言。**断定しない**（設計上の約束 6）。
  *
  * 成功の記録がある場合の言い換えは describeMuteRecord が行う。ここは
@@ -684,7 +819,12 @@ export function describeMuteOutcome(outcome: MuteOutcome): string {
       // （最終スキャンの下に常設してある。候補の数だけ同じ文が並ぶのを避ける）
       return '既に Qiita 側でミュート済みでした。';
     case 'not-on-page':
-      return 'いま開いているトレンドページにこの著者の記事が無いため、ミュートできませんでした。次に出てきたときに押し直してください。';
+      // 【現在形と約束をやめた】（2026-09-17）以前は「いま開いているトレンドページに
+      // …次に出てきたときに押し直してください。」。**押したあとに読む文なので
+      // 「いま」は押した時点を指していない。**「次に出てきたとき」はミュート済みの
+      // 著者には来ない（describeOffTrend で直したのと同じ誤り）。
+      // 戻ってきたときは describeMuteRetry がこの行を差し替えて案内する
+      return '押したときトレンドに記事が無く、ミュートしませんでした。';
     case 'no-trend-tab':
       return 'トレンドページを開いてから押してください。';
     case 'menu-unavailable':

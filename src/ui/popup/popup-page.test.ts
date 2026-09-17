@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { init, APPLY_DEBOUNCE_MS } from './popup-page';
-import { loadPopupState, applySettings, recordVerdict, toViews, formatJst } from './popup-state';
+import {
+  loadPopupState,
+  applySettings,
+  recordVerdict,
+  toViews,
+  formatJst,
+  describeMuteOutcome,
+} from './popup-state';
 import type * as PopupState from './popup-state';
 import { DEFAULT_SETTINGS } from '../../types/domain';
-import type { Candidate } from '../../types/domain';
+import type { Candidate, FoldTarget } from '../../types/domain';
 // 実際に配布される HTML をそのまま読む（Vite の ?raw）。
 // node:fs を使うと tsconfig の types に node を足すことになり、
 // 拡張のコードから node API が見えてしまう guardrail を失う
@@ -53,6 +60,7 @@ function candidate(handle = 'example-author-a'): Candidate {
 function setupDom(): void {
   document.body.innerHTML = `
     <p id="notice" hidden></p>
+    <p id="retry-notice" hidden></p>
     <section class="mode">
       <p id="mode-title"></p>
       <p id="mode-detail"></p>
@@ -468,6 +476,14 @@ describe('index.html のレイアウト順序', () => {
     );
     expect(list).not.toContain('overflow');
     expect(list).not.toContain('max-height');
+  });
+
+  it('押し直せる候補の案内は先頭にあり、既定で隠れていて、429 とは別の器', () => {
+    // 同じ器にすると、429 の変更通知が丸ごと書き換えたときに片方が消える
+    const retry = indexHtml.indexOf('<p id="retry-notice" hidden></p>');
+    expect(retry).toBeGreaterThan(-1);
+    expect(retry).toBeLessThan(indexHtml.indexOf('id="mode-title"'));
+    expect(indexHtml).toContain('<p id="notice" hidden></p>');
   });
 });
 
@@ -1174,6 +1190,22 @@ describe('「妥当」と同時のミュート', () => {
     expect(document.querySelector('#candidates .mute-status')).toBeNull();
   });
 
+  it('★ トレンド外の候補では「妥当」を押しても依頼を送らない（2026-09-17）', async () => {
+    // Arrange — 送っても表示中のカードは無い。送ると、タブを閉じていたとき
+    // 「トレンドページを開いてから押してください」と的外れな案内になる
+    const snapshot = { authors: ['example-author-z'], at: '2026-09-17T01:00:00.000Z' };
+    loadMock.mockResolvedValue(stateWithMute(true, toViews([candidate()], {}, {}, snapshot)));
+    await init();
+    // Act
+    clickVerdict('妥当');
+    // Assert — 押したときの理由が行に出るまで待つ（handleVerdict の末尾で再描画される）。
+    // 送っていれば beforeEach の応答（muted）で「確認しました」になり、ここで落ちる
+    await vi.waitFor(() => {
+      expect(el('#candidates .mute-status').textContent).toBe(describeMuteOutcome('not-on-page'));
+    });
+    expect(sendMessageMock().mock.calls).toHaveLength(0);
+  });
+
   it('解除の案内リンクは背景タブで開く', async () => {
     // Arrange — 同じタブで開くとポップアップが閉じ、評価の続きができなくなる
     loadMock.mockResolvedValue(stateWithMute(false));
@@ -1263,6 +1295,109 @@ describe('既にミュート済みの候補の表示', () => {
     await waitForRerender();
     // Assert
     expect(document.querySelector('#candidates .mute-status')).not.toBeNull();
+  });
+});
+
+/**
+ * ★ 2026-09-17 ユーザー「A で直して」。
+ *
+ * トレンド外の候補で先に「妥当」を押すと、ミュートは走らない。その著者が
+ * トレンドに戻ってきたら先頭で知らせ、押し直せるようにする。**勝手にミュートしない。**
+ */
+describe('押し直せる候補の案内', () => {
+  const HANDLE = 'example-author-retry';
+  const TRIED = '2026-09-17T01:00:00.000Z';
+  const SEEN = '2026-09-17T03:00:00.000Z';
+
+  /** 妥当・連動で押したがトレンド外で not-on-page、そのあと撮ったスナップショットに居る */
+  function stateWithRetry(muteOnValid: boolean, foldTarget: FoldTarget = 'none') {
+    return {
+      views: toViews(
+        [candidate(HANDLE)],
+        { [HANDLE]: 'valid' as const },
+        { [HANDLE]: { outcome: 'not-on-page' as const, at: TRIED } },
+        { authors: [HANDLE], at: SEEN },
+      ),
+      precision: { valid: 1, falsePositive: 0, ratio: 1 },
+      settings: SETTINGS,
+      rateLimitNotice: null,
+      lastScanAt: null,
+      hasToken: false,
+      hasIndex: true,
+      authorCoverage: COVERAGE,
+      muteOnValid,
+      foldTarget,
+    };
+  }
+
+  it('先頭に件数とスナップショットの時刻を出す', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithRetry(true));
+    // Act
+    await init();
+    // Assert
+    const notice = el('#retry-notice');
+    expect(notice.hidden).toBe(false);
+    expect(notice.textContent).toContain('1 件');
+    expect(notice.textContent).toContain(formatJst(SEEN));
+  });
+
+  it('ミュート連動がオフなら出さない（押してもミュートは走らない）', async () => {
+    loadMock.mockResolvedValue(stateWithRetry(false));
+    await init();
+    expect(el('#retry-notice').hidden).toBe(true);
+  });
+
+  it('候補の行は、押したときの失敗の代わりに押し直せることを言う', async () => {
+    loadMock.mockResolvedValue(stateWithRetry(true));
+    await init();
+    const status = el('#candidates .mute-status').textContent;
+    expect(status).toContain('「妥当」を押し直す');
+    expect(status).toContain(formatJst(SEEN));
+  });
+
+  it('ミュート連動がオフなら、候補の行は押したときの結果のまま', async () => {
+    loadMock.mockResolvedValue(stateWithRetry(false));
+    await init();
+    expect(el('#candidates .mute-status').textContent).toBe(describeMuteOutcome('not-on-page'));
+  });
+
+  it('★ 「妥当」を畳む設定でも畳まない（先頭の案内が指す先を隠さない）', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithRetry(true, 'valid'));
+    // Act
+    await init();
+    // Assert — 一覧と、候補ゼロの案内（renderSummary 側の分割）の両方で揃っている
+    expect(document.querySelectorAll('#candidates li')).toHaveLength(1);
+    expect(el('#folded').hidden).toBe(true);
+    expect(el('#empty').hidden).toBe(true);
+  });
+
+  it('押し直してミュートできたら、案内が消えて畳まれる', async () => {
+    // Arrange — 戻ってきた著者はスナップショットに居るので、今度は送る
+    (
+      vi.mocked(chrome.tabs.query) as unknown as {
+        mockResolvedValue: (value: chrome.tabs.Tab[]) => void;
+      }
+    ).mockResolvedValue([tab(1, 'https://qiita.com/trend', true)]);
+    (
+      vi.mocked(chrome.tabs.sendMessage) as unknown as {
+        mockResolvedValue: (value: unknown) => void;
+      }
+    ).mockResolvedValue({ type: 'MUTE_RESULT', handle: HANDLE, outcome: 'muted' });
+    loadMock.mockResolvedValue(stateWithRetry(true, 'valid'));
+    await init();
+    expect(el('#retry-notice').hidden).toBe(false);
+    // Act
+    clickVerdict('妥当');
+    // Assert
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('#folded-candidates li')).toHaveLength(1);
+    });
+    expect(el('#retry-notice').hidden).toBe(true);
+    expect(vi.mocked(chrome.tabs.sendMessage).mock.calls).toEqual([
+      [1, { type: 'MUTE_AUTHOR', handle: HANDLE }],
+    ]);
   });
 });
 /**
