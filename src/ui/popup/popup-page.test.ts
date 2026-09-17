@@ -1233,6 +1233,33 @@ describe('「妥当」と同時のミュート', () => {
     expect(document.querySelector('#candidates .mute-status')).toBeNull();
   });
 
+  it('行が消えた「誤り」の候補を「妥当」に戻すと、結果で描き直される（「ミュートしています…」のまま残らない）', async () => {
+    // Arrange — ミュートしなかった記録（not-on-page）を持ったまま「誤り」になっている、
+    // トレンド外と分かっていない候補（依頼を送る経路を通る）。行は出ていないので、
+    // 押すと showMutePending が行を**新しく作る**。記録があるのに行が無いのは、
+    // 「妥当」でない候補の行を隠すようにした（2026-09-17）ことで初めてできた状態
+    const views = toViews(
+      [candidate()],
+      { 'example-author-a': 'false_positive' },
+      { 'example-author-a': { outcome: 'not-on-page', at: '2026-09-17T01:00:00.000Z' } },
+    );
+    // 結果は記録と**違う**失敗にする。同じだと、新しい結果を捨てて古い記録で
+    // 描き直しても同じ文言になり、描き直しに何が使われたかを検査できない
+    sendMessageMock().mockResolvedValue(muteResult('example-author-a', 'menu-unavailable'));
+    loadMock.mockResolvedValue(stateWithMute(true, views));
+    await init();
+    expect(document.querySelector('#candidates .mute-status')).toBeNull();
+    // Act
+    clickVerdict('妥当');
+    // Assert — 失敗の経路でも、最後に残るのは今回の結果の文言
+    await vi.waitFor(() => {
+      expect(el('#candidates .mute-status').textContent).toBe(
+        describeMuteOutcome('menu-unavailable'),
+      );
+    });
+    expect(sendMessageMock().mock.calls).toHaveLength(1);
+  });
+
   it('解除の案内リンクは背景タブで開く', async () => {
     // Arrange — 同じタブで開くとポップアップが閉じ、評価の続きができなくなる
     loadMock.mockResolvedValue(stateWithMute(false));
