@@ -987,13 +987,18 @@ describe('トレンドに出ていない候補の行', () => {
   });
 
   it('★ ミュートの結果より前に出す（押す前に無駄だと分かるように）', async () => {
-    // Arrange — 押したあとに「出ていませんでした」と言われても遅い
+    // Arrange — 押したあとに「出ていませんでした」と言われても遅い。
+    // **評価は「妥当」にする。**ミュートの記録は「妥当」を押したときにしかできず、
+    // 評価の無い記録は実機に無い形（2026-09-17、「妥当」でない候補には見送りの
+    // 行を出さなくしたとき、このフィクスチャだけが落ちて露見した）
     const state = withSnapshot({ authors: ['example-author-z'], at: AT });
     const [view] = state.views;
     if (view === undefined) throw new Error('fixture broken');
     loadMock.mockResolvedValue({
       ...state,
-      views: [{ ...view, mute: { outcome: 'not-on-page' as const, at: AT } }],
+      views: [
+        { ...view, verdict: 'valid' as const, mute: { outcome: 'not-on-page' as const, at: AT } },
+      ],
     });
     // Act
     await init();
@@ -1204,6 +1209,28 @@ describe('「妥当」と同時のミュート', () => {
       expect(el('#candidates .mute-status').textContent).toBe(describeMuteOutcome('not-on-page'));
     });
     expect(sendMessageMock().mock.calls).toHaveLength(0);
+  });
+
+  it('★ 「妥当」→ トレンド外で見送り →「誤り」で、見送りの行が消える（2026-09-17 実機 NG）', async () => {
+    // Arrange — 実機では「押したときトレンドに記事が無く、ミュートしませんでした。」が
+    // 「誤り」を押したあとも残った。ミュートするつもりが無くなった候補に、
+    // ミュートしなかった理由を言い続けていた
+    const snapshot = { authors: ['example-author-z'], at: '2026-09-17T01:00:00.000Z' };
+    loadMock.mockResolvedValue(stateWithMute(true, toViews([candidate()], {}, {}, snapshot)));
+    await init();
+    clickVerdict('妥当');
+    await vi.waitFor(() => {
+      expect(el('#candidates .mute-status').textContent).toBe(describeMuteOutcome('not-on-page'));
+    });
+    // Act
+    clickVerdict('誤り');
+    // Assert — 「誤り」で描き直されるまで待ってから見る（待たないと、行が消える前の
+    // DOM でも消えた後の DOM でも同じアサーションに届きうる）
+    await vi.waitFor(() => {
+      const pressed = document.querySelector('#candidates button[aria-pressed="true"]');
+      expect(pressed?.textContent).toBe('誤り');
+    });
+    expect(document.querySelector('#candidates .mute-status')).toBeNull();
   });
 
   it('解除の案内リンクは背景タブで開く', async () => {

@@ -26,8 +26,7 @@ import {
   describeCall,
   describeEmpty,
   describeCoAuthors,
-  describeMuteRecord,
-  describeMuteRetry,
+  describeMuteStatus,
   describeRetryNotice,
   describeOffTrend,
   describeWindowShare,
@@ -240,17 +239,16 @@ function candidateItem(view: CandidateView): HTMLLIElement {
 }
 
 /**
- * ミュートの結果の行。**記録が無ければ行ごと出さない**
+ * ミュートの結果の行。**出すものが無ければ行ごと出さない**
  * （coAuthorLine と同じ扱い。空の <p> を置くと余白だけが残る）。
  *
- * **押し直せるなら、失敗の理由の代わりにそれを出す。**押したときの理由
- * （トレンドに記事が無かった等）は、あとから撮ったスナップショットで古くなっている。
+ * 何を出すかは describeMuteStatus が決める — 押し直せるならそれを、「誤り」に
+ * 変えた候補なら Qiita 側に残っているかもしれないものだけを言う。
  * 同じ .mute-status に出すので、押すと showMutePending がそのまま書き換えられる。
  */
 function muteStatusLine(view: CandidateView): HTMLParagraphElement[] {
-  if (view.mute === null) return [];
-  const retry = describeMuteRetry(view, currentMuteOnValid);
-  return [paragraph('mute-status', retry === '' ? describeMuteRecord(view.mute) : retry)];
+  const text = describeMuteStatus(view, currentMuteOnValid);
+  return text === '' ? [] : [paragraph('mute-status', text)];
 }
 
 /**

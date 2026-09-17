@@ -667,7 +667,7 @@ export function describeMuteRecord(record: MuteRecord): string {
     case 'not-on-page':
       // この 3 つは「ミュート中である」という状態の主張。**現在形をやめて
       // 時刻に紐づける。**解除の導線はここに書かない（最終スキャンの下に常設）
-      return `${formatJst(record.mutedAt)} にミュート済みであることを確認しました。`;
+      return describeConfirmedMute(record.mutedAt);
     case 'menu-unavailable':
     case 'timeout':
     case 'no-trend-tab':
@@ -802,6 +802,67 @@ export function describeRetryNotice(views: CandidateView[], muteOnValid: boolean
   const [first] = ready;
   if (first === undefined) return '';
   return `${formatJst(first.onTrendAt)} 時点のトレンドに、ミュートがまだの候補が ${String(ready.length)} 件出ています。`;
+}
+
+/** ミュート済みだと確認できた時刻の文言。**現在形で言わない**（describeMuteRecord の JSDoc） */
+function describeConfirmedMute(mutedAt: IsoDateTime): string {
+  return `${formatJst(mutedAt)} にミュート済みであることを確認しました。`;
+}
+
+/**
+ * その試行で、Qiita 側のミュートが**入ったかもしれない**か。
+ *
+ * default を書かない（isRetryableOutcome と同じ）。MuteOutcome に値を足したとき、
+ * ここで決め忘れると型エラーになる。
+ */
+function mayHaveMuted(outcome: MuteOutcome): boolean {
+  switch (outcome) {
+    case 'muted':
+    case 'already-muted':
+      // 入った。通常は mutedAt が立つので、ここに来るのは mutedAt の無い古い記録だけ
+      return true;
+    case 'timeout':
+      // 押したが完了を確認できなかった。**入ったかどうか分からない**
+      return true;
+    case 'not-on-page':
+    case 'no-trend-tab':
+    case 'unreachable':
+    case 'menu-unavailable':
+      // 押していない（カードもタブも届く先もメニューの項目も無かった、または見送った）
+      return false;
+  }
+}
+
+/**
+ * 候補 1 件のミュートの行。**出さないなら空文字**（describeOffTrend と同じ規約）。
+ *
+ * 【「妥当」でなくなった候補には、ミュートしようとした経緯を出さない】（2026-09-17 実機）
+ * 「妥当」→ トレンド外で見送り →「誤り」と押すと、「押したときトレンドに記事が無く、
+ * ミュートしませんでした。」が残っていた。**ミュートするつもりが無くなった候補に、
+ * ミュートしなかった理由を言い続けていた。**Qiita 側で何も起きていないと分かっている
+ * 記録（mayHaveMuted が false）は、評価が「妥当」でなければ出さない。
+ *
+ * 【Qiita 側に残っているかもしれないものは残す】
+ * 「誤り」を押しても Qiita 側のミュートは解除されない（partitionViews の JSDoc）。
+ *   - `mutedAt` がある … 確認時刻だけを言う（失敗の文言は「押し直す」前提なので出さない）。
+ *     消すと、誤検知でミュートした著者を解除しに行く手がかりが無くなる
+ *     （2026-08-24 の orch-review が見つけた欠陥と同じ形）
+ *   - `timeout` … 入ったか分からない。**「誤り」にした直後こそミュート設定を確かめる
+ *     必要がある**ので、「確認してください」を消さない
+ *
+ * **記録そのものは消さない。**表示だけを変える。「妥当」に押し直せば、その結果で
+ * また言い直す。
+ */
+export function describeMuteStatus(view: CandidateView, muteOnValid: boolean): string {
+  const { mute } = view;
+  if (mute === null) return '';
+  if (view.verdict !== 'valid') {
+    if (mute.mutedAt !== undefined) return describeConfirmedMute(mute.mutedAt);
+    return mayHaveMuted(mute.outcome) ? describeMuteRecord(mute) : '';
+  }
+  // 押し直せるなら、押したときの理由より新しい事実がある
+  const retry = describeMuteRetry(view, muteOnValid);
+  return retry === '' ? describeMuteRecord(mute) : retry;
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   describeMuteOutcome,
   describeMuteRecord,
   describeMuteRetry,
+  describeMuteStatus,
   describeRetryNotice,
   describeOffTrend,
   describeEmpty,
@@ -32,7 +33,7 @@ import * as storage from '../../lib/storage';
 import * as domain from '../../types/domain';
 import { DEFAULT_SETTINGS } from '../../types/domain';
 import { RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from '../../api/rate-budget';
-import type { Candidate, FeedbackLog, LikeIndex, MuteRecord } from '../../types/domain';
+import type { Candidate, FeedbackLog, LikeIndex, MuteRecord, Verdict } from '../../types/domain';
 
 /** 合成の候補。実アカウント名・実 item_id は使わない */
 function candidate(suffix: string, clusterSize = 5): Candidate {
@@ -981,6 +982,92 @@ describe('describeRetryNotice', () => {
     for (const word of ['不正', 'スパム', '業者']) {
       expect(text).not.toContain(word);
     }
+  });
+});
+
+/**
+ * ★ 2026-09-17 実機 NG。「妥当」→ トレンド外で見送り →「誤り」と押すと、
+ * 「押したときトレンドに記事が無く、ミュートしませんでした。」が消えなかった。
+ *
+ * 分けるのは「Qiita 側に何かが残っているかもしれないか」。残っているかもしれない
+ * ものは「誤り」でも消さない — 「誤り」を押しても Qiita 側のミュートは解除されない。
+ */
+describe('describeMuteStatus', () => {
+  const AT = '2026-09-17T01:00:00.000Z';
+  const CONFIRMED = '2026-09-16T01:00:00.000Z';
+
+  /** 候補 1 件のビュー。評価と記録だけを差し替える */
+  function statusView(verdict: Verdict | null, mute: MuteRecord | null): CandidateView {
+    const [view] = toViews([candidate('a')], {});
+    if (view === undefined) throw new Error('fixture broken');
+    return { ...view, verdict, mute };
+  }
+
+  it('記録が無ければ空文字（行ごと出さない）', () => {
+    expect(describeMuteStatus(statusView('valid', null), true)).toBe('');
+  });
+
+  it('「妥当」なら記録の文言をそのまま出す', () => {
+    const mute = { outcome: 'not-on-page' as const, at: AT };
+    expect(describeMuteStatus(statusView('valid', mute), true)).toBe(describeMuteRecord(mute));
+  });
+
+  it('「妥当」で押し直せるなら、押し直せることを出す', () => {
+    expect(describeMuteStatus(retryReadyView(), true)).toBe(
+      describeMuteRetry(retryReadyView(), true),
+    );
+  });
+
+  it('★ 「誤り」に変えたら、見送りの行を出さない（ミュートするつもりが無くなった）', () => {
+    const mute = { outcome: 'not-on-page' as const, at: AT };
+    expect(describeMuteStatus(statusView('false_positive', mute), true)).toBe('');
+  });
+
+  it.each(['no-trend-tab', 'unreachable', 'menu-unavailable'] as const)(
+    '「誤り」に変えたら %s も出さない（Qiita 側では何も起きていない）',
+    (outcome) => {
+      expect(describeMuteStatus(statusView('false_positive', { outcome, at: AT }), true)).toBe('');
+    },
+  );
+
+  it('「誤り」に変えたら、押し直せる状態でも押し直しを促さない', () => {
+    // **この性質は 2 か所で守られている** — describeMuteStatus の評価の分岐と、
+    // isMuteRetryReady の評価の条件。片方だけ壊しても落ちない（押し直しを評価より
+    // 先に見る変異は SURVIVED を実測で確認済み。等価）。ここが固定するのは
+    // 「誤り」のあとに促さないという結果であって、判定の順序ではない
+    expect(describeMuteStatus(retryReadyView({ verdict: 'false_positive' }), true)).toBe('');
+  });
+
+  it('★ 「誤り」に変えても、確認済みなら確認時刻を出す（解除しに行く手がかりを消さない）', () => {
+    // Arrange — ミュートしたあと押し直して no-trend-tab で上書きされた形。
+    // 「妥当」のままなら失敗の文言を出すが、「誤り」では押し直す前提の案内に意味が無い
+    const mute = { outcome: 'no-trend-tab' as const, at: AT, mutedAt: CONFIRMED };
+    // Act
+    const text = describeMuteStatus(statusView('false_positive', mute), true);
+    // Assert
+    expect(text).toContain(formatJst(CONFIRMED));
+    expect(text).toContain('ミュート済み');
+  });
+
+  it('★ 「誤り」に変えても timeout は残す（入ったか分からないので、確かめる案内を消さない）', () => {
+    const mute = { outcome: 'timeout' as const, at: AT };
+    expect(describeMuteStatus(statusView('false_positive', mute), true)).toBe(
+      describeMuteOutcome('timeout'),
+    );
+  });
+
+  it.each(['muted', 'already-muted'] as const)(
+    '「誤り」に変えても、確認時刻の無い古い %s の記録は残す（入っている）',
+    (outcome) => {
+      expect(describeMuteStatus(statusView('false_positive', { outcome, at: AT }), true)).toBe(
+        describeMuteOutcome(outcome),
+      );
+    },
+  );
+
+  it('未評価でも「誤り」と同じ扱い（「妥当」でなければ見送りを言わない）', () => {
+    const mute = { outcome: 'not-on-page' as const, at: AT };
+    expect(describeMuteStatus(statusView(null, mute), true)).toBe('');
   });
 });
 
