@@ -1305,6 +1305,17 @@ describe('hasMutedInFold', () => {
     expect(hasMutedInFold(list)).toBe(true);
   });
 
+  it('「誤り」に変えたミュート済みでも true（誤検知でミュートした著者こそ解除の案内が要る）', () => {
+    // 上の 2 件は評価を置いていないので、「誤り」を数えない変異を通していた
+    // （2026-09-17 変異で確認。describeMuteStatus は評価で出し分けるが、ここは揃えない）
+    const list = toViews(
+      [candidate('b')],
+      { 'example-author-b': 'false_positive' },
+      { 'example-author-b': { outcome: 'muted' as const, at: AT, mutedAt: AT } },
+    );
+    expect(hasMutedInFold(list)).toBe(true);
+  });
+
   it('ミュート済みが 1 件も無ければ false（関係ない注意書きを常駐させない）', () => {
     const list = toViews([candidate('a')], { 'example-author-a': 'valid' });
     expect(hasMutedInFold(list)).toBe(false);

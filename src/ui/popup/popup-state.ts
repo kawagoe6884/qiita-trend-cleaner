@@ -852,6 +852,12 @@ function mayHaveMuted(outcome: MuteOutcome): boolean {
  *
  * **記録そのものは消さない。**表示だけを変える。「妥当」に押し直せば、その結果で
  * また言い直す。
+ *
+ * 【折りたたみはこの出し分けに揃えない】
+ * partitionViews の 'muted' と hasMutedInFold は評価を見ない（`mutedAt` だけで決める）。
+ * 評価の条件を足すと、前者は「ミュート済み N 件」から「誤り」に変えた著者を落とし、
+ * 後者は、畳んだ中のミュート済みが「誤り」の著者だけのとき #fold-note（「誤り」を
+ * 押しても解除されない）を出さなくなる。**どちらも誤検知でミュートした著者で起きる**（OQ-16）。
  */
 export function describeMuteStatus(view: CandidateView, muteOnValid: boolean): string {
   const { mute } = view;
