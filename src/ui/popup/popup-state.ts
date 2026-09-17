@@ -842,6 +842,13 @@ function mayHaveMuted(outcome: MuteOutcome): boolean {
  * ミュートしなかった理由を言い続けていた。**Qiita 側で何も起きていないと分かっている
  * 記録（mayHaveMuted が false）は、評価が「妥当」でなければ出さない。
  *
+ * 【ミュート連動をオフにした候補も同じ扱い】（2026-09-17）
+ * オフでは「妥当」を押してもミュートは走らない。`no-trend-tab` の「トレンドページを
+ * 開いてから押してください。」に従っても何も起きず、**同じ指示が残り続けていた。**
+ * 確認時刻（起きた事実）と `timeout`（Qiita のミュート設定で確かめる案内）は
+ * 拡張のボタンに頼らないので、オフでも残す。オンに戻せば元の出し方に戻る
+ * （記録は消していない）。
+ *
  * 【Qiita 側に残っているかもしれないものは残す】
  * 「誤り」を押しても Qiita 側のミュートは解除されない（partitionViews の JSDoc）。
  *   - `mutedAt` がある … 確認時刻だけを言う（失敗の文言は「押し直す」前提なので出さない）。
@@ -862,7 +869,7 @@ function mayHaveMuted(outcome: MuteOutcome): boolean {
 export function describeMuteStatus(view: CandidateView, muteOnValid: boolean): string {
   const { mute } = view;
   if (mute === null) return '';
-  if (view.verdict !== 'valid') {
+  if (view.verdict !== 'valid' || !muteOnValid) {
     if (mute.mutedAt !== undefined) return describeConfirmedMute(mute.mutedAt);
     return mayHaveMuted(mute.outcome) ? describeMuteRecord(mute) : '';
   }

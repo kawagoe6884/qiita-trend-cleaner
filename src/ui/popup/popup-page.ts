@@ -243,8 +243,8 @@ function candidateItem(view: CandidateView): HTMLLIElement {
  * （coAuthorLine と同じ扱い。空の <p> を置くと余白だけが残る）。
  *
  * 何を出すかは describeMuteStatus が決める — 押し直せるならそれを、「誤り」に
- * 変えた候補なら Qiita 側に残っているかもしれないものだけを言う。
- * 同じ .mute-status に出すので、押すと showMutePending がそのまま書き換えられる。
+ * 変えた候補とミュート連動がオフのときは Qiita 側に残っているかもしれないものだけを言う。
+ * 同じ .mute-status に出すので、押すと showMutePending が書き換える（行が無ければ作る）。
  */
 function muteStatusLine(view: CandidateView): HTMLParagraphElement[] {
   const text = describeMuteStatus(view, currentMuteOnValid);

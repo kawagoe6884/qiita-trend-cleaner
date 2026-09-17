@@ -1069,6 +1069,39 @@ describe('describeMuteStatus', () => {
     const mute = { outcome: 'not-on-page' as const, at: AT };
     expect(describeMuteStatus(statusView(null, mute), true)).toBe('');
   });
+
+  it.each(['no-trend-tab', 'unreachable'] as const)(
+    '★ ミュート連動がオフなら、「妥当」でも %s を出さない（従っても何も起きない指示を残さない）',
+    (outcome) => {
+      // 2026-09-17: オフでは「妥当」を押してもミュートは走らない。「トレンドページを
+      // 開いてから押してください」に従っても何も起きず、同じ文言が残り続けていた
+      expect(describeMuteStatus(statusView('valid', { outcome, at: AT }), false)).toBe('');
+    },
+  );
+
+  it.each(['not-on-page', 'menu-unavailable'] as const)(
+    'ミュート連動がオフなら、「妥当」でも %s を出さない（「妥当」でないときと同じ扱い）',
+    (outcome) => {
+      expect(describeMuteStatus(statusView('valid', { outcome, at: AT }), false)).toBe('');
+    },
+  );
+
+  it('ミュート連動がオフでも、確認済みなら確認時刻を出す（失敗の指示では塗り潰さない）', () => {
+    // Arrange — ミュートしたあと押し直して no-trend-tab で上書きされた形
+    const mute = { outcome: 'no-trend-tab' as const, at: AT, mutedAt: CONFIRMED };
+    // Act
+    const text = describeMuteStatus(statusView('valid', mute), false);
+    // Assert
+    expect(text).toContain(formatJst(CONFIRMED));
+    expect(text).toContain('ミュート済み');
+  });
+
+  it('ミュート連動がオフでも timeout は残す（確かめる先は Qiita のミュート設定で、拡張のボタンではない）', () => {
+    const mute = { outcome: 'timeout' as const, at: AT };
+    expect(describeMuteStatus(statusView('valid', mute), false)).toBe(
+      describeMuteOutcome('timeout'),
+    );
+  });
 });
 
 /**

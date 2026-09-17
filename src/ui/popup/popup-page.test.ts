@@ -990,12 +990,16 @@ describe('トレンドに出ていない候補の行', () => {
     // Arrange — 押したあとに「出ていませんでした」と言われても遅い。
     // **評価は「妥当」にする。**ミュートの記録は「妥当」を押したときにしかできず、
     // 評価の無い記録は実機に無い形（2026-09-17、「妥当」でない候補には見送りの
-    // 行を出さなくしたとき、このフィクスチャだけが落ちて露見した）
+    // 行を出さなくしたとき、このフィクスチャだけが落ちて露見した）。
+    // **ミュート連動もオンにする。**記録ができるのはオンで押したときだけで、
+    // オフではミュートの行を出さない（同日、連動オフの候補に押す指示を残さなく
+    // したとき、同じくこのフィクスチャだけが落ちた）
     const state = withSnapshot({ authors: ['example-author-z'], at: AT });
     const [view] = state.views;
     if (view === undefined) throw new Error('fixture broken');
     loadMock.mockResolvedValue({
       ...state,
+      muteOnValid: true,
       views: [
         { ...view, verdict: 'valid' as const, mute: { outcome: 'not-on-page' as const, at: AT } },
       ],
@@ -1410,10 +1414,24 @@ describe('押し直せる候補の案内', () => {
     expect(status).toContain(formatJst(SEEN));
   });
 
-  it('ミュート連動がオフなら、候補の行は押したときの結果のまま', async () => {
-    loadMock.mockResolvedValue(stateWithRetry(false));
+  it('ミュート連動がオフなら、候補の行に押す指示を残さない（押してもミュートは走らない）', async () => {
+    // Arrange — トレンドのタブを閉じて「妥当」→ no-trend-tab → トレンドを開き直す、で
+    // できる形。オフでは「トレンドページを開いてから押してください」に従っても
+    // 何も起きない（2026-09-17）。押す指示を含む文言で見る — not-on-page は
+    // 過去の事実なので、出し分けを間違えても文として嘘にならず検査が弱い
+    loadMock.mockResolvedValue({
+      ...stateWithRetry(false),
+      views: toViews(
+        [candidate(HANDLE)],
+        { [HANDLE]: 'valid' as const },
+        { [HANDLE]: { outcome: 'no-trend-tab' as const, at: TRIED } },
+        { authors: [HANDLE], at: SEEN },
+      ),
+    });
+    // Act
     await init();
-    expect(el('#candidates .mute-status').textContent).toBe(describeMuteOutcome('not-on-page'));
+    // Assert
+    expect(document.querySelector('#candidates .mute-status')).toBeNull();
   });
 
   it('★ 「妥当」を畳む設定でも畳まない（先頭の案内が指す先を隠さない）', async () => {
