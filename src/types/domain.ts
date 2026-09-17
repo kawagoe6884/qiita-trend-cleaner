@@ -220,7 +220,10 @@ export interface MuteRecord {
   mutedAt?: IsoDateTime;
 }
 
-/** 著者ハンドル -> 最後にミュートを試みた結果。UI に出すためだけに持つ */
+/**
+ * 著者ハンドル -> 最後にミュートを試みた結果、またはトレンド外で見送った記録
+ * （ポップアップの `skipMute` が送らずに `not-on-page` を書く）。UI に出すためだけに持つ
+ */
 export type MuteLog = Record<AccountHandle, MuteRecord>;
 
 /**
@@ -421,7 +424,7 @@ export interface LocalState {
    * 判定に関係しない値を混ぜない。明示的にオンにしたときだけ Qiita 側を変更する
    */
   muteOnValid?: boolean;
-  /** ミュートを試みた結果。失敗の記録として持ち、ポップアップに出す */
+  /** ミュートを試みた結果（トレンド外で見送った記録も含む）。失敗の記録として持ち、ポップアップに出す */
   muteLog?: MuteLog;
   /**
    * 評価が済んだ候補を折りたたむ対象。**既定は 'none'。**

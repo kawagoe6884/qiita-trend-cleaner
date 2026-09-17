@@ -193,7 +193,7 @@ export async function saveFoldTarget(foldTarget: FoldTarget): Promise<void> {
 }
 
 /**
- * ミュートを試みた結果。1 件だけ壊れていても全体を捨てない
+ * ミュートを試みた結果（トレンド外で見送った記録も含む）。1 件だけ壊れていても全体を捨てない
  * （getFeedback と同じ扱い）。
  *
  * **知らない outcome は落とす。**通すと UI の switch が文言を返せずに落ちる

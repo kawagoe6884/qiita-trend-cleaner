@@ -240,7 +240,7 @@ function candidateItem(view: CandidateView): HTMLLIElement {
 }
 
 /**
- * ミュートの結果の行。**まだ試していなければ行ごと出さない**
+ * ミュートの結果の行。**記録が無ければ行ごと出さない**
  * （coAuthorLine と同じ扱い。空の <p> を置くと余白だけが残る）。
  *
  * **押し直せるなら、失敗の理由の代わりにそれを出す。**押したときの理由
@@ -477,13 +477,15 @@ async function handleVerdict(handle: string, verdict: Verdict): Promise<void> {
     // **storage の変更を待つのではなく、ここから送る** — 既に valid のものを
     // 押し直したときも実行できる。これがリトライ手段でもある。
     //
-    // undefined は「今回は試していない」。**null（試したが記録が無い）と区別する。**
+    // undefined は「今回はミュートの経路を通っていない」（「誤り」か連動オフ）。
+    // **null（通ったが記録が無い）と区別する。**経路を通れば、送った場合も
+    // トレンド外で見送った場合も記録が返る（muteOnVerdict）
     let muteResult: MuteRecord | null | undefined;
     if (verdict === 'valid' && currentMuteOnValid) {
       muteResult = await muteOnVerdict(handle);
     }
 
-    // **試していないなら据え置く。**ここを無条件に差し替えると、
+    // **経路を通っていないなら据え置く。**ここを無条件に差し替えると、
     // 「誤り」を押しただけで「ミュート済み」の表示が消える
     // （成功したという事実は取り消されない — recordMuteOutcome の JSDoc）。
     // 結果の置き場を view.mute の 1 つに絞ってあるので、seed 忘れが起きようが無い
