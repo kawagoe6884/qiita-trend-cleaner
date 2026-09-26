@@ -12,6 +12,7 @@
  */
 import * as storage from '../../lib/storage';
 import { detectCandidates } from '../../detect/detector';
+import { countAuthorCoverage } from '../../detect/like-index';
 import { RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from '../../api/rate-budget';
 import { isTrendPage } from '../../dom/trend-reader';
 import { isMuteOutcome, BURST_WINDOW_CHOICES } from '../../types/domain';
@@ -28,6 +29,7 @@ import type {
   Settings,
   Verdict,
 } from '../../types/domain';
+import type { AuthorCoverage } from '../../detect/like-index';
 import type { QtgRequest, QtgResponse } from '../../types/messages';
 
 /** 端数は切り上げる。「あと 0 分」と出さないため */
@@ -330,10 +332,28 @@ export interface ModeCopy {
 }
 
 /**
+ * ライトモードで何が足りないかを、**手元の蓄積の実数で**言う。
+ *
+ * 以前ここは「同じ著者の記事が複数トレンドに出ていないと判定材料が揃いません」
+ * という固定の文だった。**Phase 5b-2 以降これは誤り**で、記事 1 本の著者は
+ * 著者をまたぐ共起が拾う（そのために足した軸である）。断定を避けるだけでなく、
+ * 事実として間違っていた。
+ *
+ * **実数にするのは、日によって大きく振れるから。**2026-08-30 のトレンドは
+ * 26 著者中 23 人が記事 1 本、2026-08-20 は 5 著者が 30 枠中 13 を占めていた。
+ * 固定の文言ではその日の状況を伝えられない。
+ */
+function describeLightGap(coverage: AuthorCoverage): string {
+  // 蓄積が無ければ数える対象も無い。0 人と書くと「足りていない人は居ない」に読める
+  if (coverage.solo === 0) return '';
+  return `蓄積している ${String(coverage.total)} 人の著者のうち ${String(coverage.solo)} 人は記事が 1 本で、同じ著者の中では共起を見られません (別の著者との共起でのみ拾えます)。`;
+}
+
+/**
  * 動作モードの説明。**トークンそのものは扱わず、有無だけを受ける。**
  * 枠の数値は rate-budget の定数から作り、UI に直書きしない。
  */
-export function describeMode(hasToken: boolean): ModeCopy {
+export function describeMode(hasToken: boolean, coverage: AuthorCoverage): ModeCopy {
   if (hasToken) {
     return {
       title: 'フルモードで動作中',
@@ -341,12 +361,11 @@ export function describeMode(hasToken: boolean): ModeCopy {
       action: 'トークンを変更する',
     };
   }
-  // 枠の広さより先に「判定材料が揃わない」ことを言う。実測では 27 記事中、
-  // 同じ著者の記事に同じ人が重ねていいねした組が上位に 1 つも無かった。
-  // **断定はしない**（約束 6）。ライトでも検出できる場合はある
+  // 枠の広さより先に「何が足りないか」を言う。**断定はしない**（約束 6）—
+  // ライトでも検出できる（蓄積ゼロの初回スキャンで 5 候補・OQ-12）
   return {
     title: 'ライトモードで動作中',
-    detail: `いま画面に出ている記事だけを見ます。同じ著者の記事が複数トレンドに出ていないと判定材料が揃いません。トークンを設定すると著者の過去記事まで辿れ、1 時間あたりの枠も ${String(RATE_LIMIT_ANON)} → ${String(RATE_LIMIT_AUTH)} リクエストに広がります。`,
+    detail: `トレンドに出た記事の likers だけを見ます。${describeLightGap(coverage)}トークンを設定すると著者の過去記事まで辿れ、1 時間あたりの枠も ${String(RATE_LIMIT_ANON)} → ${String(RATE_LIMIT_AUTH)} リクエストに広がります。`,
     action: 'トークンを設定する',
   };
 }
@@ -361,6 +380,11 @@ export interface PopupState {
   hasToken: boolean;
   /** 蓄積があるか。候補ゼロの理由を言い分けるために使う */
   hasIndex: boolean;
+  /**
+   * 蓄積の著者の内訳。**ライトモードの説明に実数を出すために持つ。**
+   * 追加の storage 読み取りは無い（loadPopupState が既に読んでいる index から数える）
+   */
+  authorCoverage: AuthorCoverage;
   /** 「妥当」と同時に Qiita 側でもミュートするか。**既定は false** */
   muteOnValid: boolean;
   /** 評価が済んだ候補を折りたたむ対象。**既定は 'none'** */
@@ -400,6 +424,7 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
     lastScanAt: lastScan?.finishedAt ?? null,
     hasToken,
     hasIndex: Object.keys(index).length > 0,
+    authorCoverage: countAuthorCoverage(index),
     muteOnValid,
     foldTarget,
   };

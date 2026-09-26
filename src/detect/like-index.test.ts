@@ -4,6 +4,7 @@ import {
   purgeLikeIndex,
   withinLookback,
   countRecords,
+  countAuthorCoverage,
   toEpochMs,
   RETENTION_DAYS,
   isWithinRetention,
@@ -182,6 +183,52 @@ describe('countRecords', () => {
       ...index('example-liker-b', [record(1)]),
     };
     expect(countRecords(stored)).toBe(3);
+  });
+});
+
+/**
+ * ライトモードの説明に出す実数。**数えるのは著者であって、いいねではない。**
+ *
+ * 記事 1 本の著者は著者内クラスタでは成立しないので、そこが
+ * 「トークンを設定すると何人ぶん単独で判定できるようになるか」になる。
+ */
+describe('countAuthorCoverage', () => {
+  /** 著者 author の記事 itemIndex への 1 いいね */
+  function by(author: string, itemIndex: number): LikeRecord {
+    return record(itemIndex, { authorHandle: author });
+  }
+
+  it('記事が 1 本しかない著者を数える', () => {
+    // Arrange — a は 2 本、b と c は 1 本ずつ
+    const stored: LikeIndex = index('example-liker-1', [
+      by('example-author-a', 1),
+      by('example-author-a', 2),
+      by('example-author-b', 3),
+      by('example-author-c', 4),
+    ]);
+    // Act & Assert
+    expect(countAuthorCoverage(stored)).toEqual({ total: 3, solo: 2 });
+  });
+
+  it('同じ記事を複数のアカウントがいいねしても 1 本と数える', () => {
+    // Arrange — **記事の本数であって、いいねの件数ではない。**
+    // レコード数で数えると、人気の記事を 1 本だけ持つ著者が複数本持ちに見える
+    const stored: LikeIndex = {
+      ...index('example-liker-1', [by('example-author-a', 1)]),
+      ...index('example-liker-2', [by('example-author-a', 1)]),
+      ...index('example-liker-3', [by('example-author-a', 1)]),
+    };
+    // Act & Assert
+    expect(countAuthorCoverage(stored)).toEqual({ total: 1, solo: 1 });
+  });
+
+  it('蓄積が空なら 0 人（例外を投げない）', () => {
+    expect(countAuthorCoverage({})).toEqual({ total: 0, solo: 0 });
+  });
+
+  it('いいねが 1 件も無いアカウントは著者を増やさない', () => {
+    // Arrange — purge の直後などに起こりうる形
+    expect(countAuthorCoverage(index('example-liker-1', []))).toEqual({ total: 0, solo: 0 });
   });
 });
 

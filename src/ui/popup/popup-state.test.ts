@@ -308,9 +308,13 @@ describe('recordVerdict', () => {
  * 枠の数値は rate-budget の定数から作る（UI に直書きしない）。
  */
 describe('describeMode', () => {
+  /** 蓄積している 26 著者のうち 23 人が記事 1 本（2026-08-30 のトレンド実測） */
+  const COVERAGE = { total: 26, solo: 23 };
+  const NO_INDEX = { total: 0, solo: 0 };
+
   it('未設定ならライトモードと、設定して得られるものを出す', () => {
     // Act
-    const copy = describeMode(false);
+    const copy = describeMode(false, COVERAGE);
     // Assert
     expect(copy.title).toBe('ライトモードで動作中');
     expect(copy.detail).toContain('著者の過去記事');
@@ -319,7 +323,7 @@ describe('describeMode', () => {
   });
 
   it('設定済みならフルモードと表示し、操作の文言も変える', () => {
-    const copy = describeMode(true);
+    const copy = describeMode(true, COVERAGE);
     expect(copy.title).toBe('フルモードで動作中');
     expect(copy.detail).toContain(String(RATE_LIMIT_AUTH));
     expect(copy.action).toBe('トークンを変更する');
@@ -327,8 +331,39 @@ describe('describeMode', () => {
 
   it('件数を「30 件」と断定しない（実際は表示件数に依存する）', () => {
     // ミュート済みの記事はトレンドに出ないため、実測では 25 件だった
-    expect(describeMode(false).detail).not.toContain('30 件');
-    expect(describeMode(true).detail).not.toContain('30 件');
+    expect(describeMode(false, COVERAGE).detail).not.toContain('30 件');
+    expect(describeMode(true, COVERAGE).detail).not.toContain('30 件');
+  });
+
+  it('ライトモードでは、記事 1 本の著者が何人居るかを実数で出す', () => {
+    // **固定の文言では伝えられない。**同じ問いへの答えが 2026-08-20 は
+    // 「5 著者が 30 枠中 13」、2026-08-30 は「26 著者中 23 人が記事 1 本」だった
+    const detail = describeMode(false, COVERAGE).detail;
+    expect(detail).toContain('26');
+    expect(detail).toContain('23');
+  });
+
+  it('蓄積が無ければ人数の文を出さない', () => {
+    // 「0 人が記事 1 本」は「足りていない人は居ない」と読める。
+    // **測っていないことと、測ってゼロだったことは別物**
+    const detail = describeMode(false, NO_INDEX).detail;
+    expect(detail).not.toContain('0 人');
+    // 誘導そのものは残す
+    expect(detail).toContain('著者の過去記事');
+  });
+
+  it('記事 1 本の著者を「拾えない」と言わない（著者をまたぐ共起が拾う）', () => {
+    // Phase 5b-2 で足した軸は、**まさに記事 1 本の著者のためのもの**。
+    // 以前の文言「同じ著者の記事が複数トレンドに出ていないと判定材料が
+    // 揃いません」は、その軸を足した時点で事実として誤りになっていた
+    const detail = describeMode(false, COVERAGE).detail;
+    expect(detail).toContain('別の著者との共起');
+    expect(detail).not.toContain('判定材料が揃いません');
+  });
+
+  it('フルモードでは著者の内訳を出さない（過去記事を辿るので該当しない）', () => {
+    const detail = describeMode(true, COVERAGE).detail;
+    expect(detail).not.toContain('23');
   });
 });
 
@@ -345,6 +380,19 @@ describe('loadPopupState のトークン状態', () => {
     // Assert
     expect(state.hasToken).toBe(true);
     expect(JSON.stringify(state)).not.toContain('dummy-token-value');
+  });
+
+  it('蓄積から著者の内訳を数える（モード説明の実数の出どころ）', async () => {
+    // Arrange — 著者 1 人が記事 2 本。**5 アカウントがいいねしていても著者は 1 人**
+    await storage.saveLikeIndex(clusteredIndex(5));
+    // Act
+    const state = await loadPopupState(NOW);
+    // Assert — 記事 2 本なので solo ではない
+    expect(state.authorCoverage).toEqual({ total: 1, solo: 0 });
+  });
+
+  it('蓄積が無ければ著者は 0 人', async () => {
+    expect((await loadPopupState(NOW)).authorCoverage).toEqual({ total: 0, solo: 0 });
   });
 });
 
