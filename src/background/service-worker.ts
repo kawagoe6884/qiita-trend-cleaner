@@ -1,6 +1,8 @@
 import { logger } from '../lib/logger';
 import * as storage from '../lib/storage';
 import { runScan } from './scanner';
+import { seedFixture } from './fixture-seed';
+import { FIXTURE_SCENE } from '../detect/fixture';
 import type { QtgRequest, QtgResponse } from '../types/messages';
 import type { TrendItem } from '../types/domain';
 
@@ -88,6 +90,13 @@ function safeRecordTrend(items: TrendItem[]): void {
 chrome.runtime.onInstalled.addListener((details) => {
   // ここでスキャンしない。トレンドページを開いた時点で content script が知らせる
   logger.info('installed:', details.reason, 'version:', VERSION);
+  // スクショ用ビルドだけ、storage を fixture の状態にする。chrome://extensions で
+  // 再読み込みするたびに（reason: 'update'）撮影前の状態に戻る
+  if (FIXTURE_SCENE !== null) {
+    seedFixture(FIXTURE_SCENE, new Date()).catch((error: unknown) => {
+      logger.error('fixture seed failed:', error);
+    });
+  }
 });
 
 chrome.runtime.onMessage.addListener(
@@ -95,7 +104,12 @@ chrome.runtime.onMessage.addListener(
     if (message.type === 'PING') {
       sendResponse({ type: 'PONG', version: VERSION });
     } else if (message.type === 'TREND_ITEMS') {
-      if (isTrendItems(message.items)) {
+      if (FIXTURE_SCENE !== null) {
+        // **スクショ用ビルドはトレンドを読まない。**スキャンすると実在の
+        // アカウント名が蓄積とスナップショットに入り、最終スキャン日時も
+        // 撮影時刻に上書きされる。fixture の画面が崩れるうえ、実名を持つ理由が無い
+        logger.debug('fixture build: ignored TREND_ITEMS');
+      } else if (isTrendItems(message.items)) {
         safeRecordTrend(message.items);
         safeScan(message.items, 'trend page');
         sendResponse({ type: 'SCAN_ACCEPTED' });

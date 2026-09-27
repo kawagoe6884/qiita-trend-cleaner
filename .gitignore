@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# スクショ用ビルド（npm run build:fixture）。ダミーデータ入りなので配布物と混ぜない
+dist-fixture/
 .env
 .env.*
 *.local

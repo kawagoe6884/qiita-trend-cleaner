@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:fixture": "tsc --noEmit && vite build --mode fixture",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
