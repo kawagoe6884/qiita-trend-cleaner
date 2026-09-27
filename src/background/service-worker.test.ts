@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { QtgRequest, QtgResponse } from '../types/messages';
 import type { TrendItem } from '../types/domain';
 
@@ -335,5 +335,72 @@ describe('service worker の url 検証', () => {
       { ...ITEM, url: 'https://qiita.com/example-author-2/items/0123456789abcdef0001' },
     ]);
     expect(runScan).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * スクショ用ビルド（`npm run build:fixture`）。storage を fixture の状態にし、
+ * **トレンドを読まない** — 読むと実在のアカウント名が蓄積に入り、最終スキャン日時も
+ * 撮影時刻に上書きされる。
+ */
+describe('service worker の fixture ビルド', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('インストール時に storage を fixture の状態にする（前の値は残さない）', async () => {
+    // Arrange — 前回の撮影で押した評価と、実データ由来の蓄積が残っている
+    vi.stubEnv('MODE', 'fixture');
+    await chrome.storage.local.set({
+      feedback: { 'example-author-1': 'false_positive' },
+      likeIndex: { 'example-liker-1': { likes: [] } },
+    });
+    await bootServiceWorker();
+    const { buildFixtureScene } = await import('../detect/fixture');
+    const scene = buildFixtureScene();
+    // Act
+    firstListener<InstalledListener>(chrome.runtime.onInstalled)({ reason: 'update' });
+    // Assert
+    await vi.waitFor(async () => {
+      const stored = await chrome.storage.local.get(null);
+      expect(stored).toEqual({
+        likeIndex: {},
+        candidates: scene.candidates,
+        feedback: scene.feedback,
+        muteLog: scene.muteLog,
+        lastScanAt: scene.scanResult.finishedAt,
+        lastScanResult: scene.scanResult,
+      });
+    });
+    // ツールバーのバッジも写るので件数に合わせる
+    expect(mockOf(chrome.action, 'setBadgeText')).toHaveBeenCalledWith({
+      text: String(scene.candidates.length),
+    });
+  });
+
+  it('TREND_ITEMS を受けてもスキャンせず、スナップショットも残さない', async () => {
+    // Arrange
+    vi.stubEnv('MODE', 'fixture');
+    const { runScan } = await bootServiceWorker();
+    const onMessage = firstListener<MessageListener>(chrome.runtime.onMessage);
+    // Act
+    const keepChannelOpen = onMessage({ type: 'TREND_ITEMS', items: [ITEM] }, null, vi.fn());
+    // Assert
+    expect(runScan).not.toHaveBeenCalled();
+    expect(await chrome.storage.local.get(null)).toEqual({});
+    expect(keepChannelOpen).toBe(false);
+  });
+
+  it('fixture ビルド以外ではインストール時に storage を書かない', async () => {
+    // Arrange — vitest の mode は 'test'
+    await chrome.storage.local.set({ feedback: { 'example-author-1': 'valid' } });
+    await bootServiceWorker();
+    // Act
+    firstListener<InstalledListener>(chrome.runtime.onInstalled)({ reason: 'update' });
+    // Assert — 本番の評価を消さない
+    await Promise.resolve();
+    expect(await chrome.storage.local.get(null)).toEqual({
+      feedback: { 'example-author-1': 'valid' },
+    });
   });
 });

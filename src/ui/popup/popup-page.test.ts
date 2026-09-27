@@ -10,6 +10,7 @@ import {
 } from './popup-state';
 import type * as PopupState from './popup-state';
 import { DEFAULT_SETTINGS } from '../../types/domain';
+import { buildFixtureScene } from '../../detect/fixture';
 import type { Candidate, FoldTarget } from '../../types/domain';
 // 実際に配布される HTML をそのまま読む（Vite の ?raw）。
 // node:fs を使うと tsconfig の types に node を足すことになり、
@@ -1961,5 +1962,87 @@ describe('判定ボタンのラベル', () => {
     const text = el('#candidates .actions').textContent ?? '';
     expect(text).not.toContain('不正');
     expect(text).not.toContain('スパム');
+  });
+});
+
+/**
+ * 候補カードの見出し（`.author`）にハンドルが**全文**出ること。
+ *
+ * 2026-09-28 に「見出しに著者名の先頭 1 文字しか出ない」という報告を受け、
+ * fixture ビルドの実バンドルをブラウザで描いて確かめたが**再現しなかった**
+ * （初期表示・折りたたみ 3 種・評価後の再描画・スライダー後の再検出のいずれも全文）。
+ * 原因が特定できていないので、ここは修正の証明ではなく**番人**として置く —
+ * 見出しを組み立て直す変更が入ったとき、1 文字に欠ける形を必ず捕まえる。
+ *
+ * 1 文字のハンドルは Qiita に無い（3 文字以上）ので、`[0]` や分割代入で
+ * 先頭だけを取る誤りは「長さが一致しない」で必ず落ちる。
+ */
+describe('候補カードの見出し', () => {
+  const scene = buildFixtureScene();
+
+  function sceneState(foldTarget: FoldTarget) {
+    return {
+      views: toViews([...scene.candidates], scene.feedback, scene.muteLog),
+      precision: { valid: 2, falsePositive: 0, ratio: 1 },
+      settings: SETTINGS,
+      rateLimitNotice: null,
+      lastScanAt: scene.scanResult.finishedAt,
+      hasToken: false,
+      hasIndex: true,
+      authorCoverage: COVERAGE,
+      muteOnValid: true,
+      foldTarget,
+    };
+  }
+
+  function headings(list: string): string[] {
+    return [...document.querySelectorAll(`${list} li .author`)].map((e) => e.textContent);
+  }
+
+  it('一覧のすべてのカードで、ハンドルを全文出す', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(sceneState('none'));
+    // Act
+    await init();
+    // Assert
+    expect(headings('#candidates')).toEqual(scene.candidates.map((c) => c.authorHandle));
+  });
+
+  it('折りたたみの中のカードでも全文出す', async () => {
+    // Arrange — judged で「妥当」の 2 件が折りたたみに入る
+    loadMock.mockResolvedValue(sceneState('judged'));
+    // Act
+    await init();
+    // Assert
+    expect(headings('#folded-candidates')).toEqual(['demo-author-2', 'demo-author-3']);
+    expect(headings('#candidates')).toEqual(['demo-author-1', 'demo-author-4']);
+  });
+
+  it('評価して描き直したあとも全文出す', async () => {
+    // Arrange
+    loadMock.mockResolvedValue({ ...sceneState('none'), muteOnValid: false });
+    await init();
+    // Act
+    clickVerdict('妥当');
+    await vi.waitFor(() => {
+      expect(verdictMock).toHaveBeenCalledWith('demo-author-1', 'valid');
+    });
+    // Assert
+    await vi.waitFor(() => {
+      expect(headings('#candidates')).toEqual(scene.candidates.map((c) => c.authorHandle));
+    });
+  });
+
+  it('見出しと本文で同じハンドルを出す（本文の共起の行と食い違わない）', async () => {
+    // Arrange — 報告では「本文には全文が出ている」。同じ名前が両方に出るカードで揃うこと
+    loadMock.mockResolvedValue(sceneState('none'));
+    // Act
+    await init();
+    // Assert — demo-author-4 のカードの本文に demo-author-1 が出る
+    const card = [...document.querySelectorAll<HTMLLIElement>('#candidates li')].find(
+      (li) => li.dataset.handle === 'demo-author-4',
+    );
+    expect(card?.querySelector('.author')?.textContent).toBe('demo-author-4');
+    expect(card?.querySelector('.co-authors')?.textContent).toContain('demo-author-1');
   });
 });

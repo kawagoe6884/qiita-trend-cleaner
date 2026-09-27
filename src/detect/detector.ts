@@ -14,6 +14,7 @@ import { withinLookback } from './like-index';
 import { findClusters } from './cluster';
 import { findCrossAuthorClusters } from './cross-cluster';
 import { burstScore, emptyAccountRatio, windowShare } from './burst';
+import { FIXTURE_SCENE, sceneCandidates } from './fixture';
 import type { ClusterHit } from './cluster';
 import type { AccountHandle, Candidate, ItemId, LikeIndex, Settings } from '../types/domain';
 
@@ -51,6 +52,12 @@ function mergeHitsByAuthor(hits: ClusterHit[]): ClusterHit[] {
  * 該当が無ければ空配列を返す（null ではない）。
  */
 export function detectCandidates(index: LikeIndex, settings: Settings, now: Date): Candidate[] {
+  // スクショ用ビルドでは、検出結果を丸ごとダミーに差し替える（fixture.ts のヘッダー）。
+  // **差し替えるのはここ 1 箇所だけ。**スキャン後の保存もスライダーの再検出も
+  // この関数を通るので、UI 側は本番と同じコードのままダミーを描く。
+  // 本番では FIXTURE_SCENE が null に畳まれ、この分岐ごと消える
+  if (FIXTURE_SCENE !== null) return sceneCandidates(FIXTURE_SCENE);
+
   const scoped = withinLookback(index, settings.lookbackDays, now);
   const detectedAt = now.toISOString();
 

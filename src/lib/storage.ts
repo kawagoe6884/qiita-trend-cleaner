@@ -20,6 +20,7 @@ import type {
   FoldTarget,
   IsoDateTime,
   LikeIndex,
+  LocalState,
   MuteLog,
   MuteOutcome,
   MuteRecord,
@@ -388,4 +389,30 @@ export async function getLastScanResult(): Promise<ScanResult | null> {
   const result = raw.lastScanResult;
   if (typeof result !== 'object' || result === null) return null;
   return result as ScanResult;
+}
+
+/**
+ * storage.local を**まるごと**置き換える。**fixture ビルドの起動時にだけ使う**
+ * （`background/fixture-seed.ts`）。
+ *
+ * 【なぜ消してから書くのか】
+ * 撮り直すたびに同じ画面にしたい。前回の撮影で押した「妥当」やミュートの記録が
+ * 残ると、同じ fixture から別の画面ができてしまう。
+ *
+ * 【消してよい理由】
+ * fixture ビルドは `dist-fixture/` に出力するので、Chrome 上では本番とは
+ * **別の拡張（別の ID・別の storage）**として読み込まれる（vite.config.ts）。
+ * ここで消えるのは fixture 用の拡張の storage だけで、本番の蓄積や評価には届かない。
+ *
+ * 【本番ビルドでは何もしない】
+ * 呼ぶのは fixture ビルドの分岐の中だけだが、それでも本番の `dist/` にこの関数が
+ * 残っていた（2026-09-28 実測。到達しない import でもバンドラが export を残す —
+ * `detect/fixture.ts` の FIXTURE_SCENE の JSDoc）。**ユーザーの蓄積と評価を
+ * 全部消す関数を配布物に入れない。**ここで mode を見れば、本番では本体ごと畳まれ、
+ * 万一呼ばれても消さない。
+ */
+export async function resetLocalState(state: Partial<LocalState>): Promise<void> {
+  if (import.meta.env.MODE !== 'fixture') return;
+  await chrome.storage.local.clear();
+  await chrome.storage.local.set(state);
 }
