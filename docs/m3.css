@@ -1,0 +1,430 @@
+/*
+ * 紹介ページとプライバシーポリシーの共通スタイル。Material Design 3 に倣う。
+ *
+ * 色は拡張アイコンの #55c500 を元色にして、@material/material-color-utilities の
+ * SchemeTonalSpot（M3 の標準）で生成した値をそのまま置いている。Fidelity は元色を
+ * 強く残すが、差し色が濃いピンクになり、Qiita のブランドカラーにも寄りすぎる（非公式なので）。
+ *
+ * 外部フォントは読み込まない。Google Fonts を読むと閲覧者の IP が Google に届く。
+ * 「トラッカーを組み込んでいない」と書いたページでそれをしない。
+ */
+
+:root {
+  color-scheme: light dark;
+
+  /* ---- Color（TonalSpot / light） ---- */
+  --md-sys-color-primary: #456731;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #c6eeaa;
+  --md-sys-color-on-primary-container: #2e4f1c;
+  --md-sys-color-secondary-container: #d9e7ca;
+  --md-sys-color-on-secondary-container: #3e4a35;
+  --md-sys-color-tertiary-container: #bbebeb;
+  --md-sys-color-on-tertiary-container: #1e4e4e;
+  --md-sys-color-surface: #f8faf0;
+  --md-sys-color-on-surface: #191d16;
+  --md-sys-color-on-surface-variant: #43483e;
+  --md-sys-color-surface-container-low: #f3f5ea;
+  --md-sys-color-surface-container: #edefe4;
+  --md-sys-color-surface-container-high: #e7e9df;
+  --md-sys-color-surface-container-highest: #e1e4d9;
+  --md-sys-color-outline: #74796d;
+  --md-sys-color-outline-variant: #c4c8bb;
+
+  /* ---- Shape ---- */
+  --md-sys-shape-corner-extra-small: 4px;
+  --md-sys-shape-corner-small: 8px;
+  --md-sys-shape-corner-medium: 12px;
+  --md-sys-shape-corner-large: 16px;
+  --md-sys-shape-corner-extra-large: 28px;
+  --md-sys-shape-corner-full: 9999px;
+
+  /* ---- Typography ----
+     大きさと太さは M3 の type scale に揃える。本文の行の高さだけは日本語で読みやすいよう広げる */
+  --md-ref-typeface-plain:
+    Roboto, 'Noto Sans JP', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', Meiryo,
+    system-ui, sans-serif;
+  --md-ref-typeface-mono: 'Roboto Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  --body-line-height: 1.8;
+
+  /* ---- Layout（M3 の window size class ごとの余白） ---- */
+  --page-margin: 16px; /* compact: < 600px */
+  --page-max-width: 840px;
+}
+
+@media (min-width: 600px) {
+  :root {
+    --page-margin: 24px; /* medium: 600–839px / expanded 以上も 24px */
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* ---- Color（TonalSpot / dark） ---- */
+    --md-sys-color-primary: #aad290;
+    --md-sys-color-on-primary: #183806;
+    --md-sys-color-primary-container: #2e4f1c;
+    --md-sys-color-on-primary-container: #c6eeaa;
+    --md-sys-color-secondary-container: #3e4a35;
+    --md-sys-color-on-secondary-container: #d9e7ca;
+    --md-sys-color-tertiary-container: #1e4e4e;
+    --md-sys-color-on-tertiary-container: #bbebeb;
+    --md-sys-color-surface: #11140e;
+    --md-sys-color-on-surface: #e1e4d9;
+    --md-sys-color-on-surface-variant: #c4c8bb;
+    --md-sys-color-surface-container-low: #191d16;
+    --md-sys-color-surface-container: #1d211a;
+    --md-sys-color-surface-container-high: #282b24;
+    --md-sys-color-surface-container-highest: #32362f;
+    --md-sys-color-outline: #8d9286;
+    --md-sys-color-outline-variant: #43483e;
+  }
+}
+
+/* ================= Base ================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--md-sys-color-surface);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--md-ref-typeface-plain);
+  /* body-large */
+  font-size: 1rem;
+  line-height: var(--body-line-height);
+  -webkit-text-size-adjust: 100%;
+}
+
+/* 本文の列。幅は M3 の expanded の境目（840px）で止める */
+.page {
+  width: 100%;
+  max-width: calc(var(--page-max-width) + var(--page-margin) * 2);
+  margin: 0 auto;
+  padding: 0 var(--page-margin);
+}
+
+main.page {
+  padding-top: 8px;
+  padding-bottom: 64px;
+}
+
+p {
+  margin: 0 0 16px;
+}
+
+strong {
+  font-weight: 700;
+}
+
+a {
+  color: var(--md-sys-color-primary);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-thickness: 2px;
+}
+
+:focus-visible {
+  /* M3 の focus indicator（3px・外側 2px） */
+  outline: 3px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+  border-radius: var(--md-sys-shape-corner-extra-small);
+}
+
+code {
+  font-family: var(--md-ref-typeface-mono);
+  font-size: 0.875em;
+  background: var(--md-sys-color-surface-container-high);
+  padding: 0.1em 0.4em;
+  border-radius: var(--md-sys-shape-corner-extra-small);
+  overflow-wrap: anywhere;
+}
+
+ul {
+  margin: 0 0 16px;
+  padding-left: 1.5em;
+}
+
+li {
+  margin-bottom: 6px;
+}
+
+li::marker {
+  color: var(--md-sys-color-primary);
+}
+
+/* ================= Headings ================= */
+
+/* headline-large（expanded では display-small） */
+h1 {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 2.5rem;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+@media (min-width: 840px) {
+  h1 {
+    font-size: 2.25rem;
+    line-height: 2.75rem;
+  }
+}
+
+/* title-large。区切り線の代わりに余白で段落を分ける */
+h2 {
+  margin: 48px 0 16px;
+  font-size: 1.375rem;
+  line-height: 1.75rem;
+  font-weight: 500;
+}
+
+/* title-medium */
+h3 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+/* ================= Header（ページの頭） ================= */
+
+.page-header {
+  background: var(--md-sys-color-surface-container-low);
+  border-bottom-left-radius: var(--md-sys-shape-corner-extra-large);
+  border-bottom-right-radius: var(--md-sys-shape-corner-extra-large);
+  margin-bottom: 32px;
+}
+
+.page-header .page {
+  padding-top: 48px;
+  padding-bottom: 40px;
+}
+
+@media (min-width: 840px) {
+  .page-header .page {
+    padding-top: 72px;
+    padding-bottom: 56px;
+  }
+}
+
+.page-header .lead {
+  margin: 16px 0 0;
+  /* title-large 相当の大きさで、読み物として少し大きく */
+  font-size: 1.125rem;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.page-header .meta {
+  margin: 12px 0 0;
+  /* body-medium */
+  font-size: 0.875rem;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.back {
+  display: inline-block;
+  margin-bottom: 16px;
+  /* label-large */
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+}
+
+/* ================= Chip ================= */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--md-sys-shape-corner-small);
+  color: var(--md-sys-color-on-surface-variant);
+  /* label-large */
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.page-header .chip {
+  margin-bottom: 16px;
+}
+
+/* ================= Cards ================= */
+
+/* filled tonal card。注意書きなど、本文と区別したい一文に使う */
+.callout {
+  margin: 0 0 24px;
+  padding: 16px 20px;
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.callout p:last-child {
+  margin-bottom: 0;
+}
+
+/* 誤検知の注意。secondary と色相を変えて「読み飛ばさないでほしい」ことを示す。
+   赤系は使わない — 「不正と断定しない」（約束 6）を色でも守る */
+.callout--caution {
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+
+/* outlined card を並べる。compact と medium は 1 列、expanded から 2 列 */
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin: 0 0 24px;
+}
+
+@media (min-width: 840px) {
+  .card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* 枚数が奇数なら、最後の 1 枚を 2 列ぶんに広げて行の端を揃える */
+  .card-grid > .card:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
+.card {
+  padding: 16px 20px 18px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.card p,
+.card ul {
+  margin-bottom: 8px;
+  /* body-medium の大きさ。行の高さは本文と揃える */
+  font-size: 0.9375rem;
+}
+
+.card p:last-child,
+.card ul:last-child {
+  margin-bottom: 0;
+}
+
+/* 保存先のラベル。chip の小型（label-medium） */
+.storage {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--md-sys-color-surface-container-highest);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--md-ref-typeface-mono);
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+}
+
+/* sync だけは端末の外（Google のサーバー）を経由する。色を変えて区別する */
+.storage--sync {
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+
+/* ================= Buttons ================= */
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+/* filled tonal button（主のものだけ filled button） */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 10px 24px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  /* label-large */
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 150ms ease;
+}
+
+/* M3 の state layer（hover 8% / pressed 10%）を色の混ぜ合わせで表す */
+.button:hover {
+  background: color-mix(
+    in srgb,
+    var(--md-sys-color-on-secondary-container) 8%,
+    var(--md-sys-color-secondary-container)
+  );
+}
+
+.button:active {
+  background: color-mix(
+    in srgb,
+    var(--md-sys-color-on-secondary-container) 10%,
+    var(--md-sys-color-secondary-container)
+  );
+}
+
+.button--filled {
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+
+.button--filled:hover {
+  background: color-mix(in srgb, var(--md-sys-color-on-primary) 8%, var(--md-sys-color-primary));
+}
+
+.button--filled:active {
+  background: color-mix(in srgb, var(--md-sys-color-on-primary) 10%, var(--md-sys-color-primary));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button {
+    transition: none;
+  }
+}
+
+/* ================= Footer ================= */
+
+footer {
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  /* body-small */
+  font-size: 0.8125rem;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+footer .page {
+  padding-top: 24px;
+  padding-bottom: 40px;
+}
+
+footer a {
+  color: inherit;
+}
