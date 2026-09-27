@@ -60,9 +60,9 @@ const GIVE_UP_MS = 20;
 /** 押された順序。`open-1` / `mute-1` の形で積む */
 const clicks: string[] = [];
 
-/** メニュー項目のクリックだけ（メニューを開いた操作は除く） */
+/** メニュー項目のクリックだけ（メニューの開閉操作は除く） */
 function itemClicks(): string[] {
-  return clicks.filter((entry) => !entry.startsWith('open-'));
+  return clicks.filter((entry) => !entry.startsWith('open-') && !entry.startsWith('close-'));
 }
 
 function showSnackbar(text: string = SNACKBAR_TEXT.muteCompleted): void {
@@ -88,6 +88,10 @@ interface CardOptions {
   noSnackbar?: boolean;
   /** 項目に button を入れず、器そのものを押せる形にする（フォールバックの検査用） */
   noActionButton?: boolean;
+  /** aria-expanded を付けない。**開閉状態が読めないときの検査用** */
+  noExpanded?: boolean;
+  /** ミュートを押すと Qiita 側がメニューを閉じる（押し直さないことの検査用） */
+  closesOnAction?: boolean;
 }
 
 /**
@@ -111,6 +115,8 @@ function mountCard(n: number, options: CardOptions = {}): HTMLElement {
     eager = false,
     noSnackbar = false,
     noActionButton = false,
+    noExpanded = false,
+    closesOnAction = false,
   } = options;
 
   const itemId = `0123456789abcdef${String(n).padStart(4, '0')}`;
@@ -120,13 +126,17 @@ function mountCard(n: number, options: CardOptions = {}): HTMLElement {
   card.className = 'card';
   card.dataset.n = String(n);
   const controlsAttr = controls === null ? '' : ` aria-controls="${controls}"`;
+  // **aria-expanded を既定で持たせる。**実測（OQ-9）でここに開閉状態が入る。
+  // 属性が無い状態も再現できるようにしてあるのは、**読めないときに何もしない**
+  // という closeMenu のフェイルセーフを検査するため
+  const expandedAttr = noExpanded ? '' : ' aria-expanded="false"';
   card.innerHTML = [
     `<a href="${url}"></a>`,
     '<time datetime="2026-08-18T10:00:00Z">2026年08月18日</time>',
     `<a href="${url}">タイトル ${String(n)}</a>`,
     noButton
       ? ''
-      : `<button aria-haspopup="dialog" aria-label="ユーザーを管理"${controlsAttr}></button>`,
+      : `<button aria-haspopup="dialog" aria-label="ユーザーを管理"${expandedAttr}${controlsAttr}></button>`,
   ].join('');
   document.body.append(card);
 
@@ -142,6 +152,11 @@ function mountCard(n: number, options: CardOptions = {}): HTMLElement {
 
       const onClick = (): void => {
         clicks.push(`${spec.key}-${String(n)}`);
+        // Qiita が自分でメニューを閉じる形。**このとき押し直してはいけない**
+        if (closesOnAction) {
+          card.querySelector(SELECTORS.cardMenuButton)?.setAttribute('aria-expanded', 'false');
+          card.querySelector(SELECTORS.cardMenu)?.remove();
+        }
         // Qiita は完了を Snackbar で知らせる。**遅らせるのが要点** —
         // 同期で出すと waitForDom の事前チェックで拾われ、待つ経路を通らない
         if (SNACKBAR_KEYS.has(spec.key) && !noSnackbar) {
@@ -179,8 +194,28 @@ function mountCard(n: number, options: CardOptions = {}): HTMLElement {
 
   if (eager) buildMenu();
 
-  card.querySelector(SELECTORS.cardMenuButton)?.addEventListener('click', () => {
+  /**
+   * 三点ボタンは**トグル**。押すたびに aria-expanded が反転し、閉じるときは
+   * メニューが DOM から消える。**2026-09-16 にユーザーが往復を実測した** —
+   * 押すと `aria-expanded="true"` でメニューが表示されミュートできる状態、
+   * もう一度押すと `aria-expanded="false"` でメニューが消えミュートできない状態。
+   * （それまでは「click 直後 0 件 → 300ms 後 1 件」から**推測していた**だけで、
+   * 閉じる側は測っていなかった。フィクスチャの推測が実機と食い違うと
+   * テストは何も守らない — Phase 8 でそれを踏んでいる）
+   *
+   * **ここを固定しておかないと、閉じているのに押す実装が通る** — つまり
+   * 「閉じる」つもりの操作がメニューを開き直す。
+   */
+  const button = card.querySelector<HTMLElement>(SELECTORS.cardMenuButton);
+  button?.addEventListener('click', () => {
+    if (button.getAttribute('aria-expanded') === 'true') {
+      clicks.push(`close-${String(n)}`);
+      button.setAttribute('aria-expanded', 'false');
+      card.querySelector(SELECTORS.cardMenu)?.remove();
+      return;
+    }
     clicks.push(`open-${String(n)}`);
+    if (!noExpanded) button.setAttribute('aria-expanded', 'true');
     if (menuDelayMs === null) return;
     setTimeout(buildMenu, menuDelayMs);
   });
@@ -371,13 +406,15 @@ describe('muteAuthor とメニューの非同期描画', () => {
 describe('muteAuthor が押す要素', () => {
   it('器（li）ではなく中の button を押す', async () => {
     // Arrange
-    const card = mountCard(1);
+    mountCard(1);
     // Act
     const outcome = await muteAuthor('example-author-1', document, TIMEOUT_MS);
-    // Assert — 押された要素が BUTTON であること
+    // Assert — **押されたことは itemClicks でしか観測できない。**
+    // フィクスチャはリスナーを button にだけ付けており（器に付けると、器を
+    // 押す実装が通ってしまう）、下の「器を押しても何も起きない」が
+    // その性質を固定している。**終わったあとの DOM は見られない** —
+    // muteAuthor がメニューを閉じるので、要素ごと消えている
     expect(outcome).toBe('muted');
-    const pressed = card.querySelector<HTMLElement>('[role="menuitem"] button');
-    expect(pressed?.tagName).toBe('BUTTON');
     expect(itemClicks()).toEqual(['mute-1']);
   });
 
@@ -403,12 +440,113 @@ describe('muteAuthor が押す要素', () => {
 });
 
 /**
+ * ★ 開けたメニューを閉じる（2026-09-16 ユーザー要望）。
+ *
+ * 開きっぱなしにすると、ユーザーが自分で閉じるまで**ブロックの項目が画面に
+ * 出たまま**になる。ブロックはミュートの直上にあり、誤爆すると native の
+ * `alert()` が出て閉じられず、解除一覧も無いので回収できない。
+ *
+ * **押すのはトグルなので、閉じているときに押すと開き直す。**
+ * 「閉じる」つもりの操作が「開く」になるのが最悪の失敗。
+ */
+describe('muteAuthor がメニューを閉じる', () => {
+  function expandedOf(card: HTMLElement): string | null {
+    return card.querySelector(SELECTORS.cardMenuButton)?.getAttribute('aria-expanded') ?? null;
+  }
+
+  it('ミュートしたあとメニューを閉じる', async () => {
+    // Arrange
+    const card = mountCard(1);
+    // Act
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('muted');
+    // Assert
+    expect(expandedOf(card)).toBe('false');
+    expect(card.querySelector(SELECTORS.cardMenu)).toBeNull();
+  });
+
+  it('既にミュート済みでも閉じる（押していなくても開けたのは開けた）', async () => {
+    // Arrange — 項目が解除側だったので何も押さない経路
+    const card = mountCard(1, { items: [ITEM.follow, ITEM.block, ITEM.unmute] });
+    // Act
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe(
+      'already-muted',
+    );
+    // Assert
+    expect(expandedOf(card)).toBe('false');
+  });
+
+  it('どの項目も見つからなくても閉じる（画面構造が変わった経路）', async () => {
+    // Arrange — 開いたが、知っている文言がどれも無い
+    const card = mountCard(1, { items: [ITEM.follow, ITEM.block] });
+    // Act
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe(
+      'menu-unavailable',
+    );
+    // Assert
+    expect(expandedOf(card)).toBe('false');
+  });
+
+  it('★ Qiita が自分で閉じたなら押し直さない（押すと開き直る）', async () => {
+    // Arrange — ミュートを押した時点で Qiita 側がメニューを畳む形
+    const card = mountCard(1, { closesOnAction: true });
+    // Act
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('muted');
+    // Assert — 開く操作は 1 回きり。**2 回目が積まれていたら開き直している**
+    expect(clicks.filter((entry) => entry.startsWith('open-'))).toEqual(['open-1']);
+    expect(card.querySelector(SELECTORS.cardMenu)).toBeNull();
+  });
+
+  it('★ 開閉状態が読めなければ何もしない（当て推量で押さない）', async () => {
+    // Arrange — aria-expanded が無い。属性が変わった将来の Qiita を想定。
+    // **開いたままにする**のが修正前の挙動で、外しても悪化しない側
+    const card = mountCard(1, { noExpanded: true });
+    // Act
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('muted');
+    // Assert — 押していないので、開く操作は 1 回きりのまま
+    expect(clicks.filter((entry) => entry.startsWith('open-'))).toEqual(['open-1']);
+    expect(card.querySelector(SELECTORS.cardMenu)).not.toBeNull();
+  });
+
+  it('★ 既に開いているカードでも、閉じてから開き直してミュートできる', async () => {
+    // Arrange — ユーザーが自分でメニューを開いた状態。**そのまま押すと
+    // トグルが閉じる側に働き、menu-unavailable になる**（この修正の前の挙動）
+    const card = mountCard(1);
+    card.querySelector<HTMLElement>(SELECTORS.cardMenuButton)?.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(card.querySelector(SELECTORS.cardMenu)).not.toBeNull();
+    clicks.length = 0;
+    // Act
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('muted');
+    // Assert — 閉じる → 開く → ミュート → 閉じる
+    expect(clicks).toEqual(['close-1', 'open-1', 'mute-1', 'close-1']);
+  });
+
+  it('閉じているカードでは余計に押さない（開く → ミュート → 閉じる）', async () => {
+    // Arrange — 通常の経路。開く前の closeMenu が 1 クリックも増やさないこと
+    mountCard(1);
+    // Act
+    await expect(muteAuthor('example-author-1', document, TIMEOUT_MS)).resolves.toBe('muted');
+    // Assert
+    expect(clicks).toEqual(['open-1', 'mute-1', 'close-1']);
+  });
+
+  it('閉じるときにメニューの項目は 1 つも押さない', async () => {
+    // Arrange — ブロックの直上を通る操作なので、押すのは三点ボタンだけに閉じる
+    mountCard(1);
+    // Act
+    await muteAuthor('example-author-1', document, TIMEOUT_MS);
+    // Assert
+    expect(itemClicks()).toEqual(['mute-1']);
+  });
+});
+
+/**
  * Phase 7 の非表示と競合する。「妥当」を押すと非表示とミュートが同時に走り、
  * **順序が保証されない**。カードが display:none のまま操作すると、
  * 実機でしか出ない不具合の温床になる。
  */
 describe('muteAuthor と Phase 7 の非表示', () => {
-  it('隠れているカードでも、メニューを開く瞬間は表示に戻っている', async () => {
+  it('隠れているカードでも、メニューを開閉する瞬間は表示に戻っている', async () => {
     // Arrange — Phase 7 が隠したあとの状態を作る
     const card = mountCard(1);
     concealCard(card);
@@ -418,8 +556,11 @@ describe('muteAuthor と Phase 7 の非表示', () => {
     });
     // Act
     await muteAuthor('example-author-1', document, TIMEOUT_MS);
-    // Assert — display:none のまま操作していたら '' にならない
-    expect(displayAtClick).toEqual(['']);
+    // Assert — display:none のまま操作していたら '' にならない。
+    // **閉じる操作も含めて全部**見る（件数では固定しない） — finally の順序を
+    // 「隠す → 閉じる」に入れ替えると、ここに 'none' が混じる
+    expect(displayAtClick.length).toBeGreaterThan(0);
+    expect(displayAtClick.filter((display) => display !== '')).toEqual([]);
   });
 
   it('ミュートのあとカードは隠れた状態に戻る', async () => {

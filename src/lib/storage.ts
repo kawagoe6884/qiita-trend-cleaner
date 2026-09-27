@@ -18,12 +18,14 @@ import type {
   Candidate,
   FeedbackLog,
   FoldTarget,
+  IsoDateTime,
   LikeIndex,
   MuteLog,
   MuteOutcome,
   MuteRecord,
   ScanResult,
   Settings,
+  TrendSnapshot,
   Verdict,
 } from '../types/domain';
 
@@ -191,7 +193,7 @@ export async function saveFoldTarget(foldTarget: FoldTarget): Promise<void> {
 }
 
 /**
- * ミュートを試みた結果。1 件だけ壊れていても全体を捨てない
+ * ミュートを試みた結果（トレンド外で見送った記録も含む）。1 件だけ壊れていても全体を捨てない
  * （getFeedback と同じ扱い）。
  *
  * **知らない outcome は落とす。**通すと UI の switch が文言を返せずに落ちる
@@ -217,10 +219,14 @@ export async function getMuteLog(): Promise<MuteLog> {
  * 結果を 1 件記録し、**書いた後の全体を返す**（saveVerdict と同じ形）。
  * now を引数に取るのは、テストが時刻を固定できるようにするため。
  *
- * **mutedAt は消さない。**成功したという事実は、そのあと `not-on-page` に
- * なっても取り消されない（ミュートすると Qiita が記事をトレンドから外すので、
- * 押し直すと必ず `not-on-page` になる）。上書きすると UI が
- * 「まだミュートできていない」と誤って案内する。
+ * **ここでは mutedAt を消さない。**試行の結果だけでは解除を知りようがないため。
+ * 押し直したときに返るのは、**ページを読み込み直す前なら** `already-muted`
+ * （カードが DOM に残っている）、**読み込み直したあとなら** `not-on-page`
+ * （記事ごとトレンドから消える）で、どちらも「解除されたか」を区別できない。
+ * 上書きすると UI が「まだミュートできていない」と誤って案内する。
+ *
+ * **消すのは `forgetMuteConfirmation` だけ。**解除の証拠はここではなく、
+ * トレンドに著者が戻ってきたという事実の側から来る。
  *
  * **`already-muted` でも mutedAt を立てる。**押してはいないが、メニューの文言が
  * 解除側だったのだから**その時点でミュート中だと確認できている**。
@@ -241,6 +247,86 @@ export async function recordMuteOutcome(
   };
   await chrome.storage.local.set({ muteLog });
   return muteLog;
+}
+
+/**
+ * トレンドに戻ってきた著者の「ミュート済み」の記録を捨て、**書いた後の全体を返す**。
+ *
+ * 【なぜこれが解除の証拠になるのか】
+ * ミュート済みの著者の記事は、**新規ロードのトレンドには載らない**（2026-09-16 実測。
+ * 押した直後の DOM には残るが、更新すると消える）。だから {@link TrendSnapshot} に
+ * 居る著者は、その時点でミュートされていない。
+ *
+ * 【`snapshotAt` で必ず絞る】
+ * `TREND_ITEMS` はページ読み込み時のスナップショットで、service worker が処理する
+ * 頃にはユーザーが既にミュートを押しているかもしれない。**確認より前に撮られた
+ * スナップショットは証拠にならない**ので、`mutedAt < snapshotAt` のときだけ捨てる。
+ *
+ * 【記録ごと捨てる理由】
+ * `mutedAt` だけ消すと `outcome: 'muted'` が残り、UI が
+ * 「Qiita 側でミュートしました。」と言い続ける。いま押せる状態に戻ったのだから、
+ * **一度も試していないのと同じ**に戻すのが正しい。
+ *
+ * 【読めない時刻は捨てない】
+ * 証拠が読めないときは、古い記録を残す側に倒す。消しすぎると
+ * ミュート済みの著者に「ミュートする」を出すことになる。
+ *
+ * 【ポップアップの `recordMuteOutcome` と同じ muteLog を触る】
+ * 読み直してから書くまでを 1 マイクロタスクに収める（`persistIndexAndDetect`
+ * と同じ扱い）。スナップショットの保存を**先に**済ませてあるのは、その await を
+ * この窓の外に出すため。
+ */
+export async function forgetMuteConfirmation(
+  handles: readonly AccountHandle[],
+  snapshotAt: IsoDateTime,
+): Promise<MuteLog> {
+  const previous = await getMuteLog();
+  const seenAt = Date.parse(snapshotAt);
+  if (Number.isNaN(seenAt)) return previous;
+  const returned = new Set(handles);
+  const kept = Object.entries(previous).filter(([handle, record]) => {
+    if (!returned.has(handle) || record.mutedAt === undefined) return true;
+    const confirmedAt = Date.parse(record.mutedAt);
+    if (Number.isNaN(confirmedAt)) return true;
+    return confirmedAt >= seenAt;
+  });
+  if (kept.length === Object.keys(previous).length) return previous;
+  const muteLog: MuteLog = Object.fromEntries(kept);
+  await chrome.storage.local.set({ muteLog });
+  return muteLog;
+}
+
+/**
+ * 直近に新規ロードしたトレンドページの著者一覧。撮っていなければ null。
+ *
+ * **null と空配列を取り違えない。**「まだ一度もトレンドを開いていない」と
+ * 「開いたが 1 件も読めなかった」は別物で、前者では候補に
+ * 「トレンドに出ていません」と言ってはいけない（分母 0 を 0% にしないのと同じ話）。
+ */
+export async function getTrendSnapshot(): Promise<TrendSnapshot | null> {
+  const raw = await readRaw();
+  const stored = raw.trendSnapshot;
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return null;
+  const candidate = stored as Partial<Record<keyof TrendSnapshot, unknown>>;
+  const at = asNonEmptyString(candidate.at);
+  if (at === null || !Array.isArray(candidate.authors)) return null;
+  const authors = candidate.authors.filter(
+    (value): value is AccountHandle => asNonEmptyString(value) !== null,
+  );
+  return { authors, at };
+}
+
+/** 著者は重複を落として保存する。1 人が複数記事を出していても 1 回だけ */
+export async function saveTrendSnapshot(
+  handles: readonly AccountHandle[],
+  now: Date,
+): Promise<TrendSnapshot> {
+  const trendSnapshot: TrendSnapshot = {
+    authors: [...new Set(handles)].sort(),
+    at: now.toISOString(),
+  };
+  await chrome.storage.local.set({ trendSnapshot });
+  return trendSnapshot;
 }
 
 /**

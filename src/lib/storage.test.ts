@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as storage from './storage';
+
+/**
+ * chrome API のモックを取り出す。メソッドを直接渡すと unbound-method に
+ * 引っかかるため、持ち主とキーで受け取る（service-worker.test.ts と同じ手）。
+ */
+function mockOf<T extends object, K extends keyof T>(owner: T, key: K) {
+  return vi.mocked(owner[key] as (...args: unknown[]) => unknown);
+}
 import {
   getToken,
   saveToken,
@@ -522,9 +530,15 @@ describe('getMuteLog / recordMuteOutcome', () => {
 });
 
 /**
- * ミュートに成功した事実は、そのあと not-on-page になっても取り消されない。
- * ミュートすると Qiita が記事をトレンドから外すので、押し直すと必ず
- * not-on-page になる。上書きすると UI が誤って案内する。
+ * ミュートに成功した事実を、試行の結果だけで取り消さない。
+ *
+ * 押し直したときに返るのは、ページを読み込み直す前なら `already-muted`
+ * （カードが DOM に残っている）、読み込み直したあとなら `not-on-page`
+ * （記事ごとトレンドから消える）。**どちらも「解除されたか」を区別できない**ので、
+ * ここで消すと UI が「まだミュートできていない」と誤って案内する。
+ *
+ * **消すのは forgetMuteConfirmation だけ**（下の describe）。解除の証拠は
+ * 試行の結果ではなく、トレンドに著者が戻ってきたという事実の側から来る。
  */
 describe('recordMuteOutcome の mutedAt', () => {
   const FIRST = new Date('2026-08-24T12:00:00.000Z');
@@ -590,5 +604,155 @@ describe('recordMuteOutcome の mutedAt', () => {
     await storage.recordMuteOutcome('example-author-a', 'not-on-page', SECOND);
     const log = await storage.getMuteLog();
     expect(log['example-author-a']?.mutedAt).toBe('2026-08-24T12:00:00.000Z');
+  });
+});
+
+/**
+ * ★ 解除の検知。**ミュート済みの著者は新規ロードのトレンドに載らない**
+ * （2026-09-16 ユーザー実測: 3 記事のうち 1 件をミュートしても DOM は 3 件のまま。
+ * ページを更新すると 0 件）。だから戻ってきた著者は解除されたと確定できる。
+ */
+describe('forgetMuteConfirmation', () => {
+  const MUTED_AT = new Date('2026-09-16T10:00:00.000Z');
+  const BEFORE = '2026-09-16T09:00:00.000Z';
+  const AFTER = '2026-09-16T11:00:00.000Z';
+
+  it('戻ってきた著者の記録を捨てる', async () => {
+    // Arrange
+    await storage.recordMuteOutcome('example-author-a', 'muted', MUTED_AT);
+    // Act — 確認より後に撮ったトレンドに、その著者が居た
+    const log = await storage.forgetMuteConfirmation(['example-author-a'], AFTER);
+    // Assert — **記録ごと捨てる。**mutedAt だけ消すと outcome が残り、
+    // UI が「Qiita 側でミュートしました。」と言い続ける
+    expect(log).toEqual({});
+  });
+
+  it('★ 確認より前に撮ったスナップショットでは捨てない', async () => {
+    // Arrange — TREND_ITEMS はページ読み込み時のスナップショット。service worker が
+    // 処理する頃にはユーザーが既にミュートを押しているかもしれない。
+    // **押す前の画面を根拠に、押した記録を消してはいけない**
+    await storage.recordMuteOutcome('example-author-a', 'muted', MUTED_AT);
+    // Act
+    const log = await storage.forgetMuteConfirmation(['example-author-a'], BEFORE);
+    // Assert
+    expect(log['example-author-a']?.mutedAt).toBe('2026-09-16T10:00:00.000Z');
+  });
+
+  it('スナップショットに居ない著者は触らない', async () => {
+    await storage.recordMuteOutcome('example-author-a', 'muted', MUTED_AT);
+    const log = await storage.forgetMuteConfirmation(['example-author-b'], AFTER);
+    expect(log['example-author-a']?.mutedAt).toBe('2026-09-16T10:00:00.000Z');
+  });
+
+  it('ミュートできていない記録は捨てない（失敗の履歴は残す）', async () => {
+    // Arrange — 一度も成功していないので mutedAt が無い
+    await storage.recordMuteOutcome('example-author-a', 'menu-unavailable', MUTED_AT);
+    // Act
+    const log = await storage.forgetMuteConfirmation(['example-author-a'], AFTER);
+    // Assert
+    expect(log['example-author-a']?.outcome).toBe('menu-unavailable');
+  });
+
+  it('スナップショット側の時刻が読めなければ捨てない', async () => {
+    // 証拠が読めないなら残す側に倒す。消しすぎると、ミュート済みの著者に
+    // 「ミュートする」を出すことになる
+    await storage.recordMuteOutcome('example-author-a', 'muted', MUTED_AT);
+    const log = await storage.forgetMuteConfirmation(['example-author-a'], 'not-a-date');
+    expect(log['example-author-a']?.mutedAt).toBe('2026-09-16T10:00:00.000Z');
+  });
+
+  it('★ 記録側の時刻が読めなければ捨てない', async () => {
+    // Arrange — **上のテストとは別の分岐。**getMuteLog は mutedAt を
+    // 「空でない文字列」としか検査しないので、壊れた値はここまで届く。
+    // 2 つの NaN のうち片方しか通していなかったことは変異テストで露見した
+    await chrome.storage.local.set({
+      muteLog: {
+        'example-author-a': { outcome: 'muted', at: '2026-09-16T10:00:00.000Z', mutedAt: 'x' },
+      },
+    });
+    // Act
+    const log = await storage.forgetMuteConfirmation(['example-author-a'], AFTER);
+    // Assert
+    expect(log['example-author-a']?.mutedAt).toBe('x');
+  });
+
+  it('storage に書き戻る（開き直しても消えたまま）', async () => {
+    await storage.recordMuteOutcome('example-author-a', 'muted', MUTED_AT);
+    await storage.forgetMuteConfirmation(['example-author-a'], AFTER);
+    await expect(storage.getMuteLog()).resolves.toEqual({});
+  });
+
+  it('捨てるものが無ければ書き込まない', async () => {
+    // Arrange — 無駄な set は storage.onChanged を発火させ、content script の
+    // applyHiding を毎回走らせる。トレンドページを開くたびに起きるので効く。
+    // **setup.ts の set は既に vi.fn なので、spyOn では過去の履歴ごと拾う。**
+    // 前後の差で見る
+    await storage.recordMuteOutcome('example-author-a', 'muted', MUTED_AT);
+    const setMock = mockOf(chrome.storage.local, 'set');
+    const before = setMock.mock.calls.length;
+    // Act
+    await storage.forgetMuteConfirmation(['example-author-b'], AFTER);
+    // Assert
+    expect(setMock.mock.calls.length).toBe(before);
+  });
+});
+
+describe('トレンドのスナップショット', () => {
+  const NOW = new Date('2026-09-16T10:00:00.000Z');
+
+  it('撮っていなければ null（「1 件も読めなかった」と区別する）', async () => {
+    // **空配列と取り違えない。**null を空配列にすると、更新直後のユーザーの
+    // 候補が全員「トレンドに出ていません」になる
+    await expect(storage.getTrendSnapshot()).resolves.toBeNull();
+  });
+
+  it('著者の重複を落として保存する', async () => {
+    // Arrange — 同じ著者がトレンドに 3 本出しているのは常態
+    const handles = ['example-author-b', 'example-author-a', 'example-author-b'];
+    // Act
+    const saved = await storage.saveTrendSnapshot(handles, NOW);
+    // Assert
+    expect(saved).toEqual({
+      authors: ['example-author-a', 'example-author-b'],
+      at: '2026-09-16T10:00:00.000Z',
+    });
+  });
+
+  it('書いたものが読み戻る', async () => {
+    await storage.saveTrendSnapshot(['example-author-a'], NOW);
+    await expect(storage.getTrendSnapshot()).resolves.toEqual({
+      authors: ['example-author-a'],
+      at: '2026-09-16T10:00:00.000Z',
+    });
+  });
+
+  // **本番では起きない**（sendTrendItems は items.length > 0 のときだけ送る）。
+  // null と空配列を取り違えないという storage の契約を固定するためのテスト
+  it('1 件も読めなかったことは記録できる（null とは別物）', async () => {
+    await storage.saveTrendSnapshot([], NOW);
+    await expect(storage.getTrendSnapshot()).resolves.toEqual({
+      authors: [],
+      at: '2026-09-16T10:00:00.000Z',
+    });
+  });
+
+  it('壊れた値は null に倒す', async () => {
+    await chrome.storage.local.set({ trendSnapshot: { authors: 'example-author-a' } });
+    await expect(storage.getTrendSnapshot()).resolves.toBeNull();
+  });
+
+  it('時刻が無ければ null に倒す（いつ撮ったか言えないと使えない）', async () => {
+    await chrome.storage.local.set({ trendSnapshot: { authors: ['example-author-a'] } });
+    await expect(storage.getTrendSnapshot()).resolves.toBeNull();
+  });
+
+  it('著者の中に壊れた要素があっても、その要素だけ落とす', async () => {
+    await chrome.storage.local.set({
+      trendSnapshot: { authors: ['example-author-a', 42, ''], at: '2026-09-16T10:00:00.000Z' },
+    });
+    await expect(storage.getTrendSnapshot()).resolves.toEqual({
+      authors: ['example-author-a'],
+      at: '2026-09-16T10:00:00.000Z',
+    });
   });
 });

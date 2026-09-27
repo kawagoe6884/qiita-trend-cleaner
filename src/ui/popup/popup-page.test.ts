@@ -1,9 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { init, APPLY_DEBOUNCE_MS } from './popup-page';
-import { loadPopupState, applySettings, recordVerdict, toViews } from './popup-state';
+import {
+  loadPopupState,
+  applySettings,
+  recordVerdict,
+  toViews,
+  formatJst,
+  describeMuteOutcome,
+} from './popup-state';
 import type * as PopupState from './popup-state';
 import { DEFAULT_SETTINGS } from '../../types/domain';
-import type { Candidate } from '../../types/domain';
+import type { Candidate, FoldTarget } from '../../types/domain';
 // 実際に配布される HTML をそのまま読む（Vite の ?raw）。
 // node:fs を使うと tsconfig の types に node を足すことになり、
 // 拡張のコードから node API が見えてしまう guardrail を失う
@@ -53,6 +60,7 @@ function candidate(handle = 'example-author-a'): Candidate {
 function setupDom(): void {
   document.body.innerHTML = `
     <p id="notice" hidden></p>
+    <p id="retry-notice" hidden></p>
     <section class="mode">
       <p id="mode-title"></p>
       <p id="mode-detail"></p>
@@ -75,7 +83,7 @@ function setupDom(): void {
         <output id="min-cluster-value"></output>
       </p>
       <p class="slider">
-        <input type="range" id="min-shared" min="2" max="10" step="1" />
+        <input type="range" id="min-shared" min="2" max="7" step="1" />
         <output id="min-shared-value"></output>
       </p>
       <p class="slider">
@@ -469,6 +477,14 @@ describe('index.html のレイアウト順序', () => {
     expect(list).not.toContain('overflow');
     expect(list).not.toContain('max-height');
   });
+
+  it('押し直せる候補の案内は先頭にあり、既定で隠れていて、429 とは別の器', () => {
+    // 同じ器にすると、429 の変更通知が丸ごと書き換えたときに片方が消える
+    const retry = indexHtml.indexOf('<p id="retry-notice" hidden></p>');
+    expect(retry).toBeGreaterThan(-1);
+    expect(retry).toBeLessThan(indexHtml.indexOf('id="mode-title"'));
+    expect(indexHtml).toContain('<p id="notice" hidden></p>');
+  });
 });
 
 describe('判定の条件の見出し', () => {
@@ -620,6 +636,24 @@ describe('スライダーの値の丸め', () => {
     await vi.waitFor(() => {
       expect(applyMock).toHaveBeenCalledWith(
         expect.objectContaining({ minClusterSize: 30 }),
+        expect.any(Date),
+      );
+    });
+  });
+
+  it('★ 記事数は RANGES の上限に丸めてから保存する', async () => {
+    // Arrange — HTML の max だけを直しても、RANGES が古いままなら
+    // つまみを端まで動かした値が保存時に丸められる。**逆向きの事故も同じ**
+    await init();
+    const slider = el<HTMLInputElement>('#min-shared');
+    slider.max = '999';
+    slider.value = '999';
+    // Act
+    slider.dispatchEvent(new Event('change'));
+    // Assert — 8〜10 は著者内の軸では実質届かず、著者間の軸でしか意味が無かった
+    await vi.waitFor(() => {
+      expect(applyMock).toHaveBeenCalledWith(
+        expect.objectContaining({ minSharedItems: 7 }),
         expect.any(Date),
       );
     });
@@ -905,6 +939,81 @@ describe('coAuthors の行', () => {
 });
 
 /**
+ * ★ いまトレンドに出ていない候補（ユーザー報告 2026-09-16）。
+ * 候補は 7 日ぶんの蓄積から出るので、トレンドを去った著者も残る。
+ * ミュートは表示中のカードを操作するので、その状態では必ず失敗する。
+ */
+describe('トレンドに出ていない候補の行', () => {
+  const AT = '2026-09-16T10:00:00.000Z';
+
+  function withSnapshot(snapshot: { authors: string[]; at: string } | null) {
+    return {
+      views: toViews([candidate()], {}, {}, snapshot),
+      precision: NO_PRECISION,
+      settings: SETTINGS,
+      rateLimitNotice: null,
+      lastScanAt: null,
+      hasToken: false,
+      hasIndex: true,
+      authorCoverage: COVERAGE,
+      muteOnValid: false,
+      foldTarget: 'none' as const,
+    };
+  }
+
+  it('出ていなければ、撮った時刻とともに案内する', async () => {
+    // Arrange — 別の著者だけが出ていた
+    loadMock.mockResolvedValue(withSnapshot({ authors: ['example-author-z'], at: AT }));
+    // Act
+    await init();
+    // Assert
+    const line = document.querySelector('#candidates .off-trend');
+    expect(line?.textContent).toContain(formatJst(AT));
+  });
+
+  it('出ていれば行ごと出さない', async () => {
+    loadMock.mockResolvedValue(withSnapshot({ authors: ['example-author-a'], at: AT }));
+    await init();
+    expect(document.querySelector('#candidates .off-trend')).toBeNull();
+  });
+
+  it('★ スナップショットが無ければ行ごと出さない（更新直後の全員に嘘を出さない）', async () => {
+    // Arrange — まだ一度もトレンドページを開いていない
+    loadMock.mockResolvedValue(withSnapshot(null));
+    // Act
+    await init();
+    // Assert
+    expect(document.querySelector('#candidates .off-trend')).toBeNull();
+  });
+
+  it('★ ミュートの結果より前に出す（押す前に無駄だと分かるように）', async () => {
+    // Arrange — 押したあとに「出ていませんでした」と言われても遅い。
+    // **評価は「妥当」にする。**ミュートの記録は「妥当」を押したときにしかできず、
+    // 評価の無い記録は実機に無い形（2026-09-17、「妥当」でない候補には見送りの
+    // 行を出さなくしたとき、このフィクスチャだけが落ちて露見した）。
+    // **ミュート連動もオンにする。**記録ができるのはオンで押したときだけで、
+    // オフではミュートの行を出さない（同日、連動オフの候補に押す指示を残さなく
+    // したとき、同じくこのフィクスチャだけが落ちた）
+    const state = withSnapshot({ authors: ['example-author-z'], at: AT });
+    const [view] = state.views;
+    if (view === undefined) throw new Error('fixture broken');
+    loadMock.mockResolvedValue({
+      ...state,
+      muteOnValid: true,
+      views: [
+        { ...view, verdict: 'valid' as const, mute: { outcome: 'not-on-page' as const, at: AT } },
+      ],
+    });
+    // Act
+    await init();
+    // Assert
+    const item = el('#candidates li');
+    const classes = [...item.children].map((child) => child.className);
+    expect(classes.indexOf('off-trend')).toBeLessThan(classes.indexOf('mute-status'));
+  });
+});
+
+/**
  * 「妥当」と同時のミュート。**既定はオフ。**
  *
  * 起動は storage.onChanged ではなくメッセージで行う。評価が既に valid なら
@@ -1076,7 +1185,11 @@ describe('「妥当」と同時のミュート', () => {
     clickVerdict('妥当');
     // Assert
     await vi.waitFor(() => {
-      expect(el('#candidates .mute-status').textContent).toBe('Qiita 側でミュートしました。');
+      // 文言そのものは popup-state の describeMuteRecord が決める。ここが
+      // 守るのは「結果が .mute-status に届くこと」。**現在形では言わない**
+      expect(el('#candidates .mute-status').textContent).toContain(
+        'ミュート済みであることを確認しました',
+      );
     });
   });
 
@@ -1084,6 +1197,71 @@ describe('「妥当」と同時のミュート', () => {
     loadMock.mockResolvedValue(stateWithMute(true));
     await init();
     expect(document.querySelector('#candidates .mute-status')).toBeNull();
+  });
+
+  it('★ トレンド外の候補では「妥当」を押しても依頼を送らない（2026-09-17）', async () => {
+    // Arrange — 送っても表示中のカードは無い。送ると、タブを閉じていたとき
+    // 「トレンドページを開いてから押してください」と的外れな案内になる
+    const snapshot = { authors: ['example-author-z'], at: '2026-09-17T01:00:00.000Z' };
+    loadMock.mockResolvedValue(stateWithMute(true, toViews([candidate()], {}, {}, snapshot)));
+    await init();
+    // Act
+    clickVerdict('妥当');
+    // Assert — 押したときの理由が行に出るまで待つ（handleVerdict の末尾で再描画される）。
+    // 送っていれば beforeEach の応答（muted）で「確認しました」になり、ここで落ちる
+    await vi.waitFor(() => {
+      expect(el('#candidates .mute-status').textContent).toBe(describeMuteOutcome('not-on-page'));
+    });
+    expect(sendMessageMock().mock.calls).toHaveLength(0);
+  });
+
+  it('★ 「妥当」→ トレンド外で見送り →「誤り」で、見送りの行が消える（2026-09-17 実機 NG）', async () => {
+    // Arrange — 実機では「押したときトレンドに記事が無く、ミュートしませんでした。」が
+    // 「誤り」を押したあとも残った。ミュートするつもりが無くなった候補に、
+    // ミュートしなかった理由を言い続けていた
+    const snapshot = { authors: ['example-author-z'], at: '2026-09-17T01:00:00.000Z' };
+    loadMock.mockResolvedValue(stateWithMute(true, toViews([candidate()], {}, {}, snapshot)));
+    await init();
+    clickVerdict('妥当');
+    await vi.waitFor(() => {
+      expect(el('#candidates .mute-status').textContent).toBe(describeMuteOutcome('not-on-page'));
+    });
+    // Act
+    clickVerdict('誤り');
+    // Assert — 「誤り」で描き直されるまで待ってから見る（待たないと、行が消える前の
+    // DOM でも消えた後の DOM でも同じアサーションに届きうる）
+    await vi.waitFor(() => {
+      const pressed = document.querySelector('#candidates button[aria-pressed="true"]');
+      expect(pressed?.textContent).toBe('誤り');
+    });
+    expect(document.querySelector('#candidates .mute-status')).toBeNull();
+  });
+
+  it('行が消えた「誤り」の候補を「妥当」に戻すと、結果で描き直される（「ミュートしています…」のまま残らない）', async () => {
+    // Arrange — ミュートしなかった記録（not-on-page）を持ったまま「誤り」になっている、
+    // トレンド外と分かっていない候補（依頼を送る経路を通る）。行は出ていないので、
+    // 押すと showMutePending が行を**新しく作る**。記録があるのに行が無いのは、
+    // 「妥当」でない候補の行を隠すようにした（2026-09-17）ことで初めてできた状態
+    const views = toViews(
+      [candidate()],
+      { 'example-author-a': 'false_positive' },
+      { 'example-author-a': { outcome: 'not-on-page', at: '2026-09-17T01:00:00.000Z' } },
+    );
+    // 結果は記録と**違う**失敗にする。同じだと、新しい結果を捨てて古い記録で
+    // 描き直しても同じ文言になり、描き直しに何が使われたかを検査できない
+    sendMessageMock().mockResolvedValue(muteResult('example-author-a', 'menu-unavailable'));
+    loadMock.mockResolvedValue(stateWithMute(true, views));
+    await init();
+    expect(document.querySelector('#candidates .mute-status')).toBeNull();
+    // Act
+    clickVerdict('妥当');
+    // Assert — 失敗の経路でも、最後に残るのは今回の結果の文言
+    await vi.waitFor(() => {
+      expect(el('#candidates .mute-status').textContent).toBe(
+        describeMuteOutcome('menu-unavailable'),
+      );
+    });
+    expect(sendMessageMock().mock.calls).toHaveLength(1);
   });
 
   it('解除の案内リンクは背景タブで開く', async () => {
@@ -1150,7 +1328,9 @@ describe('既にミュート済みの候補の表示', () => {
   it('開いた直後は結果が出ている', async () => {
     loadMock.mockResolvedValue(stateWithMuted(false));
     await init();
-    expect(el('#candidates .mute-status').textContent).toContain('ミュートしました');
+    expect(el('#candidates .mute-status').textContent).toContain(
+      'ミュート済みであることを確認しました',
+    );
   });
 
   it('「誤り」を押しても結果表示は消えない', async () => {
@@ -1173,6 +1353,123 @@ describe('既にミュート済みの候補の表示', () => {
     await waitForRerender();
     // Assert
     expect(document.querySelector('#candidates .mute-status')).not.toBeNull();
+  });
+});
+
+/**
+ * ★ 2026-09-17 ユーザー「A で直して」。
+ *
+ * トレンド外の候補で先に「妥当」を押すと、ミュートは走らない。その著者が
+ * トレンドに戻ってきたら先頭で知らせ、押し直せるようにする。**勝手にミュートしない。**
+ */
+describe('押し直せる候補の案内', () => {
+  const HANDLE = 'example-author-retry';
+  const TRIED = '2026-09-17T01:00:00.000Z';
+  const SEEN = '2026-09-17T03:00:00.000Z';
+
+  /** 妥当・連動で押したがトレンド外で not-on-page、そのあと撮ったスナップショットに居る */
+  function stateWithRetry(muteOnValid: boolean, foldTarget: FoldTarget = 'none') {
+    return {
+      views: toViews(
+        [candidate(HANDLE)],
+        { [HANDLE]: 'valid' as const },
+        { [HANDLE]: { outcome: 'not-on-page' as const, at: TRIED } },
+        { authors: [HANDLE], at: SEEN },
+      ),
+      precision: { valid: 1, falsePositive: 0, ratio: 1 },
+      settings: SETTINGS,
+      rateLimitNotice: null,
+      lastScanAt: null,
+      hasToken: false,
+      hasIndex: true,
+      authorCoverage: COVERAGE,
+      muteOnValid,
+      foldTarget,
+    };
+  }
+
+  it('先頭に件数とスナップショットの時刻を出す', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithRetry(true));
+    // Act
+    await init();
+    // Assert
+    const notice = el('#retry-notice');
+    expect(notice.hidden).toBe(false);
+    expect(notice.textContent).toContain('1 件');
+    expect(notice.textContent).toContain(formatJst(SEEN));
+  });
+
+  it('ミュート連動がオフなら出さない（押してもミュートは走らない）', async () => {
+    loadMock.mockResolvedValue(stateWithRetry(false));
+    await init();
+    expect(el('#retry-notice').hidden).toBe(true);
+  });
+
+  it('候補の行は、押したときの失敗の代わりに押し直せることを言う', async () => {
+    loadMock.mockResolvedValue(stateWithRetry(true));
+    await init();
+    const status = el('#candidates .mute-status').textContent;
+    expect(status).toContain('「妥当」を押し直す');
+    expect(status).toContain(formatJst(SEEN));
+  });
+
+  it('ミュート連動がオフなら、候補の行に押す指示を残さない（押してもミュートは走らない）', async () => {
+    // Arrange — トレンドのタブを閉じて「妥当」→ no-trend-tab → トレンドを開き直す、で
+    // できる形。オフでは「トレンドページを開いてから押してください」に従っても
+    // 何も起きない（2026-09-17）。押す指示を含む文言で見る — not-on-page は
+    // 過去の事実なので、出し分けを間違えても文として嘘にならず検査が弱い
+    loadMock.mockResolvedValue({
+      ...stateWithRetry(false),
+      views: toViews(
+        [candidate(HANDLE)],
+        { [HANDLE]: 'valid' as const },
+        { [HANDLE]: { outcome: 'no-trend-tab' as const, at: TRIED } },
+        { authors: [HANDLE], at: SEEN },
+      ),
+    });
+    // Act
+    await init();
+    // Assert
+    expect(document.querySelector('#candidates .mute-status')).toBeNull();
+  });
+
+  it('★ 「妥当」を畳む設定でも畳まない（先頭の案内が指す先を隠さない）', async () => {
+    // Arrange
+    loadMock.mockResolvedValue(stateWithRetry(true, 'valid'));
+    // Act
+    await init();
+    // Assert — 一覧と、候補ゼロの案内（renderSummary 側の分割）の両方で揃っている
+    expect(document.querySelectorAll('#candidates li')).toHaveLength(1);
+    expect(el('#folded').hidden).toBe(true);
+    expect(el('#empty').hidden).toBe(true);
+  });
+
+  it('押し直してミュートできたら、案内が消えて畳まれる', async () => {
+    // Arrange — 戻ってきた著者はスナップショットに居るので、今度は送る
+    (
+      vi.mocked(chrome.tabs.query) as unknown as {
+        mockResolvedValue: (value: chrome.tabs.Tab[]) => void;
+      }
+    ).mockResolvedValue([tab(1, 'https://qiita.com/trend', true)]);
+    (
+      vi.mocked(chrome.tabs.sendMessage) as unknown as {
+        mockResolvedValue: (value: unknown) => void;
+      }
+    ).mockResolvedValue({ type: 'MUTE_RESULT', handle: HANDLE, outcome: 'muted' });
+    loadMock.mockResolvedValue(stateWithRetry(true, 'valid'));
+    await init();
+    expect(el('#retry-notice').hidden).toBe(false);
+    // Act
+    clickVerdict('妥当');
+    // Assert
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('#folded-candidates li')).toHaveLength(1);
+    });
+    expect(el('#retry-notice').hidden).toBe(true);
+    expect(vi.mocked(chrome.tabs.sendMessage).mock.calls).toEqual([
+      [1, { type: 'MUTE_AUTHOR', handle: HANDLE }],
+    ]);
   });
 });
 /**
@@ -1553,6 +1850,13 @@ describe('index.html の折りたたみ', () => {
   it('幅のスライダーは目盛りの添字を持つ（分は等間隔に並ばない）', () => {
     // 分を value にすると 60→2880 を等間隔の目盛りに載せられない
     expect(indexHtml).toContain('id="burst-window" min="0" max="6" step="1"');
+  });
+
+  it('★ 記事数のスライダーの可動域が RANGES と一致する', () => {
+    // **HTML と popup-page.ts の RANGES は別々に書かれている。**片方だけ直すと
+    // 「表示できる値」と「保存できる値」がずれ、つまみを端まで動かしても
+    // 保存時に丸められる。型もテストも通ってしまう組み合わせ
+    expect(indexHtml).toContain('id="min-shared" min="2" max="7" step="1"');
   });
 
   it('下限（絞り込み）のスライダーを置かない', () => {

@@ -11,6 +11,10 @@ import {
   describeCall,
   describeMuteOutcome,
   describeMuteRecord,
+  describeMuteRetry,
+  describeMuteStatus,
+  describeRetryNotice,
+  describeOffTrend,
   describeEmpty,
   describeWindowShare,
   describeCoAuthors,
@@ -21,13 +25,15 @@ import {
   windowIndexOf,
   BURST_WINDOW_CHOICES,
   requestMute,
+  skipMute,
+  isMuteRetryReady,
 } from './popup-state';
 import type { CandidateView } from './popup-state';
 import * as storage from '../../lib/storage';
 import * as domain from '../../types/domain';
 import { DEFAULT_SETTINGS } from '../../types/domain';
 import { RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from '../../api/rate-budget';
-import type { Candidate, FeedbackLog, LikeIndex } from '../../types/domain';
+import type { Candidate, FeedbackLog, LikeIndex, MuteRecord, Verdict } from '../../types/domain';
 
 /** 合成の候補。実アカウント名・実 item_id は使わない */
 function candidate(suffix: string, clusterSize = 5): Candidate {
@@ -192,6 +198,30 @@ describe('loadPopupState', () => {
     expect(state.lastScanAt).toBe('2026-08-20T03:00:00.000Z');
   });
 
+  it('★ 保存済みのスナップショットを候補に配線する', async () => {
+    // Arrange — **ここだけがテストの穴だった。**toViews の第 4 引数は省略可能
+    // （既定 null）なので、loadPopupState が渡すのをやめても型は通り、
+    // toViews 自身のテストも popup-page のテスト（loadPopupState をモック）も
+    // 全部通る。**本番だけ静かに死ぬ**（エントリを index.ts にした事故と同じ形）
+    await storage.saveCandidates([candidate('1')]);
+    await storage.saveTrendSnapshot(['example-author-z'], NOW);
+    // Act
+    const state = await loadPopupState(NOW);
+    // Assert — example-author-1 は今日のトレンドに居ない
+    expect(state.views[0]?.offTrendAt).toBe(NOW.toISOString());
+  });
+
+  it('トレンドに居る候補は offTrendAt が null で、onTrendAt に時刻が配線される', async () => {
+    // Arrange
+    await storage.saveCandidates([candidate('1')]);
+    await storage.saveTrendSnapshot(['example-author-1'], NOW);
+    // Act
+    const state = await loadPopupState(NOW);
+    // Assert
+    expect(state.views[0]?.offTrendAt).toBeNull();
+    expect(state.views[0]?.onTrendAt).toBe(NOW.toISOString());
+  });
+
   it('429 中なら案内を載せる', async () => {
     // Arrange
     await storage.saveRateLimit(Math.floor(NOW.getTime() / 1000) + 600);
@@ -251,6 +281,22 @@ describe('applySettings', () => {
     // Assert — verdict を Candidate に持たせると、この再検出で消える
     expect(views[0]?.verdict).toBe('valid');
     expect((await loadPopupState(NOW)).precision.ratio).toBe(1);
+  });
+
+  it('★ つまみを動かしてもトレンド不在の行が消えない（スナップショットを配線する）', async () => {
+    // Arrange — 2026-09-17 に見つけた穴。スナップショットを loadPopupState にだけ
+    // 配線し、ここを忘れていた。toViews の第 4 引数は省略可能なので型は通る。
+    // **muteLog を読み忘れて「つまみを 1 つ動かした瞬間にミュートの結果表示が
+    // 消える」と書いてあった失敗の、すぐ隣で同じ形を作っていた**
+    await storage.saveLikeIndex(clusteredIndex(5));
+    await storage.saveTrendSnapshot(['example-author-z'], NOW);
+    // Act
+    const views = await applySettings(
+      { ...DEFAULT_SETTINGS, minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 },
+      NOW,
+    );
+    // Assert — example-author-a はそのスナップショットに居ない
+    expect(views[0]?.offTrendAt).toBe(NOW.toISOString());
   });
 
   it('再検出は API を 1 本も叩かない', async () => {
@@ -466,6 +512,19 @@ describe('describeMuteOutcome', () => {
     expect(texts.filter((text) => /不正|スパム|悪質/.test(text))).toEqual([]);
   });
 
+  it('★ not-on-page は現在形で言わず、押し直しを約束しない（2026-09-17）', () => {
+    // Arrange — 押したあとに読む文なので「いま」は押した時点を指さない。
+    // 「次に出てきたとき」はミュート済みの著者には来ない（describeOffTrend で
+    // 直したのと同じ誤りが、ここに最初から残っていた）
+    // Act
+    const text = describeMuteOutcome('not-on-page');
+    // Assert — 「いま」は文頭か句読点の直後だけを見る（「〜ています」に当たるため）
+    expect(text).not.toMatch(/(^|[、。])いま/);
+    expect(text).not.toContain('次に出てきたとき');
+    expect(text).not.toContain('押し直して');
+    expect(text).toContain('押したとき');
+  });
+
   it('menu-unavailable では既にミュート済みの可能性を並べない', () => {
     // **2026-08-29 に逆転した。**解除側の文言を読んで already-muted を返すように
     // なったので、menu-unavailable は画面構造の変化だけを指す。ここに推測を
@@ -599,6 +658,30 @@ describe('requestMute', () => {
   });
 });
 
+describe('skipMute', () => {
+  const NOW = new Date('2026-09-17T01:00:00.000Z');
+
+  it('★ 依頼を送らずに not-on-page を記録する（トレンド外の候補）', async () => {
+    // Act
+    const log = await skipMute('example-author-a', NOW);
+    // Assert — タブを探しもしない。探すと、閉じていたとき no-trend-tab になり
+    // 「トレンドページを開いてから押してください」と的外れな案内になる
+    expect(log['example-author-a']).toEqual({ outcome: 'not-on-page', at: NOW.toISOString() });
+    expect(chrome.tabs.query).not.toHaveBeenCalled();
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('確認済みの時刻は消さない（ミュートしてトレンドから消えた著者で押し直した形）', async () => {
+    // Arrange
+    const confirmed = new Date('2026-09-16T01:00:00.000Z');
+    await storage.recordMuteOutcome('example-author-a', 'muted', confirmed);
+    // Act
+    const log = await skipMute('example-author-a', NOW);
+    // Assert
+    expect(log['example-author-a']?.mutedAt).toBe(confirmed.toISOString());
+  });
+});
+
 describe('toViews のミュート結果', () => {
   it('記録があれば重ねる', () => {
     const log = {
@@ -615,12 +698,424 @@ describe('toViews のミュート結果', () => {
 });
 
 /**
- * ★ 2026-08-24 の実機で見つかった文言の誤りの番人。
+ * ★ 候補は 7 日ぶんの蓄積から出るので、トレンドを去った著者も残り続ける。
+ * ミュートは表示中のカードを操作するため、その状態で押すと必ず失敗する。
+ * **押す前に理由が分かるようにする**（ユーザー報告 2026-09-16:
+ * 「現在進行形でトレンドにいない投稿者が候補に表れている」）。
+ */
+describe('toViews の offTrendAt', () => {
+  const AT = '2026-09-16T10:00:00.000Z';
+  const HANDLE = 'example-author-a';
+
+  it('★ スナップショットが無ければ null（全員に「出ていません」と言わない）', () => {
+    // Arrange — 更新直後はまだ一度もトレンドを開いていない。ここで
+    // 「居ない = 出ていない」と読み替えると、**候補 30 件ぶんの嘘が並ぶ**
+    // （itemCoveredMinutes が既存データの上で死んだのと同じ形）
+    // Act
+    const [view] = toViews([candidate('a')], {}, {});
+    // Assert
+    expect(view?.offTrendAt).toBeNull();
+  });
+
+  it('スナップショットに居れば null', () => {
+    const snapshot = { authors: [HANDLE], at: AT };
+    const [view] = toViews([candidate('a')], {}, {}, snapshot);
+    expect(view?.offTrendAt).toBeNull();
+  });
+
+  it('スナップショットに居なければ、撮った時刻を持つ', () => {
+    // Arrange — 別の著者だけが出ていた
+    const snapshot = { authors: ['example-author-z'], at: AT };
+    // Act
+    const [view] = toViews([candidate('a')], {}, {}, snapshot);
+    // Assert — **boolean ではなく時刻。**スナップショット自体が古くなるので、
+    // 「いま出ていない」とは言えない
+    expect(view?.offTrendAt).toBe(AT);
+  });
+
+  it('1 件も読めなかったスナップショットでも時刻を持つ（null とは別物）', () => {
+    const snapshot = { authors: [], at: AT };
+    const [view] = toViews([candidate('a')], {}, {}, snapshot);
+    expect(view?.offTrendAt).toBe(AT);
+  });
+});
+
+describe('toViews の onTrendAt', () => {
+  const AT = '2026-09-17T03:00:00.000Z';
+
+  it('スナップショットに居れば、撮った時刻を持つ', () => {
+    const [view] = toViews([candidate('a')], {}, {}, { authors: ['example-author-a'], at: AT });
+    expect(view?.onTrendAt).toBe(AT);
+  });
+
+  it('居なければ null（時刻は offTrendAt の側が持つ）', () => {
+    const [view] = toViews([candidate('a')], {}, {}, { authors: ['example-author-z'], at: AT });
+    expect(view?.onTrendAt).toBeNull();
+  });
+
+  it('★ スナップショットが無ければ null（「居た」とも言わない）', () => {
+    const [view] = toViews([candidate('a')], {}, {});
+    expect(view?.onTrendAt).toBeNull();
+  });
+});
+
+describe('describeOffTrend', () => {
+  const AT = '2026-09-16T10:00:00.000Z';
+
+  /** 候補 1 件ぶんのビュー。トレンドに居ない状態を既定にする */
+  function offTrendView(mute: MuteRecord | null = null): CandidateView {
+    const [view] = toViews([candidate('a')], {}, {}, { authors: ['example-author-z'], at: AT });
+    if (view === undefined) throw new Error('fixture broken');
+    return { ...view, mute };
+  }
+
+  it('出ているときは空文字（行ごと出さない）', () => {
+    const [view] = toViews([candidate('a')], {}, {}, { authors: ['example-author-a'], at: AT });
+    if (view === undefined) throw new Error('fixture broken');
+    expect(describeOffTrend(view)).toBe('');
+  });
+
+  it('撮った時刻に紐づけて言う（現在形で断定しない）', () => {
+    // Arrange & Act
+    const text = describeOffTrend(offTrendView());
+    // Assert — トレンドを 2 日開いていなければ、いま出ているかは分からない
+    expect(text).toContain(formatJst(AT));
+    expect(text).not.toContain('いま出ていません');
+  });
+
+  it('★ 押し直しを促さない（ミュート済みの著者には起こり得ない）', () => {
+    // Arrange — 2026-09-16 実機。ユーザーが Qiita 側で手動ミュートすると
+    // 拡張には記録が残らないまま著者がトレンドから消えるので、
+    // 「順番に押し出された」と「ミュート済み」を**区別できない**。
+    // 区別できないものを根拠に行動を約束すると、2026-08-24 の
+    // 「次に出てきたときに押し直してください」を作り直すことになる
+    const text = describeOffTrend(offTrendView());
+    // Assert
+    expect(text).not.toContain('次に出てきたとき');
+    expect(text).not.toContain('押してください');
+  });
+
+  it('★ 判定まで止める文にしない（押せないのはミュートだけ）', () => {
+    // Arrange — 2026-09-16 に「長すぎる」で短くしたとき外した語。
+    // ミュート連動がオフだと画面にミュートのボタンは無く、押せるのは
+    // 「妥当 / 誤り」で、それは押して問題ない（判定は保存され、再び
+    // トレンドに出たときに効く）。「押せません」は何が押せないのか伝わらず、
+    // 判定そのものを止めてしまう
+    const text = describeOffTrend(offTrendView());
+    // Assert
+    expect(text).not.toContain('押せません');
+  });
+
+  it('★ ミュート済みの可能性に触れる（手動ミュートを説明できるのはここだけ）', () => {
+    expect(describeOffTrend(offTrendView())).toContain('ミュート済み');
+  });
+
+  it('1 行に収める（3 文あった頃は「長すぎる」と言われた）', () => {
+    // 句点で文を区切っていたのをやめた。**文字数では固定しない** —
+    // 日時の書式が変わるだけで壊れるテストになる
+    expect(describeOffTrend(offTrendView())).not.toContain('。');
+  });
+
+  it('★ 拡張がミュート済みだと知っている著者には出さない（理由は mute の行が言う）', () => {
+    // Arrange — 同じことを 2 行で言うと、どちらが理由なのか読めなくなる
+    const record = { outcome: 'muted' as const, at: AT, mutedAt: AT };
+    // Act & Assert
+    expect(describeOffTrend(offTrendView(record))).toBe('');
+  });
+
+  it('ミュートに失敗しただけの記録では出す（まだ理由を言えていない）', () => {
+    const record = { outcome: 'menu-unavailable' as const, at: AT };
+    expect(describeOffTrend(offTrendView(record))).not.toBe('');
+  });
+
+  it('候補の行では解除の案内を繰り返さない（最終スキャンの下に常設した）', () => {
+    expect(describeOffTrend(offTrendView())).not.toContain('ミュート設定');
+  });
+});
+
+const RETRY_TRIED = '2026-09-17T01:00:00.000Z';
+const RETRY_SEEN = '2026-09-17T03:00:00.000Z';
+
+/**
+ * 押し直せる状態を既定にしたビュー。妥当・連動で押したがトレンド外で not-on-page、
+ * **そのあと撮ったスナップショットに居る。**
  *
- * ミュートすると Qiita がその著者の記事をトレンドから外す。そのあと同じ候補で
- * 「妥当」を押し直すと not-on-page になるが、outcome だけを見て
- * 「次に出てきたときに押し直してください」と案内していた。
- * ミュート済みの著者はもう出てこないので、起こり得ないことを促していた。
+ * **条件を 1 つずつ崩して検査するために使う。**1 つのテストで 2 つの条件が
+ * 同時に崩れていると、片方の判定を消しても通ってしまう（アサーションが真になる
+ * 経路が 2 つある形。429 の訪問記録・デバウンス・NaN 分岐で 3 回踏んだ）。
+ */
+function retryReadyView(overrides: Partial<CandidateView> = {}): CandidateView {
+  const [view] = toViews(
+    [candidate('a')],
+    { 'example-author-a': 'valid' },
+    { 'example-author-a': { outcome: 'not-on-page', at: RETRY_TRIED } },
+    { authors: ['example-author-a'], at: RETRY_SEEN },
+  );
+  if (view === undefined) throw new Error('fixture broken');
+  return { ...view, ...overrides };
+}
+
+/**
+ * ★ 2026-09-17 ユーザー「A で直して」。トレンド外で先に「妥当」を押した著者が
+ * トレンドに戻ってきたら、押し直せることを知らせる。**勝手にミュートはしない。**
+ */
+describe('isMuteRetryReady', () => {
+  it('押した後に撮ったスナップショットに居れば true', () => {
+    expect(isMuteRetryReady(retryReadyView(), true)).toBe(true);
+  });
+
+  it('ミュート連動がオフなら false（「妥当」を押してもミュートは走らない）', () => {
+    expect(isMuteRetryReady(retryReadyView(), false)).toBe(false);
+  });
+
+  it('評価を「誤り」に変えた著者は促さない', () => {
+    expect(isMuteRetryReady(retryReadyView({ verdict: 'false_positive' }), true)).toBe(false);
+  });
+
+  it('未評価の著者は促さない', () => {
+    expect(isMuteRetryReady(retryReadyView({ verdict: null }), true)).toBe(false);
+  });
+
+  it('★ 記録が無い著者は促さない（Qiita 側で自分で解除した著者に言い続けない）', () => {
+    // Arrange — 解除を検知すると記録ごと消える（storage.forgetMuteConfirmation）。
+    // 「妥当・未確認・トレンドに居る」だけで判定すると、ここが true になる
+    // Act & Assert
+    expect(isMuteRetryReady(retryReadyView({ mute: null }), true)).toBe(false);
+  });
+
+  it('ミュート済みだと確認できていれば促さない', () => {
+    const mute = { outcome: 'not-on-page' as const, at: RETRY_TRIED, mutedAt: RETRY_TRIED };
+    expect(isMuteRetryReady(retryReadyView({ mute }), true)).toBe(false);
+  });
+
+  it('スナップショットに居なければ促さない', () => {
+    expect(isMuteRetryReady(retryReadyView({ onTrendAt: null }), true)).toBe(false);
+  });
+
+  it('★ 押す前に撮ったスナップショットでは促さない（押した直後に「押し直せます」と出さない）', () => {
+    // Arrange — トレンドに居る著者で、タブを閉じてから押して no-trend-tab に
+    // なった直後の形。スナップショットは押す前のものなので、そこに居ても
+    // 表示中のカードがあるとは言えない
+    const before = '2026-09-17T00:00:00.000Z';
+    // Act & Assert
+    expect(isMuteRetryReady(retryReadyView({ onTrendAt: before }), true)).toBe(false);
+  });
+
+  it('同じ時刻なら促さない（押した後に撮ったとは言えない）', () => {
+    expect(isMuteRetryReady(retryReadyView({ onTrendAt: RETRY_TRIED }), true)).toBe(false);
+  });
+
+  it('記録の時刻が読めなければ促さない', () => {
+    const mute = { outcome: 'not-on-page' as const, at: 'x' };
+    expect(isMuteRetryReady(retryReadyView({ mute }), true)).toBe(false);
+  });
+
+  it('スナップショットの時刻が読めなければ促さない', () => {
+    expect(isMuteRetryReady(retryReadyView({ onTrendAt: 'x' }), true)).toBe(false);
+  });
+
+  it.each(['not-on-page', 'no-trend-tab', 'unreachable', 'timeout'] as const)(
+    '%s は、あとから撮ったスナップショットに居れば押し直せる',
+    (outcome) => {
+      const mute = { outcome, at: RETRY_TRIED };
+      expect(isMuteRetryReady(retryReadyView({ mute }), true)).toBe(true);
+    },
+  );
+
+  it('★ menu-unavailable は促さない（直すべき不具合を「もう一度押して」で覆わない）', () => {
+    const mute = { outcome: 'menu-unavailable' as const, at: RETRY_TRIED };
+    expect(isMuteRetryReady(retryReadyView({ mute }), true)).toBe(false);
+  });
+
+  it.each(['muted', 'already-muted'] as const)('確認時刻の無い %s も促さない', (outcome) => {
+    const mute = { outcome, at: RETRY_TRIED };
+    expect(isMuteRetryReady(retryReadyView({ mute }), true)).toBe(false);
+  });
+});
+
+describe('describeMuteRetry', () => {
+  it('押し直せなければ空文字（失敗の文言を差し替えない）', () => {
+    expect(describeMuteRetry(retryReadyView(), false)).toBe('');
+  });
+
+  it('スナップショットの時刻で言う（「いま出ています」と断定しない）', () => {
+    // Act
+    const text = describeMuteRetry(retryReadyView(), true);
+    // Assert — **`not.toContain('いま')` と書くと「出て・いま・す」に当たって落ちる**
+    // （2026-09-17 に実際に落ちた）。語の禁止は正しい用法まで消す（「顔ぶれ」と
+    // 同じ失敗）ので、文頭か句読点の直後に置かれた「いま」だけを見る
+    expect(text.startsWith(formatJst(RETRY_SEEN))).toBe(true);
+    expect(text).not.toMatch(/(^|[、。])いま/);
+  });
+
+  it('何を押せばよいかが分かる', () => {
+    expect(describeMuteRetry(retryReadyView(), true)).toContain('「妥当」を押し直す');
+  });
+});
+
+describe('describeRetryNotice', () => {
+  it('押し直せる候補が無ければ空文字（器ごと出さない）', () => {
+    expect(describeRetryNotice([retryReadyView({ verdict: null })], true)).toBe('');
+  });
+
+  it('件数とスナップショットの時刻を出す', () => {
+    // Arrange
+    const other = { ...retryReadyView(), candidate: candidate('b') };
+    // Act
+    const text = describeRetryNotice([retryReadyView(), other], true);
+    // Assert
+    expect(text).toContain('2 件');
+    expect(text).toContain(formatJst(RETRY_SEEN));
+  });
+
+  it('押し直せない候補は数えない', () => {
+    const text = describeRetryNotice([retryReadyView(), retryReadyView({ verdict: null })], true);
+    expect(text).toContain('1 件');
+  });
+
+  it('ミュート連動がオフなら出さない', () => {
+    expect(describeRetryNotice([retryReadyView()], false)).toBe('');
+  });
+
+  it('著者を断定する語を使わない（設計上の約束 6）', () => {
+    const text = describeRetryNotice([retryReadyView()], true);
+    for (const word of ['不正', 'スパム', '業者']) {
+      expect(text).not.toContain(word);
+    }
+  });
+});
+
+/**
+ * ★ 2026-09-17 実機 NG。「妥当」→ トレンド外で見送り →「誤り」と押すと、
+ * 「押したときトレンドに記事が無く、ミュートしませんでした。」が消えなかった。
+ *
+ * 分けるのは「Qiita 側に何かが残っているかもしれないか」。残っているかもしれない
+ * ものは「誤り」でも消さない — 「誤り」を押しても Qiita 側のミュートは解除されない。
+ */
+describe('describeMuteStatus', () => {
+  const AT = '2026-09-17T01:00:00.000Z';
+  const CONFIRMED = '2026-09-16T01:00:00.000Z';
+
+  /** 候補 1 件のビュー。評価と記録だけを差し替える */
+  function statusView(verdict: Verdict | null, mute: MuteRecord | null): CandidateView {
+    const [view] = toViews([candidate('a')], {});
+    if (view === undefined) throw new Error('fixture broken');
+    return { ...view, verdict, mute };
+  }
+
+  it('記録が無ければ空文字（行ごと出さない）', () => {
+    expect(describeMuteStatus(statusView('valid', null), true)).toBe('');
+  });
+
+  it('「妥当」なら記録の文言をそのまま出す', () => {
+    const mute = { outcome: 'not-on-page' as const, at: AT };
+    expect(describeMuteStatus(statusView('valid', mute), true)).toBe(describeMuteRecord(mute));
+  });
+
+  it('「妥当」で押し直せるなら、押し直せることを出す', () => {
+    expect(describeMuteStatus(retryReadyView(), true)).toBe(
+      describeMuteRetry(retryReadyView(), true),
+    );
+  });
+
+  it('★ 「誤り」に変えたら、見送りの行を出さない（ミュートするつもりが無くなった）', () => {
+    const mute = { outcome: 'not-on-page' as const, at: AT };
+    expect(describeMuteStatus(statusView('false_positive', mute), true)).toBe('');
+  });
+
+  it.each(['no-trend-tab', 'unreachable', 'menu-unavailable'] as const)(
+    '「誤り」に変えたら %s も出さない（Qiita 側では何も起きていない）',
+    (outcome) => {
+      expect(describeMuteStatus(statusView('false_positive', { outcome, at: AT }), true)).toBe('');
+    },
+  );
+
+  it('「誤り」に変えたら、押し直せる状態でも押し直しを促さない', () => {
+    // **この性質は 2 か所で守られている** — describeMuteStatus の評価の分岐と、
+    // isMuteRetryReady の評価の条件。片方だけ壊しても落ちない（押し直しを評価より
+    // 先に見る変異は SURVIVED を実測で確認済み。等価）。ここが固定するのは
+    // 「誤り」のあとに促さないという結果であって、判定の順序ではない
+    expect(describeMuteStatus(retryReadyView({ verdict: 'false_positive' }), true)).toBe('');
+  });
+
+  it('★ 「誤り」に変えても、確認済みなら確認時刻を出す（解除しに行く手がかりを消さない）', () => {
+    // Arrange — ミュートしたあと押し直して no-trend-tab で上書きされた形。
+    // 「妥当」のままなら失敗の文言を出すが、「誤り」では押し直す前提の案内に意味が無い
+    const mute = { outcome: 'no-trend-tab' as const, at: AT, mutedAt: CONFIRMED };
+    // Act
+    const text = describeMuteStatus(statusView('false_positive', mute), true);
+    // Assert
+    expect(text).toContain(formatJst(CONFIRMED));
+    expect(text).toContain('ミュート済み');
+  });
+
+  it('★ 「誤り」に変えても timeout は残す（入ったか分からないので、確かめる案内を消さない）', () => {
+    const mute = { outcome: 'timeout' as const, at: AT };
+    expect(describeMuteStatus(statusView('false_positive', mute), true)).toBe(
+      describeMuteOutcome('timeout'),
+    );
+  });
+
+  it.each(['muted', 'already-muted'] as const)(
+    '「誤り」に変えても、確認時刻の無い古い %s の記録は残す（入っている）',
+    (outcome) => {
+      expect(describeMuteStatus(statusView('false_positive', { outcome, at: AT }), true)).toBe(
+        describeMuteOutcome(outcome),
+      );
+    },
+  );
+
+  it('未評価でも「誤り」と同じ扱い（「妥当」でなければ見送りを言わない）', () => {
+    const mute = { outcome: 'not-on-page' as const, at: AT };
+    expect(describeMuteStatus(statusView(null, mute), true)).toBe('');
+  });
+
+  it.each(['no-trend-tab', 'unreachable'] as const)(
+    '★ ミュート連動がオフなら、「妥当」でも %s を出さない（従っても何も起きない指示を残さない）',
+    (outcome) => {
+      // 2026-09-17: オフでは「妥当」を押してもミュートは走らない。「トレンドページを
+      // 開いてから押してください」に従っても何も起きず、同じ文言が残り続けていた
+      expect(describeMuteStatus(statusView('valid', { outcome, at: AT }), false)).toBe('');
+    },
+  );
+
+  it.each(['not-on-page', 'menu-unavailable'] as const)(
+    'ミュート連動がオフなら、「妥当」でも %s を出さない（「妥当」でないときと同じ扱い）',
+    (outcome) => {
+      expect(describeMuteStatus(statusView('valid', { outcome, at: AT }), false)).toBe('');
+    },
+  );
+
+  it('ミュート連動がオフでも、確認済みなら確認時刻を出す（失敗の指示では塗り潰さない）', () => {
+    // Arrange — ミュートしたあと押し直して no-trend-tab で上書きされた形
+    const mute = { outcome: 'no-trend-tab' as const, at: AT, mutedAt: CONFIRMED };
+    // Act
+    const text = describeMuteStatus(statusView('valid', mute), false);
+    // Assert
+    expect(text).toContain(formatJst(CONFIRMED));
+    expect(text).toContain('ミュート済み');
+  });
+
+  it('ミュート連動がオフでも timeout は残す（確かめる先は Qiita のミュート設定で、拡張のボタンではない）', () => {
+    const mute = { outcome: 'timeout' as const, at: AT };
+    expect(describeMuteStatus(statusView('valid', mute), false)).toBe(
+      describeMuteOutcome('timeout'),
+    );
+  });
+});
+
+/**
+ * ★ 実機で見つかった文言の誤りの番人。**2 度直している。**
+ *
+ * ①2026-08-24: ミュートしたあと押し直すと not-on-page になるのに、outcome だけを
+ * 見て「次に出てきたときに押し直してください」と案内していた。
+ *
+ * ②2026-09-16: その修正で入れた「ミュート済みです。ミュートした著者の記事は
+ * トレンドから外れるので、ここには出てきません。」が**2 文とも偽だった。**
+ * ユーザー実測 — 同一著者の 3 記事のうち 1 件をミュートしても DOM は 3 件のまま
+ * （消えるのはページを読み込み直したとき）。そして Qiita 側で解除すれば当然また
+ * 出てくる。**現在形の状態を主張すると、解除された瞬間に嘘になる。**
+ * 確認できた時刻で言えば偽にならない。
  */
 describe('describeMuteRecord', () => {
   const AT = '2026-08-24T12:00:00.000Z';
@@ -652,23 +1147,38 @@ describe('describeMuteRecord', () => {
     expect(describeMuteRecord(record)).toContain('画面構造');
   });
 
-  it('already-muted は押していないことが記録の文言にも出る', () => {
-    // Arrange — 押していないので「ミュートしました」にはしない
+  it('already-muted でも「ミュートした」とは言わない（押していない）', () => {
+    // Arrange — メニューの文言が解除側だったので押していない。
+    // 言えるのは「その時点でミュート中だと確認できた」だけ
     const record = { outcome: 'already-muted' as const, at: AT, mutedAt: AT };
-    // Act & Assert
-    expect(describeMuteRecord(record)).toBe(describeMuteOutcome('already-muted'));
+    // Act
+    const text = describeMuteRecord(record);
+    // Assert
+    expect(text).toContain(formatJst(AT));
+    expect(text).not.toContain('ミュートしました');
   });
 
-  it('成功の記録が無ければ、従来どおり押し直しを促す', () => {
-    // Arrange — 一度も成功していない
+  it('★ 成功の記録が無くても、押し直しは約束しない（2026-09-17 に 3 度目の修正）', () => {
+    // Arrange — 一度も成功していない。以前はここで「次に出てきたときに
+    // 押し直してください」と案内し、このテストがそれを**正しい挙動として固定していた。**
+    // 戻ってきたかどうかは describeMuteRetry がスナップショットで判定して言う
     const record = { outcome: 'not-on-page' as const, at: AT };
-    // Act & Assert
-    expect(describeMuteRecord(record)).toContain('押し直して');
+    // Act
+    const text = describeMuteRecord(record);
+    // Assert
+    expect(text).toBe(describeMuteOutcome('not-on-page'));
+    expect(text).not.toContain('押し直して');
   });
 
-  it('成功そのものは成功の文言のまま', () => {
+  it('ミュート済みは現在形で言わず、確認できた時刻で言う', () => {
+    // Arrange — 「ミュートしました」は、ユーザーが Qiita 側で解除した瞬間に
+    // 嘘になる。しかも拡張はそれを知らない（トレンドに戻るまで証拠が届かない）
     const record = { outcome: 'muted' as const, at: AT, mutedAt: AT };
-    expect(describeMuteRecord(record)).toBe(describeMuteOutcome('muted'));
+    // Act
+    const text = describeMuteRecord(record);
+    // Assert
+    expect(text).toContain(formatJst(AT));
+    expect(text).not.toContain('ミュートしました');
   });
 
   it('成功の記録があっても、届かなかったときは押し直しを促す', () => {
@@ -699,14 +1209,14 @@ describe('partitionViews', () => {
 
   it('none なら 1 件も折りたたまない', () => {
     // Act
-    const { open, folded } = partitionViews(views(), 'none');
+    const { open, folded } = partitionViews(views(), 'none', false);
     // Assert
     expect(open).toHaveLength(3);
     expect(folded).toEqual([]);
   });
 
   it('muted はミュートに成功したものだけを折りたたむ', () => {
-    const { open, folded } = partitionViews(views(), 'muted');
+    const { open, folded } = partitionViews(views(), 'muted', false);
     expect(folded.map((v) => v.candidate.authorHandle)).toEqual(['example-author-b']);
     expect(open).toHaveLength(2);
   });
@@ -720,7 +1230,7 @@ describe('partitionViews', () => {
       { 'example-author-b': { outcome: 'not-on-page' as const, at: AT, mutedAt: AT } },
     );
     // Act & Assert
-    expect(partitionViews(list, 'muted').folded).toHaveLength(1);
+    expect(partitionViews(list, 'muted', false).folded).toHaveLength(1);
   });
 
   it('一度も成功していなければ muted では折りたたまない', () => {
@@ -731,11 +1241,11 @@ describe('partitionViews', () => {
       { 'example-author-b': { outcome: 'not-on-page' as const, at: AT } },
     );
     // Act & Assert
-    expect(partitionViews(list, 'muted').folded).toEqual([]);
+    expect(partitionViews(list, 'muted', false).folded).toEqual([]);
   });
 
   it('valid は「妥当」だけを折りたたむ（「誤り」は一覧に戻る）', () => {
-    const { open, folded } = partitionViews(views(), 'valid');
+    const { open, folded } = partitionViews(views(), 'valid', false);
     expect(folded.map((v) => v.candidate.authorHandle)).toEqual(['example-author-b']);
     expect(open.map((v) => v.candidate.authorHandle)).toEqual([
       'example-author-a',
@@ -744,18 +1254,40 @@ describe('partitionViews', () => {
   });
 
   it('judged は妥当も誤りも折りたたむ', () => {
-    const { open, folded } = partitionViews(views(), 'judged');
+    const { open, folded } = partitionViews(views(), 'judged', false);
     expect(folded).toHaveLength(2);
     expect(open.map((v) => v.candidate.authorHandle)).toEqual(['example-author-a']);
   });
 
   it('順序を保つ（並べ替えは detector の責務）', () => {
-    const { open } = partitionViews(views(), 'valid');
+    const { open } = partitionViews(views(), 'valid', false);
     expect(open[0]?.candidate.authorHandle).toBe('example-author-a');
   });
 
   it('空配列でも例外を投げない', () => {
-    expect(partitionViews([], 'judged')).toEqual({ open: [], folded: [] });
+    expect(partitionViews([], 'judged', false)).toEqual({ open: [], folded: [] });
+  });
+
+  /** 妥当・トレンド外で押して not-on-page、そのあと撮ったスナップショットに居る */
+  function retryReady(): CandidateView[] {
+    return toViews(
+      [candidate('b')],
+      { 'example-author-b': 'valid' },
+      { 'example-author-b': { outcome: 'not-on-page' as const, at: AT } },
+      { authors: ['example-author-b'], at: '2026-08-25T13:00:00.000Z' },
+    );
+  }
+
+  it('★ 押し直せる候補は「妥当」「評価済み」を畳む設定でも畳まない（2026-09-17）', () => {
+    // Arrange — 先頭の案内が「ミュートがまだの候補があります」と言うのに、
+    // その候補が畳まれていると開いて探すまで押せない
+    // Act & Assert
+    expect(partitionViews(retryReady(), 'valid', true).folded).toEqual([]);
+    expect(partitionViews(retryReady(), 'judged', true).folded).toEqual([]);
+  });
+
+  it('ミュート連動がオフなら従来どおり畳む（押し直してもミュートは走らない）', () => {
+    expect(partitionViews(retryReady(), 'valid', false).folded).toHaveLength(1);
   });
 });
 
@@ -802,6 +1334,17 @@ describe('hasMutedInFold', () => {
       [candidate('b')],
       {},
       { 'example-author-b': { outcome: 'not-on-page' as const, at: AT, mutedAt: AT } },
+    );
+    expect(hasMutedInFold(list)).toBe(true);
+  });
+
+  it('「誤り」に変えたミュート済みでも true（誤検知でミュートした著者こそ解除の案内が要る）', () => {
+    // 上の 2 件は評価を置いていないので、「誤り」を数えない変異を通していた
+    // （2026-09-17 変異で確認。describeMuteStatus は評価で出し分けるが、ここは揃えない）
+    const list = toViews(
+      [candidate('b')],
+      { 'example-author-b': 'false_positive' },
+      { 'example-author-b': { outcome: 'muted' as const, at: AT, mutedAt: AT } },
     );
     expect(hasMutedInFold(list)).toBe(true);
   });

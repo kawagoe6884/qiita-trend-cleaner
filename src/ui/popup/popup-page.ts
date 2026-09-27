@@ -20,12 +20,15 @@ import {
   applySettings,
   recordVerdict,
   requestMute,
+  skipMute,
   formatJst,
   describeMode,
   describeCall,
   describeEmpty,
   describeCoAuthors,
-  describeMuteRecord,
+  describeMuteStatus,
+  describeRetryNotice,
+  describeOffTrend,
   describeWindowShare,
   partitionViews,
   describeFold,
@@ -43,6 +46,7 @@ import type { FoldTarget, MuteRecord, Settings, Verdict } from '../../types/doma
 
 const SELECTORS = {
   notice: '#notice',
+  retryNotice: '#retry-notice',
   modeTitle: '#mode-title',
   modeDetail: '#mode-detail',
   summary: '#summary',
@@ -71,10 +75,25 @@ const SELECTORS = {
 /** 依頼してから応答が返るまでの表示。数秒かかるので、押した直後に出す */
 const MUTE_PENDING_TEXT = 'ミュートしています…';
 
-/** スライダーの可動域。実測（最大クラスタ 16）と保持期間 7 日に合わせる */
+/**
+ * スライダーの可動域。実測（最大クラスタ 16）と保持期間 7 日に合わせる。
+ *
+ * **index.html の min / max と必ず揃える。**片方だけ直すと、表示できる値と
+ * 保存できる値がずれる（`readSettings` はここでクランプする）。
+ *
+ * 【`minSharedItems` の上限が 7 な理由】
+ * この値は 2 つの軸で意味が違う。著者内（cluster.ts）は「**1 人の著者が M 本**」で、
+ * 著者巡回は 1 回の訪問で 2 本ずつしか遡らない（`MAX_EXTRA_ITEMS_PER_AUTHOR`）ので
+ * 8 以上は実質届かない。著者間（cross-cluster.ts）は「**連結成分の合計で M 本**」
+ * なので届く。**8〜10 は片方の軸でしか意味を持っていなかった。**
+ *
+ * なお `storage.getSettings` はここでクランプしない（`asPositiveInt` のみ）。
+ * 既に 8 以上を保存していた場合、判定はその値のまま動き、次に保存した時点で
+ * 7 に下がる。**既定が 2 なので通常は誰にも当たらない。**
+ */
 const RANGES = {
   minClusterSize: { min: 2, max: 30 },
-  minSharedItems: { min: 2, max: 10 },
+  minSharedItems: { min: 2, max: 7 },
   lookbackDays: { min: 1, max: 7 },
 } as const;
 
@@ -122,9 +141,14 @@ function renderSummary(views: CandidateView[], precision: Precision): void {
   const call = describeCall(views, precision);
   setText(SELECTORS.call, call);
   setHidden(SELECTORS.call, call === '');
+  // 押し直せる候補の案内。**#notice（429）とは別の器** — watchRateLimit が
+  // #notice を丸ごと書き換えるので、同じ器だと枠が戻った瞬間にこちらも消える
+  const retry = describeRetryNotice(views, currentMuteOnValid);
+  setText(SELECTORS.retryNotice, retry);
+  setHidden(SELECTORS.retryNotice, retry === '');
   // 折りたたみの中に居るだけなら「条件をゆるめて」ではない。
   // 案内は **開いている件数** で出し分ける（renderCandidates と同じ分割）
-  const { open, folded } = partitionViews(views, currentFoldTarget);
+  const { open, folded } = partitionViews(views, currentFoldTarget, currentMuteOnValid);
   setText(SELECTORS.empty, describeEmpty(currentHasIndex, folded.length));
   setHidden(SELECTORS.empty, open.length > 0);
   // バッジはスキャン時だけでなく、閾値を変えたときも合わせる。
@@ -207,6 +231,7 @@ function candidateItem(view: CandidateView): HTMLLIElement {
     paragraph('share', describeWindowShare(view.candidate, currentSettings.burstWindowMinutes)),
     ...coAuthorLine(view),
     evidenceLine(view),
+    ...offTrendLine(view),
     ...muteStatusLine(view),
     actions,
   );
@@ -214,11 +239,28 @@ function candidateItem(view: CandidateView): HTMLLIElement {
 }
 
 /**
- * ミュートの結果の行。**まだ試していなければ行ごと出さない**
+ * ミュートの結果の行。**出すものが無ければ行ごと出さない**
  * （coAuthorLine と同じ扱い。空の <p> を置くと余白だけが残る）。
+ *
+ * 何を出すかは describeMuteStatus が決める — 押し直せるならそれを、「誤り」に
+ * 変えた候補とミュート連動がオフのときは Qiita 側に残っているかもしれないものだけを言う。
+ * 同じ .mute-status に出すので、押すと showMutePending が書き換える（行が無ければ作る）。
  */
 function muteStatusLine(view: CandidateView): HTMLParagraphElement[] {
-  return view.mute === null ? [] : [paragraph('mute-status', describeMuteRecord(view.mute))];
+  const text = describeMuteStatus(view, currentMuteOnValid);
+  return text === '' ? [] : [paragraph('mute-status', text)];
+}
+
+/**
+ * いまトレンドに出ていない候補への案内。**出ている／スナップショットが無いなら
+ * 行ごと出さない**（muteStatusLine と同じ扱い）。
+ *
+ * **ミュートの行より前に置く。**「なぜ押せなかったか」ではなく
+ * 「**押す前に、いま押しても無駄だと分かる**」ようにしたい。
+ */
+function offTrendLine(view: CandidateView): HTMLParagraphElement[] {
+  const text = describeOffTrend(view);
+  return text === '' ? [] : [paragraph('off-trend', text)];
 }
 
 /**
@@ -241,7 +283,7 @@ function coAuthorLine(view: CandidateView): HTMLParagraphElement[] {
  * 数十件の filter は 2 回回しても無視できる。
  */
 function renderCandidates(views: CandidateView[]): void {
-  const { open, folded } = partitionViews(views, currentFoldTarget);
+  const { open, folded } = partitionViews(views, currentFoldTarget, currentMuteOnValid);
   find<HTMLUListElement>(SELECTORS.candidates)?.replaceChildren(...open.map(candidateItem));
   find<HTMLUListElement>(SELECTORS.foldedList)?.replaceChildren(...folded.map(candidateItem));
 
@@ -433,15 +475,15 @@ async function handleVerdict(handle: string, verdict: Verdict): Promise<void> {
     // **storage の変更を待つのではなく、ここから送る** — 既に valid のものを
     // 押し直したときも実行できる。これがリトライ手段でもある。
     //
-    // undefined は「今回は試していない」。**null（試したが記録が無い）と区別する。**
+    // undefined は「今回はミュートの経路を通っていない」（「誤り」か連動オフ）。
+    // **null（通ったが記録が無い）と区別する。**経路を通れば、送った場合も
+    // トレンド外で見送った場合も記録が返る（muteOnVerdict）
     let muteResult: MuteRecord | null | undefined;
     if (verdict === 'valid' && currentMuteOnValid) {
-      // 数秒かかる。busy で他のボタンも効かないので、何が起きているか出す
-      showMutePending(handle);
-      muteResult = (await requestMute(handle, new Date()))[handle] ?? null;
+      muteResult = await muteOnVerdict(handle);
     }
 
-    // **試していないなら据え置く。**ここを無条件に差し替えると、
+    // **経路を通っていないなら据え置く。**ここを無条件に差し替えると、
     // 「誤り」を押しただけで「ミュート済み」の表示が消える
     // （成功したという事実は取り消されない — recordMuteOutcome の JSDoc）。
     // 結果の置き場を view.mute の 1 つに絞ってあるので、seed 忘れが起きようが無い
@@ -455,6 +497,23 @@ async function handleVerdict(handle: string, verdict: Verdict): Promise<void> {
   } finally {
     busy = false;
   }
+}
+
+/**
+ * 「妥当」と同時のミュート。**トレンド外と分かっている候補には依頼を送らない。**
+ * （2026-09-17 ユーザー「A で直して」。理由は popup-state の skipMute）
+ *
+ * 判断の材料は画面に出している offTrendAt そのもの。**押す前に「時点でトレンド外」と
+ * 出した候補にだけ送らない** — 表示と挙動が食い違わない。
+ */
+async function muteOnVerdict(handle: string): Promise<MuteRecord | null> {
+  const view = currentViews.find((candidate) => candidate.candidate.authorHandle === handle);
+  if (view !== undefined && view.offTrendAt !== null) {
+    return (await skipMute(handle, new Date()))[handle] ?? null;
+  }
+  // 数秒かかる。busy で他のボタンも効かないので、何が起きているか出す
+  showMutePending(handle);
+  return (await requestMute(handle, new Date()))[handle] ?? null;
 }
 
 /**
