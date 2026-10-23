@@ -9,8 +9,9 @@ import {
   clearHighlights,
 } from '../dom/hider';
 import { muteAuthor, MUTE_INTERVAL_MS } from '../dom/muter';
+import { renderAiHints, clearAiHints, isOwnMutation } from '../dom/ai-hint';
 import * as storage from '../lib/storage';
-import type { AccountHandle, MuteOutcome } from '../types/domain';
+import type { AccountHandle, AiVerdict, ItemId, MuteOutcome } from '../types/domain';
 import type { QtgRequest, QtgResponse } from '../types/messages';
 
 function markInjected(version: string): void {
@@ -139,19 +140,105 @@ async function applyHiding(): Promise<void> {
   }
 }
 
+/** 当たり / 外れを押したとき。描き直しは storage.onChanged に任せる（評価と同じ経路） */
+function onAiAnswer(itemId: ItemId, verdict: AiVerdict): void {
+  storage.saveAiVerdict(itemId, verdict).catch((error: unknown) => {
+    logger.debug('failed to save ai verdict:', itemId, error);
+  });
+}
+
 /**
- * 評価の変更に追従する。**message passing を使わない。**
+ * 「AI文体かも？」を描く。**フルモードのときだけ。**
+ *
+ * スコアは 7 日残るので、トークンを外した直後にも storage には残っている。
+ * フルモードの特典（PRD）なので、ここでも見る。
+ */
+async function applyAiHints(): Promise<void> {
+  if (!isTrendPage(location.pathname)) return;
+
+  try {
+    if (!(await storage.hasToken())) {
+      clearAiHints();
+      return;
+    }
+    const [hints, verdicts] = await Promise.all([storage.getAiHints(), storage.getAiVerdicts()]);
+    if (renderAiHints(hints, verdicts, onAiAnswer) > 0) watchTrendCards();
+  } catch (error) {
+    // 描けないだけで、ページの表示そのものは壊さない（applyHiding と同じ）
+    logger.debug('failed to apply ai hints:', error);
+  }
+}
+
+/** ページの変化が落ち着くのを待つ時間。Qiita の描画が続いている間は描き直さない */
+const AI_HINT_REDRAW_DELAY_MS = 300;
+
+/**
+ * 変化が続いても、最初の変化からこれ以上は待たない。
+ * 広告や時刻表示が 300 ms より短い間隔で変わり続けると、待つだけでは永久に描き直せない
+ * （コードレビュー M2）。
+ */
+const AI_HINT_REDRAW_MAX_WAIT_MS = 1000;
+
+/** 監視を始めたか。**1 ページに 1 本だけ。** */
+let watchingCards = false;
+
+/**
+ * カードが作り直されたら「AI文体かも？」を描き直す。
+ *
+ * 【なぜ要るか】（2026-10-24 実機）
+ * スコアが保存済みだと、ページを開いた直後に描く。そのあと Qiita のページが
+ * カードを作り直し、**足した要素ごと消える**（要素が 0 件になった）。
+ * 新しいスコアが無いので storage は変わらず、onChanged では描き直せない。
+ *
+ * 【いつ始めるか】
+ * 実際に描いたときだけ（applyAiHints から呼ぶ）。ライトモードや描くものが無い
+ * ページでは監視せず、変化のたびに storage を読みに行かない。
+ *
+ * 自分の描画による変化は isOwnMutation で無視する（無視しないと止まらない）。
+ * 変化が落ち着いてから描くが、最初の変化から AI_HINT_REDRAW_MAX_WAIT_MS で必ず描く。
+ */
+function watchTrendCards(): void {
+  if (watchingCards) return;
+  watchingCards = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let firstChangeAt: number | undefined;
+  const observer = new MutationObserver((records) => {
+    if (records.every(isOwnMutation)) return;
+    const now = Date.now();
+    firstChangeAt ??= now;
+    const untilDeadline = firstChangeAt + AI_HINT_REDRAW_MAX_WAIT_MS - now;
+    clearTimeout(timer);
+    timer = setTimeout(
+      () => {
+        firstChangeAt = undefined;
+        void applyAiHints();
+      },
+      Math.max(0, Math.min(AI_HINT_REDRAW_DELAY_MS, untilDeadline)),
+    );
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
+/** これらのキーが変わったら「AI文体かも？」を描き直す */
+const AI_HINT_KEYS = ['aiHints', 'aiVerdicts', 'token'] as const;
+
+/**
+ * 評価と「AI文体かも？」の変更に追従する。**message passing を使わない。**
  *
  * ポップアップと content script は別コンテキストだが storage は共有されている。
  * これでポップアップの「妥当 / 誤り」を押した瞬間に、開いているトレンドページへ
- * 反映される（Phase 6 でポップアップに入れたのと同じ手）。
+ * 反映される（Phase 6 でポップアップに入れたのと同じ手）。スキャンが保存した
+ * スコアも、同じ経路でスキャンの完了と同時に描き足される。
  */
-function watchFeedback(): void {
+function watchStorage(): void {
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !('feedback' in changes)) return;
-    // 評価が変わったら隠し直す。「表示する」で戻していた状態は解除する
-    shownByUser = 0;
-    void applyHiding();
+    if (area !== 'local') return;
+    if ('feedback' in changes) {
+      // 評価が変わったら隠し直す。「表示する」で戻していた状態は解除する
+      shownByUser = 0;
+      void applyHiding();
+    }
+    if (AI_HINT_KEYS.some((key) => key in changes)) void applyAiHints();
   });
 }
 
@@ -238,6 +325,7 @@ logger.info('content script ready');
 void ping();
 // 隠す前に読む。隠したカードも DOM には残るので実害は無いが、順序を明示しておく
 void sendTrendItems();
-watchFeedback();
+watchStorage();
 listenForMute();
 void applyHiding();
+void applyAiHints();

@@ -13,7 +13,7 @@
         <h1>プライバシーポリシー</h1>
         <p class="meta">
           Chrome 拡張機能 <strong>Qiita Trend Cleaner</strong>（以下「本拡張」）／ 最終更新
-          2026-09-28
+          2026-10-24
         </p>
       </div>
     </header>
@@ -116,6 +116,31 @@
             </p>
           </section>
 
+          <section class="card" aria-labelledby="s-ai-hints">
+            <div class="card-head">
+              <h3 id="s-ai-hints">「AI文体かも？」の文体スコア</h3>
+              <span class="storage">chrome.storage.local</span>
+            </div>
+            <p>
+              アクセストークンを設定した場合だけ保存します。トレンド記事の本文を Qiita 公式 API
+              から取得し、ブラウザの中で文体の目安（読点や太字の多さなど）を数えた結果です。<strong>記事の本文そのものは保存しません</strong>（数え終えたら破棄します）。<strong
+                >7 日を過ぎると自動的に削除されます。</strong
+              >
+            </p>
+          </section>
+
+          <section class="card" aria-labelledby="s-ai-verdicts">
+            <div class="card-head">
+              <h3 id="s-ai-verdicts">「AI文体かも？」へのあなたの回答</h3>
+              <span class="storage">chrome.storage.local</span>
+            </div>
+            <p>
+              記事ごとにあなたが押した「Yes /
+              No」です。目安の当たり具合を測るための記録なので<strong>自動では削除されません</strong>（下記
+              6）。
+            </p>
+          </section>
+
           <section class="card" aria-labelledby="s-state">
             <div class="card-head">
               <h3 id="s-state">動作の状態と表示の設定</h3>
@@ -195,6 +220,11 @@
           トレンドページの記事一覧は<strong>あなたが表示しているページの内容を読み取って</strong>取得します。そのための追加のリクエストは発生しません。HTML
           ページを自動的に取得する処理（スクレイピング）は行いません。
         </p>
+
+        <p>
+          アクセストークンを設定した場合は、「AI文体かも？」の目安を数えるためにトレンド記事の本文も
+          Qiita 公式 API から取得します。本文はブラウザの中で数えたあと破棄し、どこにも送りません。
+        </p>
       </section>
 
       <section aria-labelledby="permissions">
@@ -247,8 +277,9 @@
         <ul>
           <li><strong>アクセストークン</strong>: 拡張機能の設定画面から削除できます</li>
           <li><strong>いいねの記録</strong>: 7 日を過ぎると自動的に削除されます</li>
+          <li><strong>「AI文体かも？」の文体スコア</strong>: 7 日を過ぎると自動的に削除されます</li>
           <li>
-            <strong>評価とミュートの記録</strong>:
+            <strong>評価・ミュートの記録・「AI文体かも？」への回答</strong>:
             個別に削除する機能はありません。下記のアンインストールで削除されます
           </li>
           <li>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fetchLikes, fetchUserItems, verifyToken } from './qiita-client';
+import { fetchItemBody, fetchLikes, fetchUserItems, verifyToken } from './qiita-client';
 import { QtgError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 
@@ -173,6 +173,44 @@ describe('fetchUserItems', () => {
       'https://qiita.com/api/v2/users/example-author/items?per_page=100',
     );
     expect(result.data[0]?.id).toBe('0123456789abcdef0123');
+  });
+});
+
+describe('fetchItemBody', () => {
+  it('記事 ID をパスに入れ、id と body だけを返す', async () => {
+    // Arrange
+    const mock = stubFetch({
+      id: '0123456789abcdef0123',
+      body: '本文です。',
+      rendered_body: '<p>本文です。</p>',
+      title: '合成の記事',
+    });
+    // Act
+    const result = await fetchItemBody('0123456789abcdef0123', 'dummy-token-value');
+    // Assert
+    expect(mock.mock.calls[0]?.[0]).toBe('https://qiita.com/api/v2/items/0123456789abcdef0123');
+    expect(headersOf(mock).Authorization).toBe('Bearer dummy-token-value');
+    expect(result.data).toEqual({ id: '0123456789abcdef0123', body: '本文です。' });
+  });
+
+  it('body が文字列でなければ失敗にする（型アサーションで信用しない）', async () => {
+    stubFetch({ id: '0123456789abcdef0123', body: null });
+    await expect(fetchItemBody('0123456789abcdef0123', 'dummy-token-value')).rejects.toBeInstanceOf(
+      QtgError,
+    );
+  });
+
+  it('パスを壊す ID は叩く前に弾く', async () => {
+    const mock = stubFetch({});
+    await expect(fetchItemBody('../items', 'dummy-token-value')).rejects.toBeInstanceOf(QtgError);
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it('429 は RateLimitError にする', async () => {
+    stubFetch({ message: 'Rate limit exceeded' }, { status: 429 });
+    await expect(fetchItemBody('0123456789abcdef0123', 'dummy-token-value')).rejects.toBeInstanceOf(
+      RateLimitError,
+    );
   });
 });
 

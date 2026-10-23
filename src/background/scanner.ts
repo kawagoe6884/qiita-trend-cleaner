@@ -24,7 +24,7 @@ import { logger } from '../lib/logger';
 import { RateLimitError } from '../lib/errors';
 import { updateBadge } from '../lib/badge';
 import { authorsToVisit, recordVisits, pruneVisits } from './author-visits';
-import { fetchLikes, fetchUserItems } from '../api/qiita-client';
+import { fetchItemBody, fetchLikes, fetchUserItems } from '../api/qiita-client';
 import { decideMode, API_PER_PAGE } from '../api/rate-budget';
 import {
   mergeLikeIndex,
@@ -35,10 +35,12 @@ import {
 } from '../detect/like-index';
 import { MAX_BURST_WINDOW_MINUTES } from '../types/domain';
 import { detectCandidates } from '../detect/detector';
+import { purgeAiHints, scoreAiStyle } from '../detect/ai-style';
 import * as storage from '../lib/storage';
 import type { RateState } from '../api/rate-budget';
 import type { QiitaLike } from '../api/qiita-client';
 import type {
+  AiHintLog,
   Candidate,
   Settings,
   IsoDateTime,
@@ -448,6 +450,55 @@ async function scanAuthor(
   }
 }
 
+/**
+ * トレンド記事の本文を数えて「AI文体かも？」のスコアを付ける（フルモードのみ）。
+ *
+ * **本文はこの関数の中で使い捨てる。**返すのはスコアだけ（Plan D5）。
+ *
+ * 対象は**未スコアの記事だけ**。いいねが既知かどうかとは独立に見る —
+ * ライトモードで蓄積したあとにトークンを設定した人の記事も数えるため
+ * （著者巡回で items から handles を取るのと同じ理由）。
+ *
+ * 429 で止めるのはいいねの取得と同じ。1 件の失敗は debug に留めて先へ進む。
+ */
+async function scoreAiHints(
+  items: TrendItem[],
+  token: string | null,
+  scored: AiHintLog,
+  initial: ScanProgress,
+  now: Date,
+): Promise<{ progress: ScanProgress; hints: AiHintLog }> {
+  let progress = initial;
+  const hints: AiHintLog = {};
+  for (const item of items) {
+    if (progress.rateLimited) break;
+    if (item.itemId in scored || item.itemId in hints) continue;
+    try {
+      const response = await fetchItemBody(item.itemId, token);
+      progress = { ...progress, rate: response.rate ?? progress.rate };
+      hints[item.itemId] = { ...scoreAiStyle(response.data.body), scoredAt: now.toISOString() };
+    } catch (error) {
+      if (error instanceof RateLimitError) {
+        progress = haltOnRateLimit(progress, error);
+        break;
+      }
+      logger.debug('skip ai hint:', item.itemId, error);
+    }
+  }
+  return { progress, hints };
+}
+
+/**
+ * スコアを保存する。**保存の直前に読み直す**（persistIndexAndDetect と同じ理由 —
+ * 並行したスキャンの保存を上書きで消さない）。ログは件数だけ（本文や語を出さない）。
+ */
+async function persistAiHints(fresh: AiHintLog, now: Date): Promise<void> {
+  const stored = await storage.getAiHints();
+  const kept = purgeAiHints({ ...stored, ...fresh }, now);
+  await storage.saveAiHints(kept);
+  logger.info('ai hints:', 'scored:', Object.keys(fresh).length, 'kept:', Object.keys(kept).length);
+}
+
 /** 著者を順に巡回する */
 interface AuthorScanResult {
   progress: ScanProgress;
@@ -688,6 +739,14 @@ async function scanTrend(items: TrendItem[], startedAt: IsoDateTime): Promise<Sc
   // 429 で止まった場合は全滅ではないので除く。
   if (newItems.length > 0 && !progress.rateLimited && progress.scannedItemCount === 0) {
     logger.warn('scan produced no data: all', newItems.length, 'items failed');
+  }
+
+  // 「AI文体かも？」は著者巡回より先に置く。利用者に見えるのはトレンドの 30 件で、
+  // 本文は 30 req 程度。巡回で枠を使い切ってから数えると、表示が出ない
+  if (mode === 'full' && !progress.rateLimited) {
+    const ai = await scoreAiHints(items, token, await storage.getAiHints(), progress, now);
+    progress = ai.progress;
+    if (Object.keys(ai.hints).length > 0) await persistAiHints(ai.hints, now);
   }
 
   // 著者は **items（トレンド全件）から取る。newItems ではない。**
