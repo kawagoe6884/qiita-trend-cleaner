@@ -11,10 +11,20 @@
  * ここが読むのは自分で書いた値なので、API レスポンスほど厳密には検証しない。
  * ただし storage が壊れていても例外で落とさず、既定値へフォールバックする。
  */
-import { DEFAULT_SETTINGS, isAiSignal, isFoldTarget, isMuteOutcome } from '../types/domain';
+import {
+  AI_HINT_MIN_PROSE_RANGE,
+  AI_HINT_THRESHOLD_RANGE,
+  DEFAULT_AI_HINT_PREFS,
+  DEFAULT_SETTINGS,
+  isAiSignal,
+  isFoldTarget,
+  isIntInRange,
+  isMuteOutcome,
+} from '../types/domain';
 import type {
   AccountHandle,
   AiHint,
+  AiHintPrefs,
   AiHintLog,
   AiVerdict,
   AiVerdictLog,
@@ -196,6 +206,33 @@ export async function getFoldTarget(): Promise<FoldTarget> {
 
 export async function saveFoldTarget(foldTarget: FoldTarget): Promise<void> {
   await chrome.storage.local.set({ foldTarget });
+}
+
+/**
+ * 「AI文体かも？」の線引き。**既定は 5 点 / 334 字。**
+ *
+ * local に置くのは foldTarget と同じ理由 — Settings（sync）は
+ * detectCandidates の入力であり、表示の設定を混ぜない。
+ *
+ * 項目ごとに検証し、壊れた項目だけ既定値に倒す（もう片方は生かす）。
+ */
+export async function getAiHintPrefs(): Promise<AiHintPrefs> {
+  const raw = await readRaw();
+  const stored = raw.aiHintPrefs;
+  if (typeof stored !== 'object' || stored === null) return { ...DEFAULT_AI_HINT_PREFS };
+  const { threshold, minProseChars } = stored as Record<string, unknown>;
+  return {
+    threshold: isIntInRange(threshold, AI_HINT_THRESHOLD_RANGE)
+      ? threshold
+      : DEFAULT_AI_HINT_PREFS.threshold,
+    minProseChars: isIntInRange(minProseChars, AI_HINT_MIN_PROSE_RANGE)
+      ? minProseChars
+      : DEFAULT_AI_HINT_PREFS.minProseChars,
+  };
+}
+
+export async function saveAiHintPrefs(aiHintPrefs: AiHintPrefs): Promise<void> {
+  await chrome.storage.local.set({ aiHintPrefs });
 }
 
 /**

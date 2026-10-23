@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { init, describeToggleState } from './options-page';
 import { loadState, submitToken, removeToken } from './token-form';
 import { logger } from '../../lib/logger';
+import { AI_SIGNALS } from '../../types/domain';
 // 実際に配布される HTML をそのまま読む（Vite の ?raw）。
 // setupDom() は骨格のモックなので、**順序は実ファイルに対して検査する**
 import indexHtml from './index.html?raw';
@@ -59,6 +60,15 @@ function setupDom(): void {
           <input type="radio" name="fold-target" value="judged" />評価済みをすべて
         </label>
       </div>
+    </section>
+    <section class="prefs">
+      <p class="slider">
+        <input type="range" id="ai-threshold" min="1" max="8" step="1" />
+        <output id="ai-threshold-value"></output>
+      </p>
+      <p class="slider">
+        <input type="number" id="ai-min-prose" min="0" max="2000" step="1" />
+      </p>
     </section>`;
 }
 
@@ -588,6 +598,125 @@ describe('見え方の設定 — 保存に失敗したときのログ水準', ()
   });
 });
 
+/**
+ * 「AI文体かも？」の線引き（M2）。`storage.local` の aiHintPrefs。
+ * トレンドのページは storage.onChanged で描き直すので、ここは保存するだけ。
+ */
+describe('「AI文体かも？」の線引き', () => {
+  function threshold(): HTMLInputElement {
+    return el<HTMLInputElement>('#ai-threshold');
+  }
+
+  function minProse(): HTMLInputElement {
+    return el<HTMLInputElement>('#ai-min-prose');
+  }
+
+  function setLocal(): ReturnType<typeof vi.fn> {
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    return vi.mocked(chrome.storage.local.set);
+  }
+
+  it('未設定なら既定の 5 点 / 334 字を映す', async () => {
+    await init();
+    expect(threshold().value).toBe('5');
+    expect(el('#ai-threshold-value').textContent).toBe('5 / 8 点');
+    expect(minProse().value).toBe('334');
+  });
+
+  it('保存済みの値を映す', async () => {
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 3, minProseChars: 0 } });
+    await init();
+    expect(threshold().value).toBe('3');
+    expect(el('#ai-threshold-value').textContent).toBe('3 / 8 点');
+    expect(minProse().value).toBe('0');
+  });
+
+  it('スライダーの範囲はシグナル数から決める', async () => {
+    await init();
+    expect(threshold().min).toBe('1');
+    expect(threshold().max).toBe(String(AI_SIGNALS.length));
+  });
+
+  it('動かしている間は表示だけ変え、離したときに保存する', async () => {
+    // Arrange
+    await init();
+    setLocal().mockClear();
+    // Act — ドラッグ中
+    threshold().value = '3';
+    threshold().dispatchEvent(new Event('input'));
+    // Assert
+    expect(el('#ai-threshold-value').textContent).toBe('3 / 8 点');
+    expect(setLocal()).not.toHaveBeenCalled();
+    // Act — 離した
+    threshold().dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenCalledWith({
+        aiHintPrefs: { threshold: 3, minProseChars: 334 },
+      });
+    });
+  });
+
+  it('最小文字数を確定すると保存する（点数はそのまま）', async () => {
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 4, minProseChars: 334 } });
+    await init();
+    minProse().value = '500';
+    minProse().dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenCalledWith({
+        aiHintPrefs: { threshold: 4, minProseChars: 500 },
+      });
+    });
+  });
+
+  it('続けて変えても、先に変えた方を巻き戻さない', async () => {
+    await init();
+    threshold().value = '2';
+    threshold().dispatchEvent(new Event('change'));
+    minProse().value = '100';
+    minProse().dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenLastCalledWith({
+        aiHintPrefs: { threshold: 2, minProseChars: 100 },
+      });
+    });
+  });
+
+  it.each(['', '-1', '2001', '12.5', 'abc'])(
+    '最小文字数が不正（%j）なら保存せず、元の値に戻す',
+    async (value) => {
+      // Arrange
+      await init();
+      setLocal().mockClear();
+      // Act
+      minProse().value = value;
+      minProse().dispatchEvent(new Event('change'));
+      // Assert
+      expect(setLocal()).not.toHaveBeenCalled();
+      expect(minProse().value).toBe('334');
+    },
+  );
+
+  it('読み込みに失敗しても入力は既定値のまま操作できる', async () => {
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const get = chrome.storage.local.get;
+    (chrome.storage.local as { get: unknown }).get = () =>
+      Promise.reject(new Error('storage down'));
+    try {
+      await init();
+    } finally {
+      (chrome.storage.local as { get: unknown }).get = get;
+    }
+    threshold().value = '6';
+    threshold().dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenCalledWith({
+        aiHintPrefs: { threshold: 6, minProseChars: 334 },
+      });
+    });
+  });
+});
+
 describe('describeToggleState', () => {
   it('オンは「する」', () => {
     expect(describeToggleState(true)).toBe('する');
@@ -651,6 +780,12 @@ describe('index.html のレイアウト順序', () => {
     // 純赤 (255,0,0) は g > b を満たさず、緑 (0,255,0) は r > g を満たさない
     expect(r).toBeGreaterThan(g ?? 0);
     expect(g).toBeGreaterThan(b ?? 0);
+  });
+
+  it('点数のスライダーの上限はシグナル数と同じ（スクリプトが動く前の表示も合わせる）', () => {
+    expect(indexHtml).toContain(
+      `<input type="range" id="ai-threshold" min="1" max="${String(AI_SIGNALS.length)}"`,
+    );
   });
 
   it('実スクショを埋め込まない（実アカウント名が配布物に入る）', () => {

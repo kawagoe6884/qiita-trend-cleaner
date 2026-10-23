@@ -201,6 +201,30 @@
         font-size: 0.85rem;
         margin: 0 0 8px;
       }
+      /* 「AI文体かも？」の線引き。ポップアップの .slider と同じ 3 列
+         （ラベル / 入力 / 値）にそろえる */
+      .slider {
+        display: grid;
+        /* minmax(0, …) で、狭い幅ではラベルを折り返して横にはみ出さない */
+        grid-template-columns: minmax(0, 13em) minmax(0, 1fr) 5em;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 8px;
+      }
+      .slider label {
+        font-weight: 400;
+        margin: 0;
+      }
+      .slider output,
+      .slider .unit {
+        font-variant-numeric: tabular-nums;
+      }
+      .slider input[type='number'] {
+        width: 6em;
+        padding: 4px 6px;
+        font-family: inherit;
+        font-size: 0.95rem;
+      }
     </style>
   </head>
   <body>
@@ -414,6 +438,29 @@
       <p class="hint">
         折りたたんだ中でも「誤り」に押し直せます。ただし
         <strong>「誤り」を押しても Qiita 側のミュートは解除されません。</strong>
+      </p>
+    </section>
+
+    <section class="prefs">
+      <h2>「AI文体かも？」の線引き</h2>
+      <p class="hint">
+        トークンを設定したとき、トレンドの記事の右上に出る目安です（断定ではありません）。
+        点数の数え方は変わらず、どこから強調するかだけが変わります。開いているトレンドにもすぐ反映されます。
+      </p>
+      <p class="slider">
+        <label for="ai-threshold">何点以上で強調するか</label>
+        <!-- max はシグナル数（AI_SIGNALS.length）。スクリプトでも上書きする -->
+        <input type="range" id="ai-threshold" min="1" max="8" step="1" />
+        <output id="ai-threshold-value" for="ai-threshold"></output>
+      </p>
+      <p class="slider">
+        <label for="ai-min-prose">何字未満に「短文」の注釈を付けるか</label>
+        <input type="number" id="ai-min-prose" min="0" max="2000" step="1" inputmode="numeric" />
+        <span class="unit">字</span>
+      </p>
+      <p class="hint">
+        既定は 5 点 / 334 字です。0
+        字にすると注釈を出しません。コードを除いた地の文の字数で数えます。
       </p>
     </section>
 

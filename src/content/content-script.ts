@@ -161,8 +161,12 @@ async function applyAiHints(): Promise<void> {
       clearAiHints();
       return;
     }
-    const [hints, verdicts] = await Promise.all([storage.getAiHints(), storage.getAiVerdicts()]);
-    if (renderAiHints(hints, verdicts, onAiAnswer) > 0) watchTrendCards();
+    const [hints, verdicts, prefs] = await Promise.all([
+      storage.getAiHints(),
+      storage.getAiVerdicts(),
+      storage.getAiHintPrefs(),
+    ]);
+    if (renderAiHints(hints, verdicts, onAiAnswer, prefs) > 0) watchTrendCards();
   } catch (error) {
     // 描けないだけで、ページの表示そのものは壊さない（applyHiding と同じ）
     logger.debug('failed to apply ai hints:', error);
@@ -219,8 +223,8 @@ function watchTrendCards(): void {
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
-/** これらのキーが変わったら「AI文体かも？」を描き直す */
-const AI_HINT_KEYS = ['aiHints', 'aiVerdicts', 'token'] as const;
+/** これらのキーが変わったら「AI文体かも？」を描き直す。aiHintPrefs は設定画面の線引き */
+const AI_HINT_KEYS = ['aiHints', 'aiVerdicts', 'aiHintPrefs', 'token'] as const;
 
 /**
  * 評価と「AI文体かも？」の変更に追従する。**message passing を使わない。**

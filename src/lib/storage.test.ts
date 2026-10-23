@@ -336,6 +336,48 @@ describe('getFoldTarget / saveFoldTarget', () => {
   });
 });
 
+/** 「AI文体かも？」の線引き。表示の設定なので local に置く（foldTarget と同じ） */
+describe('getAiHintPrefs / saveAiHintPrefs', () => {
+  it('未設定なら既定値（5 点 / 334 字）', async () => {
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 5, minProseChars: 334 });
+  });
+
+  it('保存した値を読み戻せる', async () => {
+    await storage.saveAiHintPrefs({ threshold: 3, minProseChars: 500 });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 3, minProseChars: 500 });
+  });
+
+  it('範囲の両端を受け付ける', async () => {
+    await storage.saveAiHintPrefs({ threshold: 1, minProseChars: 0 });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 1, minProseChars: 0 });
+    await storage.saveAiHintPrefs({ threshold: 8, minProseChars: 2000 });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 8, minProseChars: 2000 });
+  });
+
+  it('壊れた項目だけ既定値に倒し、もう片方は生かす', async () => {
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 9, minProseChars: 100 } });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 5, minProseChars: 100 });
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 2, minProseChars: -1 } });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 2, minProseChars: 334 });
+  });
+
+  it('非整数・型違いは丸めず既定値に倒す', async () => {
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 3.5, minProseChars: '500' } });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 5, minProseChars: 334 });
+  });
+
+  it('オブジェクトでなくても例外を投げず既定値', async () => {
+    await chrome.storage.local.set({ aiHintPrefs: 'strict' });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 5, minProseChars: 334 });
+  });
+
+  it('local に置く（sync には書かない）', async () => {
+    await storage.saveAiHintPrefs({ threshold: 4, minProseChars: 334 });
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(chrome.storage.sync.set).not.toHaveBeenCalled();
+  });
+});
+
 /**
  * 評価はユーザーが積み上げた資産で、候補と違って再計算では復元できない。
  * 1 件壊れていても全体を捨てない。

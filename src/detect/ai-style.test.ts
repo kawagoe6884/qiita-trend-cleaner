@@ -242,6 +242,15 @@ describe('isShortProse', () => {
   it(`ちょうど ${String(AI_HINT_MIN_PROSE_CHARS)} 字なら短文ではない`, () => {
     expect(isShortProse(hint([], AI_HINT_MIN_PROSE_CHARS))).toBe(false);
   });
+
+  it('最小文字数を引数で変えられる', () => {
+    expect(isShortProse(hint([], 499), 500)).toBe(true);
+    expect(isShortProse(hint([], 500), 500)).toBe(false);
+  });
+
+  it('最小文字数 0 なら地の文が 0 字でも短文としない（注釈を出さない）', () => {
+    expect(isShortProse(hint([], 0), 0)).toBe(false);
+  });
 });
 
 describe('isAiLikely', () => {
