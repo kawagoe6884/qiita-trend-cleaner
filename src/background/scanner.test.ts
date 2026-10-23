@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { runScan } from './scanner';
-import { fetchLikes, fetchUserItems } from '../api/qiita-client';
+import { fetchItemBody, fetchLikes, fetchUserItems } from '../api/qiita-client';
 import {
   saveToken,
   getLikeIndex,
@@ -9,6 +9,8 @@ import {
   getRateLimitedUntil,
   saveSettings,
   getAuthorVisits,
+  getAiHints,
+  saveAiHints,
 } from '../lib/storage';
 import { RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
@@ -19,10 +21,18 @@ import { API_PER_PAGE } from '../api/rate-budget';
 import { DEFAULT_SETTINGS } from '../types/domain';
 import type { TrendItem } from '../types/domain';
 
-vi.mock('../api/qiita-client', () => ({ fetchLikes: vi.fn(), fetchUserItems: vi.fn() }));
+vi.mock('../api/qiita-client', () => ({
+  fetchLikes: vi.fn(),
+  fetchUserItems: vi.fn(),
+  fetchItemBody: vi.fn(),
+}));
 
 const likesMock = vi.mocked(fetchLikes);
 const itemsMock = vi.mocked(fetchUserItems);
+const bodyMock = vi.mocked(fetchItemBody);
+
+/** 本文に入れる目印。保存されていないことを storage 全体の文字列で確かめる */
+const BODY_MARKER = '本文の目印となる合成の文章です。';
 
 /** 合成のトレンド記事。実アカウント名・実 item_id は使わない */
 function trendItem(index: number): TrendItem {
@@ -80,6 +90,16 @@ beforeEach(() => {
     totalCount: 2,
     rate: { limit: 1000, remaining: 990, resetAt: null },
   });
+  bodyMock.mockImplementation((itemId: string) =>
+    Promise.resolve({
+      data: {
+        id: itemId,
+        body: `${BODY_MARKER}
+これは — 補足です。`,
+      },
+      rate: { limit: 1000, remaining: 980, resetAt: null },
+    }),
+  );
 });
 
 afterEach(() => {
@@ -1105,5 +1125,94 @@ describe('likes のページング', () => {
     // Assert — 既知として飛ばさず、取り直して保存する
     expect(likesMock).toHaveBeenCalledTimes(1);
     expect(Object.keys(await getLikeIndex())).toEqual(['example-liker-a']);
+  });
+});
+
+describe('runScan の AI ヒント', () => {
+  it('ライトモードでは本文を取りに行かない', async () => {
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).not.toHaveBeenCalled();
+    expect(await getAiHints()).toEqual({});
+  });
+
+  it('フルモードではトレンド全件の本文を数え、スコアだけを保存する', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).toHaveBeenCalledTimes(2);
+    const hints = await getAiHints();
+    expect(Object.keys(hints).sort()).toEqual(TWO_ITEMS.map((item) => item.itemId).sort());
+    expect(hints[TWO_ITEMS[0]?.itemId ?? '']?.fired).toContain('dash');
+    expect(hints[TWO_ITEMS[0]?.itemId ?? '']?.scoredAt).toBe(new Date().toISOString());
+  });
+
+  it('本文そのものは storage のどこにも残さない', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    const everything = JSON.stringify(await chrome.storage.local.get(null));
+    expect(everything).not.toContain(BODY_MARKER);
+  });
+
+  it('いいねが既知の記事でも、未スコアなら本文を取る（あとからトークンを設定した人）', async () => {
+    // Arrange — ライトモードで蓄積済み
+    await runScan(TWO_ITEMS);
+    await saveToken('dummy-token-value');
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('スコア済みの記事は取り直さない（リロードで枠を使わない）', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    await runScan(TWO_ITEMS);
+    bodyMock.mockClear();
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).not.toHaveBeenCalled();
+  });
+
+  it('保持期間を過ぎたスコアは保存時に捨てる', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    await saveAiHints({
+      'stale-item': { fired: [], proseChars: 500, scoredAt: '2026-08-01T00:00:00.000Z' },
+    });
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(Object.keys(await getAiHints())).not.toContain('stale-item');
+  });
+
+  it('本文が 429 を返したらそこで止め、著者の巡回にも入らない', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    bodyMock.mockRejectedValue(new RateLimitError(1_755_600_000));
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).toHaveBeenCalledTimes(1);
+    expect(itemsMock).not.toHaveBeenCalled();
+    expect(await getRateLimitedUntil()).toBe(1_755_600_000);
+  });
+
+  it('1 件の取得失敗では止めず、残りを数える', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    bodyMock.mockRejectedValueOnce(new Error('network'));
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).toHaveBeenCalledTimes(2);
+    expect(Object.keys(await getAiHints())).toEqual([TWO_ITEMS[1]?.itemId]);
   });
 });

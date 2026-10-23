@@ -785,3 +785,74 @@ describe('resetLocalState', () => {
     expect(await storage.getToken()).toBeNull();
   });
 });
+
+/**
+ * 記事ごとの文体スコア。**1 件壊れていても全体を捨てない。**
+ * 捨てると全記事が「未スコア」になり、次のスキャンで本文を一斉に取りに行く。
+ */
+describe('getAiHints / saveAiHints', () => {
+  const hint = {
+    fired: ['dash', 'risingWords'],
+    proseChars: 512,
+    scoredAt: '2026-10-24T00:00:00.000Z',
+  };
+
+  it('未保存なら空を返す', async () => {
+    expect(await storage.getAiHints()).toEqual({});
+  });
+
+  it('保存したスコアをそのまま返す', async () => {
+    await storage.saveAiHints({
+      '0123456789abcdef0123': { ...hint, fired: ['dash', 'risingWords'] },
+    });
+    expect(await storage.getAiHints()).toEqual({ '0123456789abcdef0123': hint });
+  });
+
+  it('壊れた記事だけ落とし、知らないシグナルは捨てて残りを読む', async () => {
+    // Arrange
+    await chrome.storage.local.set({
+      aiHints: {
+        good: { fired: ['dash', 'unknown-signal'], proseChars: 512, scoredAt: hint.scoredAt },
+        noChars: { fired: [], proseChars: '512', scoredAt: hint.scoredAt },
+        noTime: { fired: [], proseChars: 1 },
+        notObject: 'broken',
+      },
+    });
+    // Act & Assert
+    expect(await storage.getAiHints()).toEqual({
+      good: { fired: ['dash'], proseChars: 512, scoredAt: hint.scoredAt },
+    });
+  });
+
+  it('配列が入っていたら空に倒す', async () => {
+    await chrome.storage.local.set({ aiHints: [] });
+    expect(await storage.getAiHints()).toEqual({});
+  });
+});
+
+describe('getAiVerdicts / saveAiVerdict', () => {
+  it('未保存なら空を返す', async () => {
+    expect(await storage.getAiVerdicts()).toEqual({});
+  });
+
+  it('既存の回答を消さずに足し、書いた後の全体を返す', async () => {
+    // Arrange
+    await storage.saveAiVerdict('item-a', 'yes');
+    // Act
+    const merged = await storage.saveAiVerdict('item-b', 'no');
+    // Assert
+    expect(merged).toEqual({ 'item-a': 'yes', 'item-b': 'no' });
+    expect(await storage.getAiVerdicts()).toEqual(merged);
+  });
+
+  it('同じ記事は上書きする（押し直せる）', async () => {
+    await storage.saveAiVerdict('item-a', 'yes');
+    await storage.saveAiVerdict('item-a', 'no');
+    expect(await storage.getAiVerdicts()).toEqual({ 'item-a': 'no' });
+  });
+
+  it('知らない値が混ざっていても他の回答は残す', async () => {
+    await chrome.storage.local.set({ aiVerdicts: { 'item-a': 'yes', 'item-b': 'maybe' } });
+    expect(await storage.getAiVerdicts()).toEqual({ 'item-a': 'yes' });
+  });
+});

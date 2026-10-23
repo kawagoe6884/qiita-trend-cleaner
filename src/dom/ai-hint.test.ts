@@ -1,0 +1,271 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { renderAiHints, clearAiHints, describeAiHint, isOwnMutation } from './ai-hint';
+import { AI_HINT_STYLE_ID } from './selectors';
+import { AI_HINT_DEFAULT_THRESHOLD, AI_HINT_MIN_PROSE_CHARS, AI_SIGNALS } from '../types/domain';
+import type { AiHint, AiHintLog, AiVerdictLog } from '../types/domain';
+
+/** hider.test.ts と同じ骨格。実測どおり記事リンクを 2 本持たせる。合成値のみ */
+function card(n: number): string {
+  const author = `example-author-${String(n)}`;
+  const url = `https://qiita.com/${author}/items/${itemIdOf(n)}`;
+  return `<div class="card"><a href="${url}"></a><time datetime="2026-08-18T10:00:00Z">2026年08月18日</time><a href="${url}">タイトル ${String(n)}</a></div>`;
+}
+
+function itemIdOf(n: number): string {
+  return `0123456789abcdef${String(n).padStart(4, '0')}`;
+}
+
+function hint(score: number, proseChars = 1000): AiHint {
+  return {
+    fired: AI_SIGNALS.slice(0, score),
+    proseChars,
+    scoredAt: '2026-10-24T00:00:00.000Z',
+  };
+}
+
+function hintsOn(n: number): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-qtg-ai-hint="${itemIdOf(n)}"]`);
+}
+
+function buttonOf(n: number, label: '当たり' | '外れ'): HTMLButtonElement | undefined {
+  return [...(hintsOn(n)?.querySelectorAll('button') ?? [])].find(
+    (button) => button.textContent === label,
+  );
+}
+
+beforeEach(() => {
+  document.body.innerHTML = '';
+});
+
+describe('renderAiHints', () => {
+  it('スコアのある全記事に「AI文体かも？」を出す（閾値未満も含む）', () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    const hints: AiHintLog = { [itemIdOf(1)]: hint(8), [itemIdOf(2)]: hint(0) };
+    // Act
+    const rendered = renderAiHints(hints, {}, vi.fn());
+    // Assert
+    expect(rendered).toBe(2);
+    for (const n of [1, 2]) {
+      expect(hintsOn(n)?.textContent).toContain('AI文体かも？');
+      expect(buttonOf(n, '当たり')).toBeDefined();
+      expect(buttonOf(n, '外れ')).toBeDefined();
+    }
+  });
+
+  it('スコアの無い記事には何も出さない', () => {
+    document.body.innerHTML = card(1);
+    expect(renderAiHints({}, {}, vi.fn())).toBe(0);
+    expect(hintsOn(1)).toBeNull();
+  });
+
+  it('閾値以上は強調し、未満は控えめにする', () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    const hints: AiHintLog = {
+      [itemIdOf(1)]: hint(AI_HINT_DEFAULT_THRESHOLD),
+      [itemIdOf(2)]: hint(AI_HINT_DEFAULT_THRESHOLD - 1),
+    };
+    // Act
+    renderAiHints(hints, {}, vi.fn());
+    // Assert
+    expect(hintsOn(1)?.dataset.qtgAiLikely).toBe('true');
+    expect(hintsOn(2)?.dataset.qtgAiLikely).toBe('false');
+  });
+
+  it('地の文が短い記事には「判定が甘い可能性あり」と注釈する', () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    const hints: AiHintLog = {
+      [itemIdOf(1)]: hint(3, AI_HINT_MIN_PROSE_CHARS - 1),
+      [itemIdOf(2)]: hint(3, AI_HINT_MIN_PROSE_CHARS),
+    };
+    // Act
+    renderAiHints(hints, {}, vi.fn());
+    // Assert
+    expect(hintsOn(1)?.textContent).toContain('判定が甘い可能性あり');
+    expect(hintsOn(2)?.textContent).not.toContain('判定が甘い可能性あり');
+  });
+
+  it('点数は断定せずに title で示す', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(3) }, {}, vi.fn());
+    expect(hintsOn(1)?.title).toBe(describeAiHint(hint(3)));
+    expect(hintsOn(1)?.title).toContain(`3 / ${String(AI_SIGNALS.length)}`);
+  });
+
+  it('押したボタンで記事 ID と回答を渡し、リンクの遷移を止める', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    const onAnswer = vi.fn();
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, onAnswer);
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+    // Act
+    buttonOf(1, '外れ')?.dispatchEvent(event);
+    // Assert
+    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'no');
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('回答済みの側を aria-pressed で示す', () => {
+    document.body.innerHTML = card(1);
+    const verdicts: AiVerdictLog = { [itemIdOf(1)]: 'yes' };
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, verdicts, vi.fn());
+    expect(buttonOf(1, '当たり')?.getAttribute('aria-pressed')).toBe('true');
+    expect(buttonOf(1, '外れ')?.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('描き直しても二重にしない', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    const hints: AiHintLog = { [itemIdOf(1)]: hint(5) };
+    // Act
+    renderAiHints(hints, {}, vi.fn());
+    renderAiHints(hints, { [itemIdOf(1)]: 'no' }, vi.fn());
+    // Assert
+    expect(document.querySelectorAll('[data-qtg-ai-hint]')).toHaveLength(1);
+    expect(buttonOf(1, '外れ')?.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('カードの右上に重ねて置き、カードの高さを増やさない', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    // Act
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
+    // Assert
+    const element = hintsOn(1);
+    expect(element?.style.position).toBe('absolute');
+    expect(element?.style.top).not.toBe('');
+    expect(element?.style.right).not.toBe('');
+    expect(document.querySelector<HTMLElement>('.card')?.style.position).toBe('relative');
+  });
+
+  it('カードが既に位置指定されていれば position を上書きしない', () => {
+    document.body.innerHTML = card(1);
+    const target = document.querySelector<HTMLElement>('.card');
+    if (target) target.style.position = 'sticky';
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
+    expect(target?.style.position).toBe('sticky');
+  });
+
+  it('回答のボタンは普段は隠し、ラベルに乗せた時とフォーカスした時だけ出す', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    // Act
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
+    // Assert — :hover は jsdom で再現できないので、規則が入っていることを確かめる
+    const answers = hintsOn(1)?.querySelector('.qtg-ai-answers');
+    expect(answers?.contains(buttonOf(1, '当たり') ?? null)).toBe(true);
+    const css = document.getElementById(AI_HINT_STYLE_ID)?.textContent ?? '';
+    expect(css).toMatch(/\.qtg-ai-answers\s*\{[^}]*display:\s*none/);
+    expect(css).toContain(':hover .qtg-ai-answers');
+    expect(css).toContain(':focus-within .qtg-ai-answers');
+    expect(hintsOn(1)?.tabIndex).toBe(0);
+  });
+
+  it('スタイルは 1 つだけ入れる', () => {
+    document.body.innerHTML = card(1) + card(2);
+    renderAiHints({ [itemIdOf(1)]: hint(5), [itemIdOf(2)]: hint(1) }, {}, vi.fn());
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
+    expect(document.querySelectorAll(`#${AI_HINT_STYLE_ID}`)).toHaveLength(1);
+  });
+
+  it('回答済みの記事にはラベルの横に ✓ だけを残す', () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    const hints: AiHintLog = { [itemIdOf(1)]: hint(5), [itemIdOf(2)]: hint(5) };
+    // Act
+    renderAiHints(hints, { [itemIdOf(1)]: 'no' }, vi.fn());
+    // Assert
+    expect(hintsOn(1)?.querySelector('.qtg-ai-done')?.textContent).toBe('✓');
+    expect(hintsOn(2)?.querySelector('.qtg-ai-done')).toBeNull();
+  });
+
+  it('短文の注釈はラベルの行とは別の行に置く', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    // Act
+    renderAiHints({ [itemIdOf(1)]: hint(3, AI_HINT_MIN_PROSE_CHARS - 1) }, {}, vi.fn());
+    // Assert
+    const container = hintsOn(1);
+    const rows = [...(container?.children ?? [])];
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.textContent).toContain('AI文体かも？');
+    expect(rows[1]?.textContent).toBe('（短文のため判定が甘い可能性あり）');
+  });
+
+  it('表示を足してもカードの記事リンクは増えない（カード判定を壊さない）', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
+    expect(document.querySelectorAll('a[href*="/items/"]')).toHaveLength(2);
+  });
+});
+
+/**
+ * 描き直しの監視が、自分の描画に反応して止まらなくなるのを防ぐ判定。
+ * MutationObserver の記録を jsdom で実際に作って確かめる。
+ */
+describe('isOwnMutation', () => {
+  // 同期で取り出す。マイクロタスクを挟むとコールバックに渡って空になる
+  function recordsOf(mutate: () => void): MutationRecord[] {
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(document.body, { childList: true, subtree: true });
+    mutate();
+    const records = observer.takeRecords();
+    observer.disconnect();
+    return records;
+  }
+
+  it('表示を足した・描き直した変化は自分のもの', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    const hints: AiHintLog = { [itemIdOf(1)]: hint(5) };
+    // Act
+    const records = recordsOf(() => {
+      renderAiHints(hints, {}, vi.fn());
+      renderAiHints(hints, { [itemIdOf(1)]: 'yes' }, vi.fn());
+    });
+    // Assert
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.every(isOwnMutation)).toBe(true);
+  });
+
+  it('Qiita がカードを作り直した変化は自分のものではない', () => {
+    document.body.innerHTML = card(1);
+    const records = recordsOf(() => {
+      document.body.innerHTML = card(1);
+    });
+    expect(records.some((record) => !isOwnMutation(record))).toBe(true);
+  });
+});
+
+describe('clearAiHints', () => {
+  it('拡張が足した表示だけを消す', () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    renderAiHints({ [itemIdOf(1)]: hint(5), [itemIdOf(2)]: hint(1) }, {}, vi.fn());
+    // Act
+    const removed = clearAiHints();
+    // Assert
+    expect(removed).toBe(2);
+    expect(document.querySelectorAll('[data-qtg-ai-hint]')).toHaveLength(0);
+    expect(document.querySelectorAll('.card')).toHaveLength(2);
+  });
+
+  it('右上に置くために変えたカードの position を元に戻す', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
+    // Act
+    clearAiHints();
+    // Assert
+    expect(document.querySelector<HTMLElement>('.card')?.style.position).toBe('');
+  });
+
+  it('入れたスタイルも消す', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
+    clearAiHints();
+    expect(document.getElementById(AI_HINT_STYLE_ID)).toBeNull();
+  });
+});

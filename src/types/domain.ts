@@ -387,6 +387,88 @@ export const BURST_WINDOW_CHOICES = [
  */
 export const MAX_BURST_WINDOW_MINUTES = Math.max(...BURST_WINDOW_CHOICES);
 
+/**
+ * 「AI文体かも？」の材料になる文体シグナル。**1 つ立つごとに 1 点。**
+ *
+ * 出典: 「Qiita の文章は生成 AI 以前と以後でどう変わったか」
+ * （https://nyosegawa.com/posts/qiita-writing-before-after-ai/）。
+ * **集団の傾向**の測定であって、記事単位の判定器ではない。点数は
+ * 「AI 記事である」の根拠ではなく、利用者が開く前に目安を得るためのもの。
+ *
+ * 重みを付けないのは、当たり / 外れの回答で閾値を自動調整しないと決めたから
+ * （PRD）。利用者が動かせるのは「何点以上で強調するか」だけにする。
+ *
+ * **配列から型を導出する**（FOLD_TARGETS と同じ）。storage から読んだ値を検証する。
+ */
+export const AI_SIGNALS = [
+  /** 1 文あたりの読点が多い */
+  'commaDensity',
+  /** 太字が多い */
+  'boldDensity',
+  /** 箇条書きの行が多い */
+  'bulletRatio',
+  /** ダッシュ（— ―）を使う */
+  'dash',
+  /** 「まとめ」見出しがある */
+  'summaryHeading',
+  /** 生成 AI 以後に増えた語（効く・既定・実測 など）を使う */
+  'risingWords',
+  /** 生成 AI 以後に減った表現（〜ましょう・感嘆符・「また、」）を使わない */
+  'noFallingExpressions',
+  /** 地の文が長い */
+  'longProse',
+] as const;
+
+export type AiSignal = (typeof AI_SIGNALS)[number];
+
+/** 外部から来た値が AiSignal かを判定する */
+export function isAiSignal(value: unknown): value is AiSignal {
+  return typeof value === 'string' && (AI_SIGNALS as readonly string[]).includes(value);
+}
+
+/**
+ * 地の文がこれ未満の記事は「短文のため判定が甘い可能性あり」と注釈する。
+ *
+ * **334 は遊び心**（PRD・ユーザー確定）。2026 年の平均文長約 39 字で 8〜9 文。
+ * 対象外にはせず、表示したうえで注釈する（Plan D4）。
+ */
+export const AI_HINT_MIN_PROSE_CHARS = 334;
+
+/**
+ * 「AI文体かも？」を強調する既定の点数（以上）。**仮置き。**
+ *
+ * 根拠のある値が無いので、シグナル数の過半に置いている（Plan D3）。
+ * 30 件の当たり / 外れで一致率を見て決め直す。M2 で利用者が動かせるようにする。
+ */
+export const AI_HINT_DEFAULT_THRESHOLD = 5;
+
+/**
+ * 記事 1 件の文体スコア。**本文そのものは持たない**（Plan D5）。
+ * 本文は取得してその場で数え、捨てる。
+ */
+export interface AiHint {
+  /** 立ったシグナル（重複なし・AI_SIGNALS の順） */
+  fired: AiSignal[];
+  /** コード・表・引用を除いた地の文の文字数（空白を除く） */
+  proseChars: number;
+  /** 数えた時刻。保持期間（7 日）の判定に使う */
+  scoredAt: IsoDateTime;
+}
+
+/** 記事 ID -> 文体スコア。保持期間 7 日でパージする */
+export type AiHintLog = Record<ItemId, AiHint>;
+
+/** 「AI文体かも？」への利用者の回答 */
+export type AiVerdict = 'yes' | 'no';
+
+/**
+ * 記事 ID -> 回答。一致率の唯一の入力。
+ *
+ * **閾値の自動調整には使わない**（PRD）。FeedbackLog と同じく、利用者が
+ * 積み上げた資産なのでパージしない。
+ */
+export type AiVerdictLog = Record<ItemId, AiVerdict>;
+
 /** 取得の射程。トークンの有無ではなくレート枠から決まる */
 export type ScanMode = 'light' | 'full';
 
@@ -435,6 +517,10 @@ export interface LocalState {
   foldTarget?: FoldTarget;
   /** 著者ごとの過去記事巡回の記録。保持期間 7 日でパージする */
   authorVisits?: AuthorVisits;
+  /** 記事ごとの文体スコア（フルモードのみ）。保持期間 7 日でパージする */
+  aiHints?: AiHintLog;
+  /** 「AI文体かも？」への回答。パージしない */
+  aiVerdicts?: AiVerdictLog;
   /** 保持期間 7 日 */
   purgeAfter?: IsoDateTime;
   /** 最後にスキャンした時刻 */

@@ -11,9 +11,14 @@
  * ここが読むのは自分で書いた値なので、API レスポンスほど厳密には検証しない。
  * ただし storage が壊れていても例外で落とさず、既定値へフォールバックする。
  */
-import { DEFAULT_SETTINGS, isFoldTarget, isMuteOutcome } from '../types/domain';
+import { DEFAULT_SETTINGS, isAiSignal, isFoldTarget, isMuteOutcome } from '../types/domain';
 import type {
   AccountHandle,
+  AiHint,
+  AiHintLog,
+  AiVerdict,
+  AiVerdictLog,
+  ItemId,
   AuthorVisits,
   Candidate,
   FeedbackLog,
@@ -350,6 +355,66 @@ export async function getAuthorVisits(): Promise<AuthorVisits> {
 
 export async function saveAuthorVisits(authorVisits: AuthorVisits): Promise<void> {
   await chrome.storage.local.set({ authorVisits });
+}
+
+/** 1 件分の文体スコアを検証する。知らないシグナルは捨て、形が崩れていれば null */
+function asAiHint(value: unknown): AiHint | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as Partial<Record<keyof AiHint, unknown>>;
+  const scoredAt = asNonEmptyString(candidate.scoredAt);
+  const { proseChars, fired } = candidate;
+  if (scoredAt === null || !Array.isArray(fired)) return null;
+  if (typeof proseChars !== 'number' || !Number.isInteger(proseChars) || proseChars < 0) {
+    return null;
+  }
+  return { fired: fired.filter(isAiSignal), proseChars, scoredAt };
+}
+
+/**
+ * 記事ごとの文体スコア。フルモードだけが書く。
+ *
+ * 1 件だけ壊れていても全体を捨てない（getAuthorVisits と同じ扱い）。
+ * 捨てると全記事が「未スコア」になり、次のスキャンで本文を一斉に取りに行く。
+ */
+export async function getAiHints(): Promise<AiHintLog> {
+  const raw = await readRaw();
+  const stored = raw.aiHints;
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {};
+  const hints: AiHintLog = {};
+  for (const [itemId, value] of Object.entries(stored as Record<string, unknown>)) {
+    const hint = asAiHint(value);
+    if (hint !== null) hints[itemId] = hint;
+  }
+  return hints;
+}
+
+/** パージ済みの全体を書く。マージとパージは呼び出し側（scanner）が保存の直前に行う */
+export async function saveAiHints(aiHints: AiHintLog): Promise<void> {
+  await chrome.storage.local.set({ aiHints });
+}
+
+/** 「AI文体かも？」への回答。1 件だけ壊れていても全体を捨てない（getFeedback と同じ扱い） */
+export async function getAiVerdicts(): Promise<AiVerdictLog> {
+  const raw = await readRaw();
+  const stored = raw.aiVerdicts;
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {};
+  const log: AiVerdictLog = {};
+  for (const [itemId, value] of Object.entries(stored as Record<string, unknown>)) {
+    if (value === 'yes' || value === 'no') log[itemId] = value;
+  }
+  return log;
+}
+
+/**
+ * 回答を 1 件記録し、**書いた後の全体を返す。**
+ *
+ * 読んで足して書く（saveVerdict と同じ理由 — トレンドのタブを 2 枚開いて
+ * 互いの回答を消し合わない）。
+ */
+export async function saveAiVerdict(itemId: ItemId, verdict: AiVerdict): Promise<AiVerdictLog> {
+  const aiVerdicts = { ...(await getAiVerdicts()), [itemId]: verdict };
+  await chrome.storage.local.set({ aiVerdicts });
+  return aiVerdicts;
 }
 
 export async function getLikeIndex(): Promise<LikeIndex> {

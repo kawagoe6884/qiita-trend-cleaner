@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { saveVerdict } from '../lib/storage';
+import { saveAiHints, saveAiVerdict, saveToken, saveVerdict, getAiVerdicts } from '../lib/storage';
 import { SELECTORS, MENU_TEXT, SNACKBAR_TEXT } from '../dom/selectors';
 
 /** chrome は setup.ts が各テストの前に用意する。トップレベルではまだ未定義 */
@@ -476,5 +476,214 @@ describe('content script のミュート受信', () => {
         outcome: 'not-on-page',
       });
     });
+  });
+});
+
+/** 「AIかも？」の表示。合成のスコアを storage に置いてから起動する */
+describe('content script の AI ヒント', () => {
+  const ITEM_1 = '0123456789abcdef0001';
+  const hint = { fired: [], proseChars: 500, scoredAt: '2026-10-24T00:00:00.000Z' };
+
+  function hintOn(itemId: string): HTMLElement | null {
+    return document.querySelector<HTMLElement>(`[data-qtg-ai-hint="${itemId}"]`);
+  }
+
+  function answer(itemId: string, label: '当たり' | '外れ'): void {
+    const button = [...(hintOn(itemId)?.querySelectorAll('button') ?? [])].find(
+      (element) => element.textContent === label,
+    );
+    button?.click();
+  }
+
+  it('フルモードではスコアのある記事に表示を足す', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    // Act
+    await bootContentScript();
+    // Assert
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)?.textContent).toContain('AI文体かも？');
+    });
+  });
+
+  it('ライトモードではスコアが残っていても表示しない', async () => {
+    // Arrange — トークンを外した直後。スコアは 7 日残る
+    document.body.innerHTML = card(1);
+    await saveAiHints({ [ITEM_1]: hint });
+    // Act
+    await bootContentScript();
+    // Assert
+    expect(hintOn(ITEM_1)).toBeNull();
+  });
+
+  it('トレンド以外のページでは表示しない', async () => {
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    await bootContentScript('/example-author-1');
+    expect(hintOn(ITEM_1)).toBeNull();
+  });
+
+  it('当たり / 外れを押すと記事ごとに保存する', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)).not.toBeNull();
+    });
+    // Act
+    answer(ITEM_1, '当たり');
+    // Assert
+    await vi.waitFor(async () => {
+      expect(await getAiVerdicts()).toEqual({ [ITEM_1]: 'yes' });
+    });
+  });
+
+  it('スキャンでスコアが増えたら描き足す', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await bootContentScript();
+    expect(hintOn(ITEM_1)).toBeNull();
+    // Act
+    await saveAiHints({ [ITEM_1]: hint });
+    storageListener()({ aiHints: { newValue: { [ITEM_1]: hint } } }, 'local');
+    // Assert
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)).not.toBeNull();
+    });
+  });
+
+  it('回答が変わったら押した側を示し直す', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    await bootContentScript();
+    // Act
+    await saveAiVerdict(ITEM_1, 'no');
+    storageListener()({ aiVerdicts: { newValue: { [ITEM_1]: 'no' } } }, 'local');
+    // Assert
+    await vi.waitFor(() => {
+      const no = [...(hintOn(ITEM_1)?.querySelectorAll('button') ?? [])].find(
+        (element) => element.textContent === '外れ',
+      );
+      expect(no?.getAttribute('aria-pressed')).toBe('true');
+    });
+  });
+});
+
+/**
+ * Qiita のページはスクリプトの後からカードを作り直すことがある。2026-10-24 の実機で、
+ * スコアが保存済みのときだけ「一瞬出て消える」が起きた（表示の要素が 0 件になった）。
+ */
+describe('content script の AI ヒントの描き直し', () => {
+  const ITEM_1 = '0123456789abcdef0001';
+  const hint = { fired: [], proseChars: 500, scoredAt: '2026-10-24T00:00:00.000Z' };
+
+  it('カードが作り直されて表示が消えたら、描き直す', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-qtg-ai-hint]')).not.toBeNull();
+    });
+    // Act — React がカードを丸ごと作り直した状況
+    document.body.innerHTML = card(1);
+    // Assert
+    await vi.waitFor(() => {
+      expect(document.querySelector(`[data-qtg-ai-hint="${ITEM_1}"]`)).not.toBeNull();
+    });
+  });
+
+  it('自分の描画には反応しない（描き直しが止まらなくならない）', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    const getSpy = vi.spyOn(chrome.storage.local, 'get');
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-qtg-ai-hint]')).not.toBeNull();
+    });
+    // Act — 監視の待ち時間より長く待つ
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const settled = getSpy.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    // Assert — 落ち着いたあとは storage を読みに行かない
+    expect(getSpy.mock.calls.length).toBe(settled);
+  });
+});
+
+/** コードレビュー M2: 描き直しの監視が止まらない・始まりすぎないこと */
+describe('content script の AI ヒントの監視', () => {
+  const ITEM_1 = '0123456789abcdef0001';
+  const hint = { fired: [], proseChars: 500, scoredAt: '2026-10-24T00:00:00.000Z' };
+
+  it('ページが変化し続けても、最長 1 秒ほどで描き直す', async () => {
+    // Arrange
+    document.body.innerHTML = card(1) + '<div id="ticker"></div>';
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-qtg-ai-hint]')).not.toBeNull();
+    });
+    // 広告や時刻表示のように、待ち時間より短い間隔で変化し続ける
+    const ticker = setInterval(() => {
+      document
+        .getElementById('ticker')
+        ?.replaceChildren(document.createTextNode(String(Date.now())));
+    }, 100);
+    try {
+      // Act — カードが作り直される
+      document.body.innerHTML = card(1) + '<div id="ticker"></div>';
+      // Assert
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector(`[data-qtg-ai-hint="${ITEM_1}"]`)).not.toBeNull();
+        },
+        { timeout: 2000 },
+      );
+    } finally {
+      clearInterval(ticker);
+    }
+  });
+
+  it('ライトモードではページの監視を始めない', async () => {
+    // Arrange — 前のテストの content script の監視は残っているので、
+    // 「今回の起動で observe を呼んだか」だけを数える
+    document.body.innerHTML = card(1);
+    await saveAiHints({ [ITEM_1]: hint });
+    const observeSpy = vi.spyOn(MutationObserver.prototype, 'observe');
+    // Act
+    await bootContentScript();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Assert
+    expect(observeSpy).not.toHaveBeenCalled();
+    observeSpy.mockRestore();
+  });
+
+  it('フルモードで描いたら監視を始める（1 回だけ）', async () => {
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    const observeSpy = vi.spyOn(MutationObserver.prototype, 'observe');
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(observeSpy).toHaveBeenCalledTimes(1);
+    });
+    // 描き直しが走っても 2 本目は作らない
+    await saveAiVerdict(ITEM_1, 'yes');
+    storageListener()({ aiVerdicts: { newValue: { [ITEM_1]: 'yes' } } }, 'local');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(observeSpy).toHaveBeenCalledTimes(1);
+    observeSpy.mockRestore();
   });
 });

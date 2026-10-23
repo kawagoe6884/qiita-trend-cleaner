@@ -175,6 +175,41 @@ export async function fetchUserItems(
   return readArray(response, isQiitaItem, `items(${handle})`);
 }
 
+/** GET /items/:item_id の応答のうち使う部分。**本文は呼び出し側で使い捨てる** */
+export interface QiitaItemBody {
+  id: string;
+  /** Markdown。rendered_body（HTML）より、コードブロックを確実に除ける */
+  body: string;
+}
+
+function isQiitaItemBody(value: unknown): value is QiitaItemBody {
+  if (typeof value !== 'object' || value === null) return false;
+  const candidate = value as Partial<QiitaItemBody>;
+  return typeof candidate.id === 'string' && typeof candidate.body === 'string';
+}
+
+/**
+ * 記事の本文。「AI文体かも？」の文体スコアに使う。**フルモードでのみ使う**（PRD）。
+ *
+ * 1 記事 1 リクエスト。ライトモードの 60 req/h ではいいねの取得と食い合うため、
+ * 呼び出し側（scanner）がモードで絞る。
+ *
+ * 返すのは id と body だけ。title や user まで持ち回ると、保存しないと決めた
+ * 情報が下流に漏れる経路が増える。
+ */
+export async function fetchItemBody(
+  itemId: string,
+  token: string | null,
+): Promise<{ data: QiitaItemBody; rate: RateState | null }> {
+  const path = `/items/${toSafeSegment(itemId, 'itemId')}`;
+  const response = await request(path, token);
+  const body: unknown = await response.json();
+  if (!isQiitaItemBody(body)) {
+    throw new QtgError(`api returned unexpected item: ${itemId}`);
+  }
+  return { data: { id: body.id, body: body.body }, rate: readRateHeaders(response.headers) };
+}
+
 /**
  * トークン検証の結果。
  *

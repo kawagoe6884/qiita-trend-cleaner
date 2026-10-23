@@ -112,6 +112,20 @@ export const HIDDEN_MARKER = 'qtgHidden';
 export const HIGHLIGHT_MARKER = 'qtgJudged';
 
 /**
+ * 「AI文体かも？」の表示に付ける目印（dataset のキー名）。値は記事 ID。
+ *
+ * **拡張が作った要素だけを選ぶために要る。**描き直しで二重にしないこと、
+ * トークンを外したときに拡張が足したものだけを消すことの両方に使う。
+ */
+export const AI_HINT_MARKER = 'qtgAiHint';
+
+/**
+ * 「AI文体かも？」のスタイル要素の id。:hover と :focus-within はインラインの
+ * style で書けないので、規則を 1 つだけ head に入れる。拡張が作る要素。
+ */
+export const AI_HINT_STYLE_ID = 'qtg-ai-hint-style';
+
+/**
  * 非表示の件数を知らせる要素の id。**拡張が作る要素なので Qiita の DOM とは無関係。**
  * SELECTORS に入れないのは、あれが Qiita 側の DOM を指すものの置き場だから
  * （ハッシュクラス禁止の検査対象を、拡張自身の要素で薄めない）。
