@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as storage from './storage';
 
 /**
@@ -754,5 +754,34 @@ describe('トレンドのスナップショット', () => {
       authors: ['example-author-a'],
       at: '2026-09-16T10:00:00.000Z',
     });
+  });
+});
+
+describe('resetLocalState', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('fixture ビルド以外では何もしない（蓄積と評価を消す関数を本番で動かさない）', async () => {
+    // Arrange
+    await storage.saveVerdict('example-author-a', 'valid');
+    await storage.saveToken('example-token');
+    // Act — vitest の mode は 'test'
+    await storage.resetLocalState({ candidates: [] });
+    // Assert
+    expect(await storage.getFeedback()).toEqual({ 'example-author-a': 'valid' });
+    expect(await storage.getToken()).toBe('example-token');
+  });
+
+  it('fixture ビルドでは既存の値を消してから書く', async () => {
+    // Arrange
+    vi.stubEnv('MODE', 'fixture');
+    await storage.saveVerdict('example-author-a', 'valid');
+    await storage.saveToken('example-token');
+    // Act
+    await storage.resetLocalState({ feedback: { 'demo-author-2': 'valid' } });
+    // Assert — 前回の撮影で押した評価が残ると、同じ fixture から別の画面ができる
+    expect(await storage.getFeedback()).toEqual({ 'demo-author-2': 'valid' });
+    expect(await storage.getToken()).toBeNull();
   });
 });

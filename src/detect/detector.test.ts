@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { detectCandidates } from './detector';
 import { DEFAULT_SETTINGS } from '../types/domain';
 import type { LikeIndex, LikeRecord } from '../types/domain';
@@ -389,5 +389,38 @@ describe('detectCandidates の投稿直後の幅', () => {
     expect(
       detectCandidates(index, { ...DEFAULT_SETTINGS, burstWindowMinutes: 30 }, NOW)[0]?.burstScore,
     ).toBe(0);
+  });
+});
+
+/**
+ * スクショ用ビルド（`npm run build:fixture`）。**差し替えはこの関数の戻り値だけ**
+ * （fixture.ts のヘッダー）。mode はモジュールの読み込み時に決まるので読み直す。
+ */
+describe('detectCandidates の fixture ビルド', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('入力に関係なく fixture の候補を返す', async () => {
+    // Arrange
+    vi.stubEnv('MODE', 'fixture');
+    vi.resetModules();
+    const { detectCandidates: detect } = await import('./detector');
+    const { buildFixtureScene } = await import('./fixture');
+    // Act — 蓄積が空でも、実データの候補があっても同じ
+    const fromEmpty = detect({}, DEFAULT_SETTINGS, NOW);
+    const fromReal = detect(
+      cluster({ author: 'example-author', items: [1, 2], accounts: 6 }),
+      DEFAULT_SETTINGS,
+      NOW,
+    );
+    // Assert
+    expect(fromEmpty).toEqual(buildFixtureScene().candidates);
+    expect(fromReal).toEqual(buildFixtureScene().candidates);
+  });
+
+  it('fixture ビルド以外では fixture を返さない', () => {
+    // vitest の mode は 'test'。本番と同じく実データから検出する
+    expect(detectCandidates({}, DEFAULT_SETTINGS, NOW)).toEqual([]);
   });
 });

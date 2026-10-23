@@ -54,7 +54,8 @@ npm run build
 ## データの扱い
 
 - **保存先は `chrome.storage`（あなたのブラウザの中）だけ**です。外部サーバーへの送信は一切ありません
-- 通信先は **Qiita の公式 API（`https://qiita.com/api/v2/`）のみ**
+- 通信先は **Qiita の公式 API（`https://qiita.com/api/v2/`）のみ**。
+  ミュートは表示中のトレンドページのメニューを操作して行うため、この操作のリクエストは Qiita のページ自身が発行します。
 - アクセストークンは `chrome.storage.local` に保存され、Qiita 以外へ送られることはありません
 - 収集するのは「どのアカウントがどの記事にいつ いいね したか」で、**一定期間で自動的に破棄**されます
 - 権限は `storage` と `https://qiita.com/*` だけです（`tabs` も `alarms` も要求しません）
