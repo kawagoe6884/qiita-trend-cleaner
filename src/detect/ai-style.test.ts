@@ -83,6 +83,16 @@ describe('extractProse', () => {
     expect(prose.lines).toEqual(['重要な点と 注意 する点があります。']);
   });
 
+  it('入れ子のタグでも < と > を残さない（CodeQL: 不完全な複数文字の除去）', () => {
+    // Arrange — 1 回の置換では「<script」が残る形
+    const md = '<scr<script>ipt>本文です。';
+    // Act
+    const { lines } = extractProse(md);
+    // Assert
+    expect(lines.join('')).not.toMatch(/[<>]/);
+    expect(lines.join('')).toContain('本文です。');
+  });
+
   it('HTML タグを除く', () => {
     expect(extractProse('<details><summary>開く</summary></details>').lines).toEqual(['開く']);
   });

@@ -94,6 +94,9 @@ function cleanLine(line: string): string {
       .replace(/`[^`]*`/g, '')
       .replace(/https?:\/\/\S+/g, '')
       .replace(/<[^>]+>/g, '')
+      // 入れ子（`<scr<script>ipt>`）は 1 回の置換では「<script」が残る。数えるだけで
+      // 表示には使わないが、残った < > も消して結果に HTML の断片を持たせない（CodeQL）
+      .replace(/[<>]/g, '')
       .replace(/\*\*([^*]+)\*\*/g, '$1')
       .replace(/__([^_]+)__/g, '$1')
       .trim()
