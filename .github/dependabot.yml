@@ -6,8 +6,17 @@ updates:
       interval: weekly
     # devDependencies しかないので、細かい更新は 1 本の PR にまとめる
     groups:
+      # vitest と @vitest/* は互いを同じ版で peer に要求するので、別々の PR だと
+      # どちらも npm ci で落ちる。メジャー更新も含めて 1 本にまとめる
+      vitest:
+        patterns: [vitest, '@vitest/*']
       minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # typescript-eslint（8.72.0 時点）の peer が typescript <6.1.0 なので、
+      # TS のメジャー更新は入らない。typescript-eslint が対応したら外す
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directory: /
