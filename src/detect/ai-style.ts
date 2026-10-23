@@ -93,9 +93,11 @@ function cleanLine(line: string): string {
       .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
       .replace(/`[^`]*`/g, '')
       .replace(/https?:\/\/\S+/g, '')
-      .replace(/<[^>]+>/g, '')
-      // 入れ子（`<scr<script>ipt>`）は 1 回の置換では「<script」が残る。数えるだけで
-      // 表示には使わないが、残った < > も消して結果に HTML の断片を持たせない（CodeQL）
+      // タグは**空白に**置き換える。空文字にすると入れ子（`<scr<script>ipt>`）の前後が
+      // つながって「<script」ができる（CodeQL: Incomplete multi-character sanitization）。
+      // 文字数は空白を除いて数えるので判定は変わらない
+      .replace(/<[^>]+>/g, ' ')
+      // 数えるだけで表示には使わないが、残った < > も消して HTML の断片を持たせない
       .replace(/[<>]/g, '')
       .replace(/\*\*([^*]+)\*\*/g, '$1')
       .replace(/__([^_]+)__/g, '$1')
