@@ -596,6 +596,22 @@ describe('見え方の設定 — 保存に失敗したときのログ水準', ()
     expect(errorSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
   });
+
+  it('「AI文体かも？」の線引きの保存が失敗しても error / warn には載せない', async () => {
+    // Arrange — 3 本目の経路。スライダーと数値入力は saveAiHint を共有している
+    await init();
+    failNextWrite();
+    const threshold = el<HTMLInputElement>('#ai-threshold');
+    // Act
+    threshold.value = '3';
+    threshold.dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      expect(debugSpy).toHaveBeenCalledWith('failed to save ai hint setting:', expect.any(Error));
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -748,11 +764,21 @@ describe('index.html のレイアウト順序', () => {
     expect(howTo).toBeLessThan(prefs);
   });
 
-  it('候補の見え方はページの最後にある', () => {
-    // トークンは「まず設定するもの」、見え方は「あとから調整するもの」
-    const prefs = indexHtml.indexOf('class="prefs"');
-    const mode = indexHtml.indexOf('id="mode-title"');
-    expect(prefs).toBeGreaterThan(mode);
+  it('あとから調整する設定（候補の見え方・線引き）は、すべてトークンの欄より後ろにある', () => {
+    // トークンは「まず設定するもの」、見え方と線引きは「あとから調整するもの」
+    const howTo = indexHtml.indexOf('トークンの取得手順');
+    const sections = [...indexHtml.matchAll(/class="prefs"/g)].map((match) => match.index);
+    expect(sections).toHaveLength(2);
+    for (const section of sections) expect(section).toBeGreaterThan(howTo);
+  });
+
+  it('線引きは候補の見え方の後ろ（ページの最後）にある', () => {
+    // 線引きはフルモードでしか効かないので、誰でも使う見え方を先に置く
+    const fold = indexHtml.indexOf('<h2>候補の見え方</h2>');
+    const aiHint = indexHtml.indexOf('<h2>「AI文体かも？」の線引き</h2>');
+    expect(fold).toBeGreaterThan(-1);
+    expect(aiHint).toBeGreaterThan(fold);
+    expect(indexHtml.indexOf('class="prefs"', aiHint)).toBe(-1);
   });
 
   it('トグルは <input type="checkbox"> のまま（見た目だけ差し替える）', () => {
