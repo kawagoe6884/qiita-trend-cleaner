@@ -15,7 +15,7 @@
     "format": "prettier --write ."
   },
   "devDependencies": {
-    "@crxjs/vite-plugin": "^2.7.1",
+    "@crxjs/vite-plugin": "^3.0.0",
     "@eslint/js": "^10.0.1",
     "@types/chrome": "^0.3.5",
     "@vitest/coverage-v8": "^5.0.5",
