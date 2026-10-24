@@ -20,7 +20,14 @@ import {
   saveFoldTarget,
   getAiHintPrefs,
   saveAiHintPrefs,
+  getAiVerdicts,
 } from '../../lib/storage';
+import { agreementAt, agreementByThreshold, countLegacyAnswers } from '../../detect/ai-agreement';
+import {
+  describeAgreementCell,
+  describeAgreementSummary,
+  describeLegacy,
+} from './ai-agreement-copy';
 import {
   AI_HINT_MIN_PROSE_RANGE,
   AI_HINT_THRESHOLD_RANGE,
@@ -28,7 +35,7 @@ import {
   isFoldTarget,
   isIntInRange,
 } from '../../types/domain';
-import type { AiHintPrefs } from '../../types/domain';
+import type { AiHintPrefs, AiVerdictLog } from '../../types/domain';
 
 /**
  * このページが触る DOM セレクタ。
@@ -52,6 +59,9 @@ const SELECTORS = {
   aiThresholdValue: '#ai-threshold-value',
   aiMinProse: '#ai-min-prose',
   aiMinProsePresets: 'button[data-min-prose]',
+  aiAgreementSummary: '#ai-agreement-summary',
+  aiAgreementRows: '#ai-agreement-rows',
+  aiAgreementLegacy: '#ai-agreement-legacy',
 } as const;
 
 /**
@@ -249,10 +259,11 @@ function attachListeners(): void {
  * どちらも `storage.local` で、判定の閾値（sync）とは置き場が違う。
  */
 async function renderPrefs(): Promise<void> {
-  const [muteOnValid, foldTarget, aiHintPrefs] = await Promise.all([
+  const [muteOnValid, foldTarget, aiHintPrefs, aiVerdicts] = await Promise.all([
     getMuteOnValid(),
     getFoldTarget(),
     getAiHintPrefs(),
+    getAiVerdicts(),
   ]);
 
   const toggle = find<HTMLInputElement>(SELECTORS.muteOnValid);
@@ -264,6 +275,66 @@ async function renderPrefs(): Promise<void> {
   }
 
   renderAiHintPrefs(aiHintPrefs);
+  currentAiVerdicts = aiVerdicts;
+  renderAgreement(aiHintPrefs.threshold);
+}
+
+/** 「そうかも / 違うかも」の回答。線引きを動かしたときに読み直さずに数え直すため持つ */
+let currentAiVerdicts: AiVerdictLog = {};
+
+/**
+ * 一致率を映す（M3）。いまの線引きの 1 文、1〜8 点の表、旧形式の注記。
+ *
+ * threshold は**画面に出ている線引き**。スライダーを動かしている途中でも追従させる
+ * （保存を待つと、動かした結果がすぐに見えない）。
+ */
+function renderAgreement(threshold: number): void {
+  const summary = find(SELECTORS.aiAgreementSummary);
+  if (summary)
+    summary.textContent = describeAgreementSummary(agreementAt(currentAiVerdicts, threshold));
+
+  const body = find(SELECTORS.aiAgreementRows);
+  if (body) {
+    body.replaceChildren(
+      ...agreementByThreshold(currentAiVerdicts).map((row) => {
+        const tr = document.createElement('tr');
+        // いまの線引きの行は aria-current で示す（色だけで伝えない）
+        if (row.threshold === threshold) tr.setAttribute('aria-current', 'true');
+        const head = document.createElement('th');
+        head.scope = 'row';
+        head.textContent = `${String(row.threshold)} 点以上`;
+        const cell = document.createElement('td');
+        cell.textContent = describeAgreementCell(row);
+        tr.append(head, cell);
+        return tr;
+      }),
+    );
+  }
+
+  const legacy = find(SELECTORS.aiAgreementLegacy);
+  if (legacy) {
+    const text = describeLegacy(countLegacyAnswers(currentAiVerdicts));
+    legacy.hidden = text === null;
+    legacy.textContent = text ?? '';
+  }
+}
+
+/**
+ * トレンドで答えたら描き直す。設定画面を開いたまま答えても数字が古くならないように。
+ * 読めなくても debug 止まり（表示が古いだけで、拡張が壊れているわけではない）
+ */
+function watchAiVerdicts(): void {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !('aiVerdicts' in changes)) return;
+    getAiVerdicts()
+      .then((log) => {
+        currentAiVerdicts = log;
+        renderAgreement(currentAiHintPrefs.threshold);
+      })
+      .catch((error: unknown) => {
+        logger.debug('failed to reload ai verdicts:', error);
+      });
+  });
 }
 
 /**
@@ -372,12 +443,15 @@ function attachAiHintListeners(): void {
     threshold.max = String(AI_HINT_THRESHOLD_RANGE.max);
     threshold.addEventListener('input', () => {
       const value = readInt(threshold, AI_HINT_THRESHOLD_RANGE);
-      if (value !== null) renderAiThresholdValue(value);
+      if (value === null) return;
+      renderAiThresholdValue(value);
+      renderAgreement(value);
     });
     threshold.addEventListener('change', () => {
       const value = readInt(threshold, AI_HINT_THRESHOLD_RANGE);
       if (value === null) return;
       renderAiThresholdValue(value);
+      renderAgreement(value);
       saveAiHint({ threshold: value });
     });
   }
@@ -443,9 +517,11 @@ function attachPrefListeners(): void {
 export async function init(): Promise<void> {
   setBusy(false);
   currentAiHintPrefs = { ...DEFAULT_AI_HINT_PREFS };
+  currentAiVerdicts = {};
   attachListeners();
   attachPrefListeners();
   attachAiHintListeners();
+  watchAiVerdicts();
   try {
     render(await loadState());
   } catch (error) {

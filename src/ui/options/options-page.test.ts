@@ -73,6 +73,9 @@ function setupDom(): void {
           <input type="number" id="ai-min-prose" min="0" max="2000" step="1" placeholder="自由入力" />
         </div>
       </div>
+      <p id="ai-agreement-summary"></p>
+      <table><tbody id="ai-agreement-rows"></tbody></table>
+      <p id="ai-agreement-legacy" hidden></p>
     </section>`;
 }
 
@@ -836,6 +839,115 @@ describe('「AI文体かも？」の線引き', () => {
         aiHintPrefs: { threshold: 6, minProseChars: 334 },
       });
     });
+  });
+});
+
+/** M3: 「そうかも / 違うかも」と目安の一致率 */
+describe('「AI文体かも？」の一致率', () => {
+  const at = '2026-10-24T00:00:00.000Z';
+
+  /** 合成の回答。記事 ID は連番 */
+  function answersOf(...entries: ['yes' | 'no', number | null][]): Record<string, unknown> {
+    return Object.fromEntries(
+      entries.map(([verdict, score], index) => [
+        `item-${String(index)}`,
+        score === null ? verdict : { verdict, score, answeredAt: at },
+      ]),
+    );
+  }
+
+  function rows(): HTMLTableRowElement[] {
+    return [...document.querySelectorAll<HTMLTableRowElement>('#ai-agreement-rows tr')];
+  }
+
+  function currentRow(): HTMLTableRowElement | undefined {
+    return rows().find((row) => row.getAttribute('aria-current') === 'true');
+  }
+
+  function storageListener() {
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const listener = vi.mocked(chrome.storage.onChanged.addListener).mock.calls.at(-1)?.[0];
+    if (!listener) throw new Error('storage listener not registered');
+    return listener;
+  }
+
+  it('回答が無ければ、答え方を案内する', async () => {
+    await init();
+    expect(el('#ai-agreement-summary').textContent).toContain('まだ回答がありません');
+  });
+
+  it('いまの線引きでの一致率を出す', async () => {
+    // Arrange — 線引き 5: 6 点「そうかも」= 一致、2 点「そうかも」= 不一致
+    await chrome.storage.local.set({ aiVerdicts: answersOf(['yes', 6], ['yes', 2]) });
+    // Act
+    await init();
+    // Assert
+    expect(el('#ai-agreement-summary').textContent).toBe(
+      'いまの線引き（5 点以上）: 2 件中 1 件が一致（50%）。あと 28 件で判定します。',
+    );
+  });
+
+  it('1〜8 点それぞれの一致率を表にし、いまの線引きの行を示す', async () => {
+    // Arrange
+    await chrome.storage.local.set({
+      aiVerdicts: answersOf(['yes', 6], ['yes', 2]),
+      aiHintPrefs: { threshold: 2, minProseChars: 334 },
+    });
+    // Act
+    await init();
+    // Assert
+    expect(rows()).toHaveLength(AI_SIGNALS.length);
+    expect(rows()[0]?.textContent).toContain('1 点以上');
+    // 線引き 2 なら両方とも強調 → 両方「そうかも」なので 100%
+    expect(currentRow()?.textContent).toContain('2 点以上');
+    expect(currentRow()?.textContent).toContain('100%（2 / 2）');
+  });
+
+  it('スライダーを動かすと、保存を待たずに一致率と表の印が追従する', async () => {
+    // Arrange
+    await chrome.storage.local.set({ aiVerdicts: answersOf(['yes', 6], ['yes', 2]) });
+    await init();
+    const slider = el<HTMLInputElement>('#ai-threshold');
+    // Act
+    slider.value = '2';
+    slider.dispatchEvent(new Event('input'));
+    // Assert
+    expect(el('#ai-agreement-summary').textContent).toContain(
+      'いまの線引き（2 点以上）: 2 件中 2 件',
+    );
+    expect(currentRow()?.textContent).toContain('2 点以上');
+  });
+
+  it('トレンドで答えると（storage が変わると）描き直す', async () => {
+    // Arrange
+    await init();
+    // Act
+    await chrome.storage.local.set({ aiVerdicts: answersOf(['no', 1]) });
+    storageListener()({ aiVerdicts: { newValue: {} } }, 'local');
+    // Assert
+    await vi.waitFor(() => {
+      expect(el('#ai-agreement-summary').textContent).toContain('1 件中 1 件が一致');
+    });
+  });
+
+  it('旧形式の回答は集計に入れず、件数だけ注記する', async () => {
+    // Arrange
+    await chrome.storage.local.set({
+      aiVerdicts: answersOf(['yes', null], ['no', null], ['no', 1]),
+    });
+    // Act
+    await init();
+    // Assert
+    expect(el('#ai-agreement-summary').textContent).toContain('1 件中 1 件');
+    const legacy = el('#ai-agreement-legacy');
+    expect(legacy.hidden).toBe(false);
+    expect(legacy.textContent).toContain('2 件');
+  });
+
+  it('旧形式が無ければ注記を隠す', async () => {
+    await chrome.storage.local.set({ aiVerdicts: answersOf(['no', 1]) });
+    await init();
+    expect(el('#ai-agreement-legacy').hidden).toBe(true);
   });
 });
 

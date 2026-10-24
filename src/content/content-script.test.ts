@@ -486,7 +486,7 @@ describe('content script のミュート受信', () => {
   });
 });
 
-/** 「AIかも？」の表示。合成のスコアを storage に置いてから起動する */
+/** 「AI文体かも？」の表示。合成のスコアを storage に置いてから起動する */
 describe('content script の AI ヒント', () => {
   const ITEM_1 = '0123456789abcdef0001';
   const hint = { fired: [], proseChars: 500, scoredAt: '2026-10-24T00:00:00.000Z' };
@@ -495,7 +495,7 @@ describe('content script の AI ヒント', () => {
     return document.querySelector<HTMLElement>(`[data-qtg-ai-hint="${itemId}"]`);
   }
 
-  function answer(itemId: string, label: '当たり' | '外れ'): void {
+  function answer(itemId: string, label: 'そうかも' | '違うかも'): void {
     const button = [...(hintOn(itemId)?.querySelectorAll('button') ?? [])].find(
       (element) => element.textContent === label,
     );
@@ -533,7 +533,7 @@ describe('content script の AI ヒント', () => {
     expect(hintOn(ITEM_1)).toBeNull();
   });
 
-  it('当たり / 外れを押すと記事ごとに保存する', async () => {
+  it('そうかも / 違うかもを押すと、回答時の点数と時刻を付けて記事ごとに保存する', async () => {
     // Arrange
     document.body.innerHTML = card(1);
     await saveToken('dummy-token-value');
@@ -543,10 +543,35 @@ describe('content script の AI ヒント', () => {
       expect(hintOn(ITEM_1)).not.toBeNull();
     });
     // Act
-    answer(ITEM_1, '当たり');
+    answer(ITEM_1, 'そうかも');
     // Assert
     await vi.waitFor(async () => {
-      expect(await getAiVerdicts()).toEqual({ [ITEM_1]: 'yes' });
+      const saved = (await getAiVerdicts())[ITEM_1];
+      expect(saved?.verdict).toBe('yes');
+      expect(saved?.score).toBe(hint.fired.length);
+      expect(Number.isNaN(Date.parse(saved?.answeredAt ?? ''))).toBe(false);
+    });
+  });
+
+  it('回答済みの側をもう一度押すと、回答を消して初期状態に戻す', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    await saveAiVerdict(ITEM_1, {
+      verdict: 'yes',
+      score: 0,
+      answeredAt: '2026-10-24T00:00:00.000Z',
+    });
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)).not.toBeNull();
+    });
+    // Act
+    answer(ITEM_1, 'そうかも');
+    // Assert
+    await vi.waitFor(async () => {
+      expect(await getAiVerdicts()).toEqual({});
     });
   });
 
@@ -572,12 +597,13 @@ describe('content script の AI ヒント', () => {
     await saveAiHints({ [ITEM_1]: hint });
     await bootContentScript();
     // Act
-    await saveAiVerdict(ITEM_1, 'no');
-    storageListener()({ aiVerdicts: { newValue: { [ITEM_1]: 'no' } } }, 'local');
+    const no = { verdict: 'no', score: 0, answeredAt: '2026-10-24T00:00:00.000Z' } as const;
+    await saveAiVerdict(ITEM_1, no);
+    storageListener()({ aiVerdicts: { newValue: { [ITEM_1]: no } } }, 'local');
     // Assert
     await vi.waitFor(() => {
       const no = [...(hintOn(ITEM_1)?.querySelectorAll('button') ?? [])].find(
-        (element) => element.textContent === '外れ',
+        (element) => element.textContent === '違うかも',
       );
       expect(no?.getAttribute('aria-pressed')).toBe('true');
     });
@@ -720,8 +746,9 @@ describe('content script の AI ヒントの監視', () => {
       expect(observeSpy).toHaveBeenCalledTimes(1);
     });
     // 描き直しが走っても 2 本目は作らない
-    await saveAiVerdict(ITEM_1, 'yes');
-    storageListener()({ aiVerdicts: { newValue: { [ITEM_1]: 'yes' } } }, 'local');
+    const yes = { verdict: 'yes', score: 0, answeredAt: '2026-10-24T00:00:00.000Z' } as const;
+    await saveAiVerdict(ITEM_1, yes);
+    storageListener()({ aiVerdicts: { newValue: { [ITEM_1]: yes } } }, 'local');
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(observeSpy).toHaveBeenCalledTimes(1);
     observeSpy.mockRestore();
