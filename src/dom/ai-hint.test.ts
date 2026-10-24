@@ -25,7 +25,12 @@ function hint(score: number, proseChars = 1000): AiHint {
 
 /** 合成の回答（M3 の形式） */
 function answerOf(verdict: AiVerdict, score: number | null = 5): AiAnswer {
-  return { verdict, score, answeredAt: score === null ? null : '2026-10-24T00:00:00.000Z' };
+  return {
+    verdict,
+    score,
+    fired: null,
+    answeredAt: score === null ? null : '2026-10-24T00:00:00.000Z',
+  };
 }
 
 function hintsOn(n: number): HTMLElement | null {
@@ -108,7 +113,7 @@ describe('renderAiHints', () => {
     // Act
     buttonOf(1, '違うかも')?.dispatchEvent(event);
     // Assert
-    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'no', 5);
+    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'no', AI_SIGNALS.slice(0, 5));
     expect(event.defaultPrevented).toBe(true);
   });
 
@@ -135,7 +140,7 @@ describe('renderAiHints', () => {
     // Act
     buttonOf(1, 'そうかも')?.click();
     // Assert
-    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'yes', 3);
+    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'yes', AI_SIGNALS.slice(0, 3));
   });
 
   it('M3 より前の旧形式の回答でも ✓ を出す', () => {
@@ -202,7 +207,7 @@ describe('renderAiHints', () => {
     // Act
     buttonOf(1, 'そうかも')?.click();
     // Assert
-    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), null, 4);
+    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), null, AI_SIGNALS.slice(0, 4));
   });
 
   it('回答済みでも、反対側を押せば答えを変える', () => {
@@ -210,7 +215,7 @@ describe('renderAiHints', () => {
     const onAnswer = vi.fn();
     renderAiHints({ [itemIdOf(1)]: hint(4) }, { [itemIdOf(1)]: answerOf('yes') }, onAnswer);
     buttonOf(1, '違うかも')?.click();
-    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'no', 4);
+    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'no', AI_SIGNALS.slice(0, 4));
   });
 
   it('描き直しても二重にしない', () => {

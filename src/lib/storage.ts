@@ -15,6 +15,7 @@ import {
   AI_HINT_MIN_PROSE_RANGE,
   AI_HINT_SCORE_RANGE,
   AI_HINT_THRESHOLD_RANGE,
+  AI_SIGNALS,
   DEFAULT_AI_HINT_PREFS,
   DEFAULT_SETTINGS,
   isAiSignal,
@@ -28,6 +29,7 @@ import type {
   AiHint,
   AiHintPrefs,
   AiHintLog,
+  AiSignal,
   AiVerdict,
   AiVerdictLog,
   ItemId,
@@ -440,19 +442,37 @@ function isAiVerdict(value: unknown): value is AiVerdict {
  * 1 件分の回答を検証する。形が崩れていれば null。
  *
  * **M3 より前の旧形式（`'yes' | 'no'` だけ）も読む。**点数が残っていないので
- * score / answeredAt は null にする。消すと利用者が積み上げた回答が失われる。
+ * score / fired / answeredAt は null にする。消すと利用者が積み上げた回答が失われる。
+ *
+ * fired（立っていたシグナル）が無いのは、それを残す前の回答。null として読む
+ * （一致率には点数だけで入る）。知らないシグナルは捨てる。
  */
+/**
+ * 回答時に立っていたシグナルを読む。配列でなければ null（残す前の回答）。
+ *
+ * 知らないシグナルを捨て、**重複を 1 つにし、AI_SIGNALS の順に並べ直す。**
+ * 壊れたデータで重複があると、指標ごとの分析で件数がずれる。
+ * 点数（score）は書き換えない — 一致率は点数を正とする
+ */
+function asFiredSignals(value: unknown): AiSignal[] | null {
+  if (!Array.isArray(value)) return null;
+  const raised = new Set(value.filter(isAiSignal));
+  return AI_SIGNALS.filter((signal) => raised.has(signal));
+}
+
 function asAiAnswer(value: unknown): AiAnswer | null {
-  if (isAiVerdict(value)) return { verdict: value, score: null, answeredAt: null };
+  if (isAiVerdict(value)) return { verdict: value, score: null, fired: null, answeredAt: null };
   if (typeof value !== 'object' || value === null) return null;
   const candidate = value as Partial<Record<keyof AiAnswer, unknown>>;
   const { verdict, score, answeredAt } = candidate;
   if (!isAiVerdict(verdict)) return null;
-  if (score === null && answeredAt === null) return { verdict, score, answeredAt };
+  if (score === null && answeredAt === null) {
+    return { verdict, score, fired: null, answeredAt };
+  }
   const at = asNonEmptyString(answeredAt);
   // 点数はシグナルの数（0〜8）を超えない。範囲外を通すと一致率の計算に紛れ込む
   if (at === null || !isIntInRange(score, AI_HINT_SCORE_RANGE)) return null;
-  return { verdict, score, answeredAt: at };
+  return { verdict, score, fired: asFiredSignals(candidate.fired), answeredAt: at };
 }
 
 /** 「AI文体かも？」への回答。1 件だけ壊れていても全体を捨てない（getFeedback と同じ扱い） */

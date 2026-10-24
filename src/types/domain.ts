@@ -525,6 +525,14 @@ export interface AiAnswer {
    * 当時のボタンは「Yes / No」「当たり / 外れ」で意味が今と違いうるので、一致率には入れない
    */
   score: number | null;
+  /**
+   * 回答時に立っていたシグナル（AI_SIGNALS の順）。**指標の見直しのために残す。**
+   *
+   * スコア（aiHints）は 7 日で消えるので、一致率が目標に届かなかったときに
+   * 「どの指標が外れていたか」を回答から辿れるようにする（仮説の検証・利用者確定）。
+   * null は、これを残す前の回答（M3 の初版と旧形式）。一致率の計算には使わない
+   */
+  fired: AiSignal[] | null;
   /** 回答した時刻。旧形式は null */
   answeredAt: IsoDateTime | null;
 }

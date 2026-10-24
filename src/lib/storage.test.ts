@@ -28,7 +28,7 @@ import {
   saveAuthorVisits,
 } from './storage';
 import { DEFAULT_SETTINGS } from '../types/domain';
-import type { Candidate, LikeIndex, ScanResult } from '../types/domain';
+import type { AiAnswer, Candidate, LikeIndex, ScanResult } from '../types/domain';
 
 describe('getToken', () => {
   it('未設定なら null を返す', async () => {
@@ -874,8 +874,13 @@ describe('getAiHints / saveAiHints', () => {
 
 describe('getAiVerdicts / saveAiVerdict', () => {
   const at = '2026-10-24T00:00:00.000Z';
-  const yes = { verdict: 'yes', score: 6, answeredAt: at } as const;
-  const no = { verdict: 'no', score: 2, answeredAt: at } as const;
+  const yes: AiAnswer = {
+    verdict: 'yes',
+    score: 2,
+    fired: ['dash', 'risingWords'],
+    answeredAt: at,
+  };
+  const no: AiAnswer = { verdict: 'no', score: 1, fired: ['longProse'], answeredAt: at };
 
   it('未保存なら空を返す', async () => {
     expect(await storage.getAiVerdicts()).toEqual({});
@@ -913,8 +918,8 @@ describe('getAiVerdicts / saveAiVerdict', () => {
     await chrome.storage.local.set({ aiVerdicts: { 'item-a': 'yes', 'item-b': 'no' } });
     // Act & Assert — 消さずに残す。点数が null なので一致率には入らない
     expect(await storage.getAiVerdicts()).toEqual({
-      'item-a': { verdict: 'yes', score: null, answeredAt: null },
-      'item-b': { verdict: 'no', score: null, answeredAt: null },
+      'item-a': { verdict: 'yes', score: null, fired: null, answeredAt: null },
+      'item-b': { verdict: 'no', score: null, fired: null, answeredAt: null },
     });
   });
 
@@ -922,9 +927,48 @@ describe('getAiVerdicts / saveAiVerdict', () => {
     await chrome.storage.local.set({ aiVerdicts: { 'item-a': 'yes' } });
     await storage.saveAiVerdict('item-b', no);
     expect(await storage.getAiVerdicts()).toEqual({
-      'item-a': { verdict: 'yes', score: null, answeredAt: null },
+      'item-a': { verdict: 'yes', score: null, fired: null, answeredAt: null },
       'item-b': no,
     });
+  });
+
+  it('指標の一覧を残す前（M3 初版）の回答は、fired を null として読む', async () => {
+    // Arrange — 点数と時刻はあるが fired が無い
+    await chrome.storage.local.set({
+      aiVerdicts: { 'item-a': { verdict: 'yes', score: 6, answeredAt: at } },
+    });
+    // Act & Assert — 一致率には入る（点数がある）。指標の分析には使えない
+    expect(await storage.getAiVerdicts()).toEqual({
+      'item-a': { verdict: 'yes', score: 6, fired: null, answeredAt: at },
+    });
+  });
+
+  it('fired の知らないシグナルは捨て、残りを読む', async () => {
+    await chrome.storage.local.set({
+      aiVerdicts: {
+        'item-a': { verdict: 'yes', score: 2, fired: ['dash', 'unknown'], answeredAt: at },
+      },
+    });
+    expect((await storage.getAiVerdicts())['item-a']?.fired).toEqual(['dash']);
+  });
+
+  it('fired の重複は 1 つにし、AI_SIGNALS の順に並べ直す（点数は書き換えない）', async () => {
+    // Arrange — 壊れたデータ。重複があると、指標ごとの分析で件数がずれる（PR #23 レビュー LOW）
+    await chrome.storage.local.set({
+      aiVerdicts: {
+        'item-a': {
+          verdict: 'yes',
+          score: 2,
+          fired: ['risingWords', 'dash', 'dash'],
+          answeredAt: at,
+        },
+      },
+    });
+    // Act
+    const answer = (await storage.getAiVerdicts())['item-a'];
+    // Assert
+    expect(answer?.fired).toEqual(['dash', 'risingWords']);
+    expect(answer?.score).toBe(2);
   });
 
   it('壊れた回答だけ落とし、他の回答は残す', async () => {

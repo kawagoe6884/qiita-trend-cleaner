@@ -8,6 +8,7 @@ import {
   getAiVerdicts,
 } from '../lib/storage';
 import { SELECTORS, MENU_TEXT, SNACKBAR_TEXT } from '../dom/selectors';
+import type { AiAnswer, AiHint } from '../types/domain';
 
 /** chrome は setup.ts が各テストの前に用意する。トップレベルではまだ未定義 */
 function sendMessageMock() {
@@ -489,7 +490,11 @@ describe('content script のミュート受信', () => {
 /** 「AI文体かも？」の表示。合成のスコアを storage に置いてから起動する */
 describe('content script の AI ヒント', () => {
   const ITEM_1 = '0123456789abcdef0001';
-  const hint = { fired: [], proseChars: 500, scoredAt: '2026-10-24T00:00:00.000Z' };
+  const hint: AiHint = {
+    fired: ['dash', 'risingWords'],
+    proseChars: 500,
+    scoredAt: '2026-10-24T00:00:00.000Z',
+  };
 
   function hintOn(itemId: string): HTMLElement | null {
     return document.querySelector<HTMLElement>(`[data-qtg-ai-hint="${itemId}"]`);
@@ -549,6 +554,8 @@ describe('content script の AI ヒント', () => {
       const saved = (await getAiVerdicts())[ITEM_1];
       expect(saved?.verdict).toBe('yes');
       expect(saved?.score).toBe(hint.fired.length);
+      // 指標の見直しに使うので、回答時に立っていたシグナルも残す
+      expect(saved?.fired).toEqual(hint.fired);
       expect(Number.isNaN(Date.parse(saved?.answeredAt ?? ''))).toBe(false);
     });
   });
@@ -561,6 +568,7 @@ describe('content script の AI ヒント', () => {
     await saveAiVerdict(ITEM_1, {
       verdict: 'yes',
       score: 0,
+      fired: [],
       answeredAt: '2026-10-24T00:00:00.000Z',
     });
     await bootContentScript();
@@ -599,7 +607,12 @@ describe('content script の AI ヒント', () => {
     await saveAiHints({ [ITEM_1]: hint });
     await bootContentScript();
     // Act
-    const no = { verdict: 'no', score: 0, answeredAt: '2026-10-24T00:00:00.000Z' } as const;
+    const no: AiAnswer = {
+      verdict: 'no',
+      score: 0,
+      fired: [],
+      answeredAt: '2026-10-24T00:00:00.000Z',
+    };
     await saveAiVerdict(ITEM_1, no);
     storageListener()({ aiVerdicts: { newValue: { [ITEM_1]: no } } }, 'local');
     // Assert
@@ -748,7 +761,12 @@ describe('content script の AI ヒントの監視', () => {
       expect(observeSpy).toHaveBeenCalledTimes(1);
     });
     // 描き直しが走っても 2 本目は作らない
-    const yes = { verdict: 'yes', score: 0, answeredAt: '2026-10-24T00:00:00.000Z' } as const;
+    const yes: AiAnswer = {
+      verdict: 'yes',
+      score: 0,
+      fired: [],
+      answeredAt: '2026-10-24T00:00:00.000Z',
+    };
     await saveAiVerdict(ITEM_1, yes);
     storageListener()({ aiVerdicts: { newValue: { [ITEM_1]: yes } } }, 'local');
     await new Promise((resolve) => setTimeout(resolve, 50));
