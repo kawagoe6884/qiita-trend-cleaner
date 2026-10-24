@@ -278,6 +278,32 @@
           margin-bottom: 8px;
         }
       }
+      /* 一致率の表（M3）。いまの線引きの行は aria-current で太字にする（色だけに頼らない） */
+      table.ai-agreement {
+        border-collapse: collapse;
+        font-size: 0.9rem;
+        font-variant-numeric: tabular-nums;
+        margin: 4px 0 8px;
+      }
+      table.ai-agreement caption {
+        caption-side: top;
+        text-align: left;
+        font-size: 0.85rem;
+        margin-bottom: 4px;
+      }
+      table.ai-agreement th,
+      table.ai-agreement td {
+        padding: 2px 16px 2px 0;
+        text-align: left;
+        font-weight: 400;
+      }
+      table.ai-agreement tr[aria-current='true'] th,
+      table.ai-agreement tr[aria-current='true'] td {
+        font-weight: 700;
+      }
+      table.ai-agreement tr[aria-current='true'] th::before {
+        content: '▶ ';
+      }
     </style>
   </head>
   <body>
@@ -537,6 +563,27 @@
         既定は 5 点 / 334 字です。0 字にすると注釈を出しません。2000 字を超える数は 2000
         字にします。コードを除いた地の文の字数で数えます。
       </p>
+
+      <h2 style="margin-top: 24px">あなたの答えとの一致率</h2>
+      <p class="hint">
+        トレンドの「AI文体かも？」にマウスを乗せて「そうかも / 違うかも」を押すと数えます。<br />
+        強調された記事に「そうかも」、強調されなかった記事に「違うかも」と答えたら一致です。30
+        件たまったら、目標の 70% に届いたかを判定します。
+      </p>
+      <p id="ai-agreement-summary" role="status" aria-live="polite"></p>
+      <table class="ai-agreement">
+        <caption>
+          その点数以上を強調していたら、あなたの答えとどれだけ合っていたか
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">線引き</th>
+            <th scope="col">一致率</th>
+          </tr>
+        </thead>
+        <tbody id="ai-agreement-rows"></tbody>
+      </table>
+      <p id="ai-agreement-legacy" class="hint" hidden></p>
     </section>
 
     <script type="module" src="./main.ts"></script>

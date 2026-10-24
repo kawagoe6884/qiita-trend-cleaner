@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderAiHints, clearAiHints, describeAiHint, isOwnMutation } from './ai-hint';
 import { AI_HINT_STYLE_ID } from './selectors';
 import { AI_HINT_DEFAULT_THRESHOLD, AI_HINT_MIN_PROSE_CHARS, AI_SIGNALS } from '../types/domain';
-import type { AiHint, AiHintLog, AiVerdictLog } from '../types/domain';
+import type { AiAnswer, AiHint, AiHintLog, AiVerdict, AiVerdictLog } from '../types/domain';
 
 /** hider.test.ts と同じ骨格。実測どおり記事リンクを 2 本持たせる。合成値のみ */
 function card(n: number): string {
@@ -23,11 +23,16 @@ function hint(score: number, proseChars = 1000): AiHint {
   };
 }
 
+/** 合成の回答（M3 の形式） */
+function answerOf(verdict: AiVerdict, score: number | null = 5): AiAnswer {
+  return { verdict, score, answeredAt: score === null ? null : '2026-10-24T00:00:00.000Z' };
+}
+
 function hintsOn(n: number): HTMLElement | null {
   return document.querySelector<HTMLElement>(`[data-qtg-ai-hint="${itemIdOf(n)}"]`);
 }
 
-function buttonOf(n: number, label: '当たり' | '外れ'): HTMLButtonElement | undefined {
+function buttonOf(n: number, label: 'そうかも' | '違うかも'): HTMLButtonElement | undefined {
   return [...(hintsOn(n)?.querySelectorAll('button') ?? [])].find(
     (button) => button.textContent === label,
   );
@@ -48,8 +53,8 @@ describe('renderAiHints', () => {
     expect(rendered).toBe(2);
     for (const n of [1, 2]) {
       expect(hintsOn(n)?.textContent).toContain('AI文体かも？');
-      expect(buttonOf(n, '当たり')).toBeDefined();
-      expect(buttonOf(n, '外れ')).toBeDefined();
+      expect(buttonOf(n, 'そうかも')).toBeDefined();
+      expect(buttonOf(n, '違うかも')).toBeDefined();
     }
   });
 
@@ -101,18 +106,111 @@ describe('renderAiHints', () => {
     renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, onAnswer);
     const event = new MouseEvent('click', { bubbles: true, cancelable: true });
     // Act
-    buttonOf(1, '外れ')?.dispatchEvent(event);
+    buttonOf(1, '違うかも')?.dispatchEvent(event);
     // Assert
-    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'no');
+    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'no', 5);
     expect(event.defaultPrevented).toBe(true);
   });
 
   it('回答済みの側を aria-pressed で示す', () => {
     document.body.innerHTML = card(1);
-    const verdicts: AiVerdictLog = { [itemIdOf(1)]: 'yes' };
+    const verdicts: AiVerdictLog = { [itemIdOf(1)]: answerOf('yes') };
     renderAiHints({ [itemIdOf(1)]: hint(5) }, verdicts, vi.fn());
-    expect(buttonOf(1, '当たり')?.getAttribute('aria-pressed')).toBe('true');
-    expect(buttonOf(1, '外れ')?.getAttribute('aria-pressed')).toBe('false');
+    expect(buttonOf(1, 'そうかも')?.getAttribute('aria-pressed')).toBe('true');
+    expect(buttonOf(1, '違うかも')?.getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('ボタンは「そうかも / 違うかも」（判定口調にしない）', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
+    const labels = [...(hintsOn(1)?.querySelectorAll('button') ?? [])].map((b) => b.textContent);
+    expect(labels).toEqual(['そうかも', '違うかも']);
+  });
+
+  it('押したときに回答時の点数を渡す（線引きを動かしても一致率を数え直せる）', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    const onAnswer = vi.fn();
+    renderAiHints({ [itemIdOf(1)]: hint(3) }, {}, onAnswer);
+    // Act
+    buttonOf(1, 'そうかも')?.click();
+    // Assert
+    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'yes', 3);
+  });
+
+  it('M3 より前の旧形式の回答でも ✓ を出す', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, { [itemIdOf(1)]: answerOf('yes', null) }, vi.fn());
+    expect(hintsOn(1)?.querySelector('.qtg-ai-done')?.textContent).toBe('✓');
+    expect(buttonOf(1, 'そうかも')?.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('回答ボタンはラベルの左に置く（右端のラベルは動かず、乗せた位置で誤って押さない）', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    // Act
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
+    // Assert
+    const row = hintsOn(1)?.firstElementChild;
+    expect(row?.firstElementChild?.classList.contains('qtg-ai-answers')).toBe(true);
+    expect(row?.lastElementChild?.textContent).toBe('AI文体かも？');
+  });
+
+  it('回答ボタンは左へすべり出す（動きを減らす設定では動かさない）', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
+    const css = document.getElementById(AI_HINT_STYLE_ID)?.textContent ?? '';
+    expect(css).toContain('@keyframes');
+    expect(css).toContain('translateX');
+    expect(css).toContain('prefers-reduced-motion');
+  });
+
+  it('強調しない記事は普段は見せず、カードに乗せた時だけ出す（機能はそのまま）', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    // Act
+    renderAiHints({ [itemIdOf(1)]: hint(1) }, {}, vi.fn());
+    // Assert — :hover は jsdom で再現できないので、規則と目印を確かめる
+    const element = hintsOn(1);
+    expect(element).not.toBeNull();
+    expect(element?.style.opacity).toBe('');
+    expect(document.querySelector<HTMLElement>('.card')?.dataset.qtgAiCard).toBe('true');
+    const css = document.getElementById(AI_HINT_STYLE_ID)?.textContent ?? '';
+    expect(css).toMatch(/\[data-qtg-ai-likely="false"\]\s*\{[^}]*opacity:\s*0;/);
+    expect(css).toContain('[data-qtg-ai-card]:hover');
+    expect(buttonOf(1, 'そうかも')).toBeDefined();
+  });
+
+  it('見えていない間は Tab で止まらず、読み上げにも出ない（visibility: hidden）', () => {
+    // Arrange — opacity: 0 だけだと、見えない要素に Tab で止まり、読み上げられる（コードレビュー LOW）
+    document.body.innerHTML = card(1);
+    // Act
+    renderAiHints({ [itemIdOf(1)]: hint(1) }, {}, vi.fn());
+    // Assert
+    const css = document.getElementById(AI_HINT_STYLE_ID)?.textContent ?? '';
+    expect(css).toMatch(/\[data-qtg-ai-likely="false"\]\s*\{[^}]*visibility:\s*hidden;/);
+    // キーボードでカードの中（記事リンクなど）に入ったら見せる。そこから Tab で表示に進める
+    expect(css).toContain('[data-qtg-ai-card]:focus-within');
+    expect(css).toMatch(/\{[^}]*visibility:\s*visible;/);
+  });
+
+  it('回答済みの側をもう一度押すと、回答を取り消す（null を渡す）', () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    const onAnswer = vi.fn();
+    renderAiHints({ [itemIdOf(1)]: hint(4) }, { [itemIdOf(1)]: answerOf('yes') }, onAnswer);
+    // Act
+    buttonOf(1, 'そうかも')?.click();
+    // Assert
+    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), null, 4);
+  });
+
+  it('回答済みでも、反対側を押せば答えを変える', () => {
+    document.body.innerHTML = card(1);
+    const onAnswer = vi.fn();
+    renderAiHints({ [itemIdOf(1)]: hint(4) }, { [itemIdOf(1)]: answerOf('yes') }, onAnswer);
+    buttonOf(1, '違うかも')?.click();
+    expect(onAnswer).toHaveBeenCalledWith(itemIdOf(1), 'no', 4);
   });
 
   it('描き直しても二重にしない', () => {
@@ -121,10 +219,10 @@ describe('renderAiHints', () => {
     const hints: AiHintLog = { [itemIdOf(1)]: hint(5) };
     // Act
     renderAiHints(hints, {}, vi.fn());
-    renderAiHints(hints, { [itemIdOf(1)]: 'no' }, vi.fn());
+    renderAiHints(hints, { [itemIdOf(1)]: answerOf('no') }, vi.fn());
     // Assert
     expect(document.querySelectorAll('[data-qtg-ai-hint]')).toHaveLength(1);
-    expect(buttonOf(1, '外れ')?.getAttribute('aria-pressed')).toBe('true');
+    expect(buttonOf(1, '違うかも')?.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('カードの右上に重ねて置き、カードの高さを増やさない', () => {
@@ -155,7 +253,7 @@ describe('renderAiHints', () => {
     renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
     // Assert — :hover は jsdom で再現できないので、規則が入っていることを確かめる
     const answers = hintsOn(1)?.querySelector('.qtg-ai-answers');
-    expect(answers?.contains(buttonOf(1, '当たり') ?? null)).toBe(true);
+    expect(answers?.contains(buttonOf(1, 'そうかも') ?? null)).toBe(true);
     const css = document.getElementById(AI_HINT_STYLE_ID)?.textContent ?? '';
     expect(css).toMatch(/\.qtg-ai-answers\s*\{[^}]*display:\s*none/);
     expect(css).toContain(':hover .qtg-ai-answers');
@@ -175,7 +273,7 @@ describe('renderAiHints', () => {
     document.body.innerHTML = card(1) + card(2);
     const hints: AiHintLog = { [itemIdOf(1)]: hint(5), [itemIdOf(2)]: hint(5) };
     // Act
-    renderAiHints(hints, { [itemIdOf(1)]: 'no' }, vi.fn());
+    renderAiHints(hints, { [itemIdOf(1)]: answerOf('no') }, vi.fn());
     // Assert
     expect(hintsOn(1)?.querySelector('.qtg-ai-done')?.textContent).toBe('✓');
     expect(hintsOn(2)?.querySelector('.qtg-ai-done')).toBeNull();
@@ -264,7 +362,7 @@ describe('isOwnMutation', () => {
     // Act
     const records = recordsOf(() => {
       renderAiHints(hints, {}, vi.fn());
-      renderAiHints(hints, { [itemIdOf(1)]: 'yes' }, vi.fn());
+      renderAiHints(hints, { [itemIdOf(1)]: answerOf('yes') }, vi.fn());
     });
     // Assert
     expect(records.length).toBeGreaterThan(0);
@@ -308,5 +406,12 @@ describe('clearAiHints', () => {
     renderAiHints({ [itemIdOf(1)]: hint(5) }, {}, vi.fn());
     clearAiHints();
     expect(document.getElementById(AI_HINT_STYLE_ID)).toBeNull();
+  });
+
+  it('カードに付けた目印も消す', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(1) }, {}, vi.fn());
+    clearAiHints();
+    expect(document.querySelector<HTMLElement>('.card')?.dataset.qtgAiCard).toBeUndefined();
   });
 });

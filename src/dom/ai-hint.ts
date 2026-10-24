@@ -12,9 +12,14 @@
  * 赤は使わない — hider の背景色と同じく、控えめな琥珀に留める。
  *
  * 【回答を急かさない】（2026-10-24 ユーザー確定）
- * 当たり / 外れのボタンが常に見えていると、押す義務があるように感じる。
+ * 回答のボタンが常に見えていると、押す義務があるように感じる。
  * ラベルに乗せた時（キーボードではフォーカスした時）だけ出し、回答済みの記事には
  * ✓ だけを残す。:hover はインラインの style で書けないので、規則を 1 つ head に入れる。
+ *
+ * 【M3 実機確認で決まったこと】（2026-10-24 ユーザー確定）
+ * - ボタンはラベルの**左へ**すべり出す（右に出すと、乗せた位置にボタンが来て誤って押した）
+ * - 強調しない記事は透明にし、**カードに乗せた時だけ**見せる。機能は残す（見逃しも測るため）
+ * - 回答済みの側をもう一度押すと、回答を取り消して初期状態に戻す
  *
  * 【Qiita の DOM に依存しない】
  * カードの特定は trend-reader に任せ、ここはカードの右上に 1 要素重ねるだけ。
@@ -25,6 +30,7 @@ import { readTrendCards } from './trend-reader';
 import { isAiLikely, isShortProse } from '../detect/ai-style';
 import { AI_SIGNALS, DEFAULT_AI_HINT_PREFS } from '../types/domain';
 import type {
+  AiAnswer,
   AiHint,
   AiHintLog,
   AiHintPrefs,
@@ -43,8 +49,11 @@ const AI_ANCHOR_ATTR_SELECTOR = '[data-qtg-ai-anchor="true"]';
 /** ラベルの文言 */
 const LABEL = 'AI文体かも？';
 
-/** 回答ボタンの文言。保存する値は yes / no のまま（一致率の入力を変えない） */
-const ANSWER_TEXT: Record<AiVerdict, string> = { yes: '当たり', no: '外れ' };
+/**
+ * 回答ボタンの文言。「AI文体かも？」への柔らかい答えにする（M3・利用者確定）。
+ * 「当たり / 外れ」は判定口調で角が立った。保存する値は yes / no のまま
+ */
+const ANSWER_TEXT: Record<AiVerdict, string> = { yes: 'そうかも', no: '違うかも' };
 
 /** 強調するときの背景。Qiita のライト / ダークの両方で読めるよう半透明にする */
 const LIKELY_BACKGROUND = 'rgba(255, 170, 0, 0.18)';
@@ -56,15 +65,50 @@ const SHORT_PROSE_NOTE = '（短文のため判定が甘い可能性あり）';
 const ANSWERS_CLASS = 'qtg-ai-answers';
 const DONE_CLASS = 'qtg-ai-done';
 
-/** ボタンを普段は隠し、乗せた時・フォーカスした時だけ出す規則 */
-const HOVER_RULES = [
+/** カードに付ける目印（dataset のキー名）。「カードに乗せた時」の規則から引く */
+const AI_CARD_MARKER = 'qtgAiCard';
+const AI_CARD_ATTR_SELECTOR = '[data-qtg-ai-card="true"]';
+
+/** 強調しない記事を、乗せた時に出す濃さ */
+const FADED_OPACITY = '0.55';
+
+/**
+ * :hover / :focus-within / アニメーションの規則。インラインの style では書けない。
+ *
+ * - 回答ボタンは普段は隠し、ラベルに乗せた時・フォーカスした時だけ左へすべり出す
+ * - 強調しない記事は隠し（Tab でも止まらない）、カードに乗せた時・カードの中にフォーカスがある時だけ見せる
+ * - 動きを減らす設定（prefers-reduced-motion）ではすべらせない
+ */
+const STYLE_RULES = [
   `${AI_HINT_ATTR_SELECTOR} .${ANSWERS_CLASS} { display: none; gap: 4px; }`,
   `${AI_HINT_ATTR_SELECTOR}:hover .${ANSWERS_CLASS},`,
-  `${AI_HINT_ATTR_SELECTOR}:focus-within .${ANSWERS_CLASS} { display: inline-flex; }`,
+  `${AI_HINT_ATTR_SELECTOR}:focus-within .${ANSWERS_CLASS} {`,
+  '  display: inline-flex; animation: qtg-ai-slide-in 150ms ease-out;',
+  '}',
+  '@keyframes qtg-ai-slide-in {',
+  '  from { opacity: 0; transform: translateX(8px); }',
+  '  to { opacity: 1; transform: translateX(0); }',
+  '}',
+  '@media (prefers-reduced-motion: reduce) {',
+  `  ${AI_HINT_ATTR_SELECTOR} .${ANSWERS_CLASS} { animation: none !important; }`,
+  '}',
+  // visibility も隠す。opacity だけだと、見えない要素に Tab で止まり、読み上げにも出る
+  `${AI_HINT_ATTR_SELECTOR}[data-qtg-ai-likely="false"] {`,
+  '  opacity: 0; visibility: hidden; transition: opacity 120ms, visibility 120ms;',
+  '}',
+  // カードの中にキーボードで入ったら（記事リンクなど）見せる。そこから Tab で表示に進める
+  `[data-qtg-ai-card]:hover ${AI_HINT_ATTR_SELECTOR}[data-qtg-ai-likely="false"],`,
+  `[data-qtg-ai-card]:focus-within ${AI_HINT_ATTR_SELECTOR}[data-qtg-ai-likely="false"] {`,
+  `  opacity: ${FADED_OPACITY}; visibility: visible;`,
+  '}',
 ].join('\n');
 
-/** 押したときに呼ばれる。保存は呼び出し側（content script）の責務 */
-export type AiAnswerHandler = (itemId: ItemId, verdict: AiVerdict) => void;
+/**
+ * 押したときに呼ばれる。保存は呼び出し側（content script）の責務。
+ * score は**回答した瞬間の点数**。線引きを動かしたあとでも一致率を数え直すために残す（M3）。
+ * verdict が null なら**取り消し**（回答済みの側をもう一度押した）
+ */
+export type AiAnswerHandler = (itemId: ItemId, verdict: AiVerdict | null, score: number) => void;
 
 /** title に出す説明。点数は「目安」であって判定ではないと書く */
 export function describeAiHint(hint: AiHint): string {
@@ -76,13 +120,14 @@ function ensureStyle(): void {
   if (document.getElementById(AI_HINT_STYLE_ID) !== null) return;
   const style = document.createElement('style');
   style.id = AI_HINT_STYLE_ID;
-  style.textContent = HOVER_RULES;
+  style.textContent = STYLE_RULES;
   document.head.append(style);
 }
 
 function answerButton(
   itemId: ItemId,
   verdict: AiVerdict,
+  score: number,
   pressed: boolean,
   onAnswer: AiAnswerHandler,
 ): HTMLButtonElement {
@@ -105,39 +150,45 @@ function answerButton(
     // カードがリンクの中にあっても記事へ飛ばない
     event.preventDefault();
     event.stopPropagation();
-    onAnswer(itemId, verdict);
+    // 回答済みの側をもう一度押したら取り消す
+    onAnswer(itemId, pressed ? null : verdict, score);
   });
   return button;
 }
 
-/** 1 行目: ラベル・回答済みの印・（乗せた時だけ）回答ボタン */
+/**
+ * 1 行目: （乗せた時だけ）回答ボタン・回答済みの印・ラベル。
+ * **ラベルを右端に置く。**表示は右上に固定しているので、ラベルの位置が動かず、
+ * ボタンはその左に出る（右に出すとラベルが左へずれ、乗せた位置にボタンが来て誤って押した）
+ */
 function labelRow(
   itemId: ItemId,
+  score: number,
   verdict: AiVerdict | undefined,
   onAnswer: AiAnswerHandler,
 ): HTMLElement {
   const row = document.createElement('div');
   row.style.cssText = ['display:flex', 'gap:6px', 'align-items:center'].join(';');
 
-  const label = document.createElement('span');
-  label.textContent = LABEL;
-  row.append(label);
+  const answers = document.createElement('span');
+  answers.className = ANSWERS_CLASS;
+  answers.append(
+    answerButton(itemId, 'yes', score, verdict === 'yes', onAnswer),
+    answerButton(itemId, 'no', score, verdict === 'no', onAnswer),
+  );
+  row.append(answers);
 
   if (verdict !== undefined) {
     const done = document.createElement('span');
     done.className = DONE_CLASS;
     done.textContent = '✓';
-    done.title = `回答済み: ${ANSWER_TEXT[verdict]}`;
+    done.title = `回答済み: ${ANSWER_TEXT[verdict]}（もう一度押すと取り消し）`;
     row.append(done);
   }
 
-  const answers = document.createElement('span');
-  answers.className = ANSWERS_CLASS;
-  answers.append(
-    answerButton(itemId, 'yes', verdict === 'yes', onAnswer),
-    answerButton(itemId, 'no', verdict === 'no', onAnswer),
-  );
-  row.append(answers);
+  const label = document.createElement('span');
+  label.textContent = LABEL;
+  row.append(label);
   return row;
 }
 
@@ -146,7 +197,7 @@ function fillHint(
   container: HTMLElement,
   itemId: ItemId,
   hint: AiHint,
-  verdict: AiVerdict | undefined,
+  answer: AiAnswer | undefined,
   onAnswer: AiAnswerHandler,
   prefs: AiHintPrefs,
 ): void {
@@ -171,11 +222,11 @@ function fillHint(
     'padding:1px 6px',
     'border-radius:4px',
     'font-size:12px',
-    `opacity:${likely ? '1' : '0.55'}`,
+    // 強調しない記事の濃さは STYLE_RULES が決める（カードに乗せた時だけ見せる）
     `background:${likely ? LIKELY_BACKGROUND : 'transparent'}`,
   ].join(';');
 
-  const rows: HTMLElement[] = [labelRow(itemId, verdict, onAnswer)];
+  const rows: HTMLElement[] = [labelRow(itemId, hint.fired.length, answer?.verdict, onAnswer)];
   if (isShortProse(hint, prefs.minProseChars)) {
     const note = document.createElement('div');
     note.textContent = SHORT_PROSE_NOTE;
@@ -207,6 +258,7 @@ export function renderAiHints(
     const container =
       card.querySelector<HTMLElement>(AI_HINT_ATTR_SELECTOR) ?? document.createElement('div');
     fillHint(container, item.itemId, hint, verdicts[item.itemId], onAnswer, prefs);
+    card.dataset[AI_CARD_MARKER] = 'true';
     if (!container.isConnected) {
       anchorCard(card);
       card.append(container);
@@ -264,6 +316,9 @@ export function clearAiHints(root: ParentNode = document): number {
   for (const card of root.querySelectorAll<HTMLElement>(AI_ANCHOR_ATTR_SELECTOR)) {
     card.style.removeProperty('position');
     delete card.dataset[AI_ANCHOR_MARKER];
+  }
+  for (const card of root.querySelectorAll<HTMLElement>(AI_CARD_ATTR_SELECTOR)) {
+    delete card.dataset[AI_CARD_MARKER];
   }
   document.getElementById(AI_HINT_STYLE_ID)?.remove();
   return elements.length;
