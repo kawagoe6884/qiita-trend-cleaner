@@ -141,8 +141,9 @@ async function applyHiding(): Promise<void> {
 }
 
 /**
- * そうかも / 違うかもを押したとき。**回答時の点数と時刻を一緒に残す**（M3 — 線引きを
- * 動かしたあとでも一致率を数え直せるように）。描き直しは storage.onChanged に任せる。
+ * そうかも / 違うかもを押したとき。**回答時の点数・立っていたシグナル・時刻を一緒に残す**
+ * （線引きを動かしたあとでも一致率を数え直し、目標に届かなければどの指標が外れていたかを
+ * 辿れるように）。描き直しは storage.onChanged に任せる。
  * verdict が null なら取り消し（回答済みの側をもう一度押した）
  */
 function onAiAnswer(itemId: ItemId, verdict: AiVerdict | null, fired: AiSignal[]): void {

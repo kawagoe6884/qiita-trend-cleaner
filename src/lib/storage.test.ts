@@ -952,6 +952,25 @@ describe('getAiVerdicts / saveAiVerdict', () => {
     expect((await storage.getAiVerdicts())['item-a']?.fired).toEqual(['dash']);
   });
 
+  it('fired の重複は 1 つにし、AI_SIGNALS の順に並べ直す（点数は書き換えない）', async () => {
+    // Arrange — 壊れたデータ。重複があると、指標ごとの分析で件数がずれる（PR #23 レビュー LOW）
+    await chrome.storage.local.set({
+      aiVerdicts: {
+        'item-a': {
+          verdict: 'yes',
+          score: 2,
+          fired: ['risingWords', 'dash', 'dash'],
+          answeredAt: at,
+        },
+      },
+    });
+    // Act
+    const answer = (await storage.getAiVerdicts())['item-a'];
+    // Assert
+    expect(answer?.fired).toEqual(['dash', 'risingWords']);
+    expect(answer?.score).toBe(2);
+  });
+
   it('壊れた回答だけ落とし、他の回答は残す', async () => {
     // Arrange
     await chrome.storage.local.set({
