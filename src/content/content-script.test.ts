@@ -569,9 +569,11 @@ describe('content script の AI ヒント', () => {
     });
     // Act
     answer(ITEM_1, 'そうかも');
-    // Assert
+    // Assert — **保存領域の生の値を見る。**getAiVerdicts は壊れた回答を読み飛ばすので、
+    // 「答えが null の回答」を書き込む誤りでも空に見えてしまう（コードレビュー M1）
     await vi.waitFor(async () => {
-      expect(await getAiVerdicts()).toEqual({});
+      const raw = await chrome.storage.local.get('aiVerdicts');
+      expect(raw.aiVerdicts).toEqual({});
     });
   });
 

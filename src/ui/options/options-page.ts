@@ -283,12 +283,21 @@ async function renderPrefs(): Promise<void> {
 let currentAiVerdicts: AiVerdictLog = {};
 
 /**
+ * 一致率を最後に描いた線引き。**保存済みの値ではなく、画面に出ている値。**
+ *
+ * スライダーを動かしている途中（input だけで change 前）に回答が届いたとき、
+ * 保存済みの値で描き直すと、動かしたはずの表示が一瞬戻る（コードレビュー LOW）。
+ */
+let shownAgreementThreshold: number = DEFAULT_AI_HINT_PREFS.threshold;
+
+/**
  * 一致率を映す（M3）。いまの線引きの 1 文、1〜8 点の表、旧形式の注記。
  *
  * threshold は**画面に出ている線引き**。スライダーを動かしている途中でも追従させる
  * （保存を待つと、動かした結果がすぐに見えない）。
  */
 function renderAgreement(threshold: number): void {
+  shownAgreementThreshold = threshold;
   const summary = find(SELECTORS.aiAgreementSummary);
   if (summary)
     summary.textContent = describeAgreementSummary(agreementAt(currentAiVerdicts, threshold));
@@ -329,7 +338,7 @@ function watchAiVerdicts(): void {
     getAiVerdicts()
       .then((log) => {
         currentAiVerdicts = log;
-        renderAgreement(currentAiHintPrefs.threshold);
+        renderAgreement(shownAgreementThreshold);
       })
       .catch((error: unknown) => {
         logger.debug('failed to reload ai verdicts:', error);
@@ -518,6 +527,7 @@ export async function init(): Promise<void> {
   setBusy(false);
   currentAiHintPrefs = { ...DEFAULT_AI_HINT_PREFS };
   currentAiVerdicts = {};
+  shownAgreementThreshold = DEFAULT_AI_HINT_PREFS.threshold;
   attachListeners();
   attachPrefListeners();
   attachAiHintListeners();

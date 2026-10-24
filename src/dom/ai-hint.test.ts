@@ -181,6 +181,19 @@ describe('renderAiHints', () => {
     expect(buttonOf(1, 'そうかも')).toBeDefined();
   });
 
+  it('見えていない間は Tab で止まらず、読み上げにも出ない（visibility: hidden）', () => {
+    // Arrange — opacity: 0 だけだと、見えない要素に Tab で止まり、読み上げられる（コードレビュー LOW）
+    document.body.innerHTML = card(1);
+    // Act
+    renderAiHints({ [itemIdOf(1)]: hint(1) }, {}, vi.fn());
+    // Assert
+    const css = document.getElementById(AI_HINT_STYLE_ID)?.textContent ?? '';
+    expect(css).toMatch(/\[data-qtg-ai-likely="false"\]\s*\{[^}]*visibility:\s*hidden;/);
+    // キーボードでカードの中（記事リンクなど）に入ったら見せる。そこから Tab で表示に進める
+    expect(css).toContain('[data-qtg-ai-card]:focus-within');
+    expect(css).toMatch(/\{[^}]*visibility:\s*visible;/);
+  });
+
   it('回答済みの側をもう一度押すと、回答を取り消す（null を渡す）', () => {
     // Arrange
     document.body.innerHTML = card(1);

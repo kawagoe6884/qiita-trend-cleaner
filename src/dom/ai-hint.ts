@@ -76,7 +76,7 @@ const FADED_OPACITY = '0.55';
  * :hover / :focus-within / アニメーションの規則。インラインの style では書けない。
  *
  * - 回答ボタンは普段は隠し、ラベルに乗せた時・フォーカスした時だけ左へすべり出す
- * - 強調しない記事は透明にし、カードに乗せた時・フォーカスした時だけ見せる
+ * - 強調しない記事は隠し（Tab でも止まらない）、カードに乗せた時・カードの中にフォーカスがある時だけ見せる
  * - 動きを減らす設定（prefers-reduced-motion）ではすべらせない
  */
 const STYLE_RULES = [
@@ -92,9 +92,15 @@ const STYLE_RULES = [
   '@media (prefers-reduced-motion: reduce) {',
   `  ${AI_HINT_ATTR_SELECTOR} .${ANSWERS_CLASS} { animation: none !important; }`,
   '}',
-  `${AI_HINT_ATTR_SELECTOR}[data-qtg-ai-likely="false"] { opacity: 0; transition: opacity 120ms; }`,
+  // visibility も隠す。opacity だけだと、見えない要素に Tab で止まり、読み上げにも出る
+  `${AI_HINT_ATTR_SELECTOR}[data-qtg-ai-likely="false"] {`,
+  '  opacity: 0; visibility: hidden; transition: opacity 120ms, visibility 120ms;',
+  '}',
+  // カードの中にキーボードで入ったら（記事リンクなど）見せる。そこから Tab で表示に進める
   `[data-qtg-ai-card]:hover ${AI_HINT_ATTR_SELECTOR}[data-qtg-ai-likely="false"],`,
-  `${AI_HINT_ATTR_SELECTOR}[data-qtg-ai-likely="false"]:focus-within { opacity: ${FADED_OPACITY}; }`,
+  `[data-qtg-ai-card]:focus-within ${AI_HINT_ATTR_SELECTOR}[data-qtg-ai-likely="false"] {`,
+  `  opacity: ${FADED_OPACITY}; visibility: visible;`,
+  '}',
 ].join('\n');
 
 /**
