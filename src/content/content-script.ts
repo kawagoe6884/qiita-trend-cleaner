@@ -11,7 +11,7 @@ import {
 import { muteAuthor, MUTE_INTERVAL_MS } from '../dom/muter';
 import { renderAiHints, clearAiHints, isOwnMutation } from '../dom/ai-hint';
 import * as storage from '../lib/storage';
-import type { AccountHandle, AiVerdict, ItemId, MuteOutcome } from '../types/domain';
+import type { AccountHandle, AiSignal, AiVerdict, ItemId, MuteOutcome } from '../types/domain';
 import type { QtgRequest, QtgResponse } from '../types/messages';
 
 function markInjected(version: string): void {
@@ -145,11 +145,17 @@ async function applyHiding(): Promise<void> {
  * 動かしたあとでも一致率を数え直せるように）。描き直しは storage.onChanged に任せる。
  * verdict が null なら取り消し（回答済みの側をもう一度押した）
  */
-function onAiAnswer(itemId: ItemId, verdict: AiVerdict | null, score: number): void {
+function onAiAnswer(itemId: ItemId, verdict: AiVerdict | null, fired: AiSignal[]): void {
   const saving =
     verdict === null
       ? storage.removeAiVerdict(itemId)
-      : storage.saveAiVerdict(itemId, { verdict, score, answeredAt: new Date().toISOString() });
+      : storage.saveAiVerdict(itemId, {
+          verdict,
+          score: fired.length,
+          // 指標の見直しのために、立っていたシグナルも残す（スコアは 7 日で消える）
+          fired: [...fired],
+          answeredAt: new Date().toISOString(),
+        });
   saving.catch((error: unknown) => {
     logger.debug('failed to save ai verdict:', itemId, error);
   });

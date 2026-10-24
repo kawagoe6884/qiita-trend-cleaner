@@ -34,6 +34,7 @@ import type {
   AiHint,
   AiHintLog,
   AiHintPrefs,
+  AiSignal,
   AiVerdict,
   AiVerdictLog,
   ItemId,
@@ -105,10 +106,15 @@ const STYLE_RULES = [
 
 /**
  * 押したときに呼ばれる。保存は呼び出し側（content script）の責務。
- * score は**回答した瞬間の点数**。線引きを動かしたあとでも一致率を数え直すために残す（M3）。
+ * fired は**回答した瞬間に立っていたシグナル**（点数はその数）。線引きを動かしたあとでも
+ * 一致率を数え直し、目標に届かなければどの指標が外れていたかを辿るために残す。
  * verdict が null なら**取り消し**（回答済みの側をもう一度押した）
  */
-export type AiAnswerHandler = (itemId: ItemId, verdict: AiVerdict | null, score: number) => void;
+export type AiAnswerHandler = (
+  itemId: ItemId,
+  verdict: AiVerdict | null,
+  fired: AiSignal[],
+) => void;
 
 /** title に出す説明。点数は「目安」であって判定ではないと書く */
 export function describeAiHint(hint: AiHint): string {
@@ -127,7 +133,7 @@ function ensureStyle(): void {
 function answerButton(
   itemId: ItemId,
   verdict: AiVerdict,
-  score: number,
+  fired: AiSignal[],
   pressed: boolean,
   onAnswer: AiAnswerHandler,
 ): HTMLButtonElement {
@@ -151,7 +157,7 @@ function answerButton(
     event.preventDefault();
     event.stopPropagation();
     // 回答済みの側をもう一度押したら取り消す
-    onAnswer(itemId, pressed ? null : verdict, score);
+    onAnswer(itemId, pressed ? null : verdict, fired);
   });
   return button;
 }
@@ -163,7 +169,7 @@ function answerButton(
  */
 function labelRow(
   itemId: ItemId,
-  score: number,
+  fired: AiSignal[],
   verdict: AiVerdict | undefined,
   onAnswer: AiAnswerHandler,
 ): HTMLElement {
@@ -173,8 +179,8 @@ function labelRow(
   const answers = document.createElement('span');
   answers.className = ANSWERS_CLASS;
   answers.append(
-    answerButton(itemId, 'yes', score, verdict === 'yes', onAnswer),
-    answerButton(itemId, 'no', score, verdict === 'no', onAnswer),
+    answerButton(itemId, 'yes', fired, verdict === 'yes', onAnswer),
+    answerButton(itemId, 'no', fired, verdict === 'no', onAnswer),
   );
   row.append(answers);
 
@@ -226,7 +232,7 @@ function fillHint(
     `background:${likely ? LIKELY_BACKGROUND : 'transparent'}`,
   ].join(';');
 
-  const rows: HTMLElement[] = [labelRow(itemId, hint.fired.length, answer?.verdict, onAnswer)];
+  const rows: HTMLElement[] = [labelRow(itemId, hint.fired, answer?.verdict, onAnswer)];
   if (isShortProse(hint, prefs.minProseChars)) {
     const note = document.createElement('div');
     note.textContent = SHORT_PROSE_NOTE;

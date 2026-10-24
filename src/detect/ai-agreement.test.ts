@@ -18,6 +18,7 @@ function answer(verdict: AiVerdict, score: number | null): AiAnswer {
   return {
     verdict,
     score,
+    fired: null,
     answeredAt: score === null ? null : '2026-10-24T00:00:00.000Z',
   };
 }

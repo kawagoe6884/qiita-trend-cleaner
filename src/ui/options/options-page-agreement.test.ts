@@ -30,7 +30,7 @@ describe('「AI文体かも？」の一致率', () => {
     return Object.fromEntries(
       entries.map(([verdict, score], index) => [
         `item-${String(index)}`,
-        score === null ? verdict : { verdict, score, answeredAt: at },
+        score === null ? verdict : { verdict, score, fired: [], answeredAt: at },
       ]),
     );
   }
