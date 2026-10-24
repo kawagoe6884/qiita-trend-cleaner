@@ -51,6 +51,7 @@ const SELECTORS = {
   aiThreshold: '#ai-threshold',
   aiThresholdValue: '#ai-threshold-value',
   aiMinProse: '#ai-min-prose',
+  aiMinProsePresets: 'button[data-min-prose]',
 } as const;
 
 /**
@@ -283,8 +284,42 @@ function renderAiHintPrefs(prefs: AiHintPrefs): void {
   const threshold = find<HTMLInputElement>(SELECTORS.aiThreshold);
   if (threshold) threshold.value = String(prefs.threshold);
   renderAiThresholdValue(prefs.threshold);
+  renderMinProse(prefs.minProseChars);
+}
+
+/**
+ * 最小文字数を映す。**固定値ならそのボタンを押した状態にし、自由入力は空にする。**
+ * 空にすると薄い「自由入力」が見え、打てる欄だと分かる。固定値以外なら自由入力に数を出す
+ */
+function renderMinProse(minProseChars: number): void {
+  let matched = false;
+  for (const button of presetButtons()) {
+    const pressed = Number(button.dataset.minProse) === minProseChars;
+    button.setAttribute('aria-pressed', String(pressed));
+    matched ||= pressed;
+  }
   const minProse = find<HTMLInputElement>(SELECTORS.aiMinProse);
-  if (minProse) minProse.value = String(prefs.minProseChars);
+  if (minProse) minProse.value = matched ? '' : String(minProseChars);
+}
+
+function presetButtons(): HTMLButtonElement[] {
+  return [...document.querySelectorAll<HTMLButtonElement>(SELECTORS.aiMinProsePresets)];
+}
+
+/**
+ * 自由入力の値を読む。**上限を超えたら上限にする**（2001 と打った人は「長め」を望んでいる）。
+ * 下限未満・小数・空は null（意図が読めないので保存しない）。
+ * Number('') は 0 なので、空欄を「0 字」と読まないよう先に弾く
+ */
+function readMinProse(input: HTMLInputElement): number | null {
+  const text = input.value.trim();
+  if (text === '') return null;
+  const value = Number(text);
+  const clamped =
+    Number.isFinite(value) && value > AI_HINT_MIN_PROSE_RANGE.max
+      ? AI_HINT_MIN_PROSE_RANGE.max
+      : value;
+  return isIntInRange(clamped, AI_HINT_MIN_PROSE_RANGE) ? clamped : null;
 }
 
 function renderAiThresholdValue(threshold: number): void {
@@ -293,7 +328,7 @@ function renderAiThresholdValue(threshold: number): void {
 }
 
 /**
- * 入力欄の値を整数として読む。**範囲外・小数・空は null。**
+ * スライダーの値を整数として読む。**範囲外・小数・空は null。**
  * Number('') は 0 なので、空欄を「0 字」と読まないよう先に弾く
  */
 function readInt(input: HTMLInputElement, range: { min: number; max: number }): number | null {
@@ -314,8 +349,9 @@ function saveAiHint(patch: Partial<AiHintPrefs>): void {
  * 線引きを配線する。**確定したとき（change）だけ保存する。**
  *
  * スライダーはドラッグ中（input）に数字だけ追い、離したときに保存する。
- * 数値入力は打ちかけの「3」で保存しないよう、change で検証してから保存し、
- * 不正なら保存せず元の値に戻す。トレンドのページは storage.onChanged で描き直す。
+ * 最小文字数は固定値のボタン（押したら保存）と自由入力の 2 通り。自由入力は
+ * 打ちかけの「3」で保存しないよう change で検証してから保存し、不正なら保存せず
+ * 元の表示に戻す。トレンドのページは storage.onChanged で描き直す。
  */
 function attachAiHintListeners(): void {
   const threshold = find<HTMLInputElement>(SELECTORS.aiThreshold);
@@ -335,13 +371,24 @@ function attachAiHintListeners(): void {
     });
   }
 
+  for (const button of presetButtons()) {
+    button.addEventListener('click', () => {
+      const value = Number(button.dataset.minProse);
+      // 知らない値は捨てる。HTML を書き換えられても storage に入らない
+      if (!isIntInRange(value, AI_HINT_MIN_PROSE_RANGE)) return;
+      renderMinProse(value);
+      saveAiHint({ minProseChars: value });
+    });
+  }
+
   const minProse = find<HTMLInputElement>(SELECTORS.aiMinProse);
   minProse?.addEventListener('change', () => {
-    const value = readInt(minProse, AI_HINT_MIN_PROSE_RANGE);
+    const value = readMinProse(minProse);
     if (value === null) {
-      minProse.value = String(currentAiHintPrefs.minProseChars);
+      renderMinProse(currentAiHintPrefs.minProseChars);
       return;
     }
+    renderMinProse(value);
     saveAiHint({ minProseChars: value });
   });
 }

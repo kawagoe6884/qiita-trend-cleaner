@@ -6,9 +6,11 @@
     <style>
       body {
         font-family: system-ui, sans-serif;
-        margin: 0;
+        /* 横幅 800px（余白込み）で中央に置く。狭い画面では画面幅に合わせる */
+        box-sizing: border-box;
+        margin: 0 auto;
         padding: 24px;
-        max-width: 640px;
+        max-width: 800px;
         line-height: 1.7;
       }
       h1 {
@@ -201,29 +203,77 @@
         font-size: 0.85rem;
         margin: 0 0 8px;
       }
-      /* 「AI文体かも？」の線引き。ポップアップの .slider と同じ 3 列
-         （ラベル / 入力 / 値）にそろえる */
-      .slider {
+      /* 「AI文体かも？」の線引き。ラベルと操作の 2 列で、操作の左端を 2 行でそろえる。
+         ラベルは折り返さない（max-content）。狭い画面では 1 列に落とす */
+      .ai-grid {
         display: grid;
-        /* minmax(0, …) で、狭い幅ではラベルを折り返して横にはみ出さない */
-        grid-template-columns: minmax(0, 13em) minmax(0, 1fr) 5em;
+        grid-template-columns: max-content minmax(0, 1fr);
         align-items: center;
-        gap: 8px;
-        margin: 0 0 8px;
+        gap: 12px 16px;
+        margin: 0 0 12px;
       }
-      .slider label {
+      .ai-grid .ai-label {
         font-weight: 400;
         margin: 0;
       }
-      .slider output,
-      .slider .unit {
+      .ai-control {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+      }
+      /* 短くして、端から端までのマウスの移動を小さくする（8 段階なら 1 段 1.5em ほど） */
+      #ai-threshold {
+        width: 12em;
+        margin: 0;
+      }
+      #ai-threshold-value,
+      .ai-control .unit {
         font-variant-numeric: tabular-nums;
       }
-      .slider input[type='number'] {
-        width: 6em;
-        padding: 4px 6px;
+      /* 固定値のボタンと自由入力は**同じ幅・同じ高さ**にそろえる。
+         幅は「自由入力」の 4 文字が収まり、800px の画面で 1 行に並ぶ大きさ。
+         border-box にしないと、余白と枠線のぶん要素ごとに幅がずれる */
+      .ai-control .preset,
+      .ai-control input[type='number'] {
+        box-sizing: border-box;
+        width: 5.5em;
+        height: 2.2em;
+        margin: 0;
+        padding: 0 6px;
         font-family: inherit;
         font-size: 0.95rem;
+        font-variant-numeric: tabular-nums;
+        text-align: center;
+      }
+      /* 押した状態は枠線と太字で示す（**色だけに頼らない**） */
+      .ai-control .preset[aria-pressed='true'] {
+        outline: 2px solid currentColor;
+        outline-offset: 1px;
+        font-weight: 700;
+      }
+      /* スピンボタンを出さない。0〜2000 を 1 ずつ動かす用途は無く（粗い値はボタンで選ぶ）、
+         出すと幅を食って「自由入力」の文字が欠ける */
+      .ai-control input[type='number'] {
+        appearance: textfield;
+      }
+      .ai-control input[type='number']::-webkit-inner-spin-button,
+      .ai-control input[type='number']::-webkit-outer-spin-button {
+        appearance: none;
+        margin: 0;
+      }
+      /* 薄い「自由入力」で、打てる欄だと知らせる */
+      .ai-control input[type='number']::placeholder {
+        opacity: 0.5;
+      }
+      @media (max-width: 560px) {
+        .ai-grid {
+          grid-template-columns: minmax(0, 1fr);
+          gap: 4px;
+        }
+        .ai-control {
+          margin-bottom: 8px;
+        }
       }
     </style>
   </head>
@@ -272,7 +322,7 @@
 
     <section class="prefs">
       <h2>候補の見え方</h2>
-      <p class="hint">ポップアップの候補一覧の見え方と、評価したときの動作を決めます。</p>
+      <p class="hint">ポップアップの候補一覧の見え方と評価したときの動作を決めます。</p>
 
       <!-- 状態は色と文言の両方で出す。**色だけに頼らない** —
            色覚や表示環境で差が伝わらないことがある -->
@@ -283,7 +333,7 @@
         <strong class="toggle-state" id="mute-on-valid-state"></strong>
       </label>
       <p class="hint">
-        既定はオフです。オンにすると、「妥当」を押した著者をその場で
+        既定はオフです。オンにすると「妥当」を押した著者をその場で
         <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a>
         に追加します。一覧と解除も同じページから行えます。
       </p>
@@ -444,23 +494,45 @@
     <section class="prefs">
       <h2>「AI文体かも？」の線引き</h2>
       <p class="hint">
-        トークンを設定したとき、トレンドの記事の右上に出る目安です（断定ではありません）。
+        トークンを設定したとき、トレンドの記事の右上に出る目安です（断定ではありません）。<br />
         点数の数え方は変わらず、どこから強調するかだけが変わります。開いているトレンドにもすぐ反映されます。
       </p>
-      <p class="slider">
-        <label for="ai-threshold">何点以上で強調するか</label>
-        <!-- max はシグナル数（AI_SIGNALS.length）。スクリプトでも上書きする -->
-        <input type="range" id="ai-threshold" min="1" max="8" step="1" />
-        <output id="ai-threshold-value" for="ai-threshold"></output>
-      </p>
-      <p class="slider">
-        <label for="ai-min-prose">何字未満に「短文」の注釈を付けるか</label>
-        <input type="number" id="ai-min-prose" min="0" max="2000" step="1" inputmode="numeric" />
-        <span class="unit">字</span>
-      </p>
+      <div class="ai-grid">
+        <label class="ai-label" for="ai-threshold">何点以上で強調するか</label>
+        <div class="ai-control">
+          <!-- max はシグナル数（AI_SIGNALS.length）。スクリプトでも上書きする -->
+          <input type="range" id="ai-threshold" min="1" max="8" step="1" />
+          <output id="ai-threshold-value" for="ai-threshold"></output>
+        </div>
+        <span class="ai-label" id="ai-min-prose-label">何字未満に「短文」の注釈を付けるか</span>
+        <div class="ai-control" role="group" aria-labelledby="ai-min-prose-label">
+          <!-- 既定の 334 は固定値に入れない（自由入力の欄に出る） -->
+          <button type="button" class="preset" data-min-prose="0" aria-pressed="false">0</button>
+          <button type="button" class="preset" data-min-prose="200" aria-pressed="false">
+            200
+          </button>
+          <button type="button" class="preset" data-min-prose="400" aria-pressed="false">
+            400
+          </button>
+          <button type="button" class="preset" data-min-prose="1000" aria-pressed="false">
+            1000
+          </button>
+          <input
+            type="number"
+            id="ai-min-prose"
+            min="0"
+            max="2000"
+            step="1"
+            inputmode="numeric"
+            placeholder="自由入力"
+            aria-label="字数を自由入力（0〜2000）"
+          />
+          <span class="unit">字</span>
+        </div>
+      </div>
       <p class="hint">
-        既定は 5 点 / 334 字です。0
-        字にすると注釈を出しません。コードを除いた地の文の字数で数えます。
+        既定は 5 点 / 334 字です。0 字にすると注釈を出しません。2000 字を超える数は 2000
+        字にします。コードを除いた地の文の字数で数えます。
       </p>
     </section>
 
