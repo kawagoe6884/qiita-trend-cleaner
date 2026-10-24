@@ -629,7 +629,7 @@ describe('content script の AI ヒント', () => {
     document.body.innerHTML = card(1);
     await saveToken('dummy-token-value');
     await saveAiHints({ [ITEM_1]: { ...hint, fired: ['dash', 'summaryHeading'] } });
-    await saveAiHintPrefs({ threshold: 2, minProseChars: 334 });
+    await saveAiHintPrefs({ threshold: 2, minProseChars: 334, dimLikely: false });
     // Act
     await bootContentScript();
     // Assert
@@ -648,12 +648,33 @@ describe('content script の AI ヒント', () => {
       expect(hintOn(ITEM_1)?.dataset.qtgAiLikely).toBe('false');
     });
     // Act — 設定画面で 2 点に下げた
-    const aiHintPrefs = { threshold: 2, minProseChars: 334 };
+    const aiHintPrefs = { threshold: 2, minProseChars: 334, dimLikely: false };
     await saveAiHintPrefs(aiHintPrefs);
     storageListener()({ aiHintPrefs: { newValue: aiHintPrefs } }, 'local');
     // Assert
     await vi.waitFor(() => {
       expect(hintOn(ITEM_1)?.dataset.qtgAiLikely).toBe('true');
+    });
+  });
+
+  it('「薄く表示する」をオンにしたら、強調される記事のカードを描き直して薄くする', async () => {
+    // Arrange — 2 点の記事を 2 点以上で強調する
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: { ...hint, fired: ['dash', 'summaryHeading'] } });
+    await saveAiHintPrefs({ threshold: 2, minProseChars: 334, dimLikely: false });
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)?.dataset.qtgAiLikely).toBe('true');
+    });
+    expect(hintOn(ITEM_1)?.parentElement?.dataset.qtgAiDim).toBeUndefined();
+    // Act — 設定画面でオンにした
+    const aiHintPrefs = { threshold: 2, minProseChars: 334, dimLikely: true };
+    await saveAiHintPrefs(aiHintPrefs);
+    storageListener()({ aiHintPrefs: { newValue: aiHintPrefs } }, 'local');
+    // Assert
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)?.parentElement?.dataset.qtgAiDim).toBe('true');
     });
   });
 });

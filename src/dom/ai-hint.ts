@@ -21,6 +21,12 @@
  * - 強調しない記事は透明にし、**カードに乗せた時だけ**見せる。機能は残す（見逃しも測るため）
  * - 回答済みの側をもう一度押すと、回答を取り消して初期状態に戻す
  *
+ * 【M4 控えめにする】（2026-10-25 利用者確定）
+ * 設定でオンにしたときだけ、強調される記事のカードを薄くする（自動非表示の代わり）。
+ * 隠さない・高さを変えない。**ヒントと回答ボタンは薄くせず**、カードに乗せた時・
+ * フォーカスした時は元に戻す（回答できないと一致率の測定が止まる）。
+ * カードに印を付け、head の規則で子要素を薄くする（Qiita の要素の style は書き換えない）。
+ *
  * 【Qiita の DOM に依存しない】
  * カードの特定は trend-reader に任せ、ここはカードの右上に 1 要素重ねるだけ。
  * innerHTML は使わない（hider と方針を揃える）。
@@ -73,6 +79,16 @@ const AI_CARD_ATTR_SELECTOR = '[data-qtg-ai-card="true"]';
 /** 強調しない記事を、乗せた時に出す濃さ */
 const FADED_OPACITY = '0.55';
 
+/** 薄く表示するカードの印（dataset のキー名）。M4 */
+const AI_DIM_MARKER = 'qtgAiDim';
+const AI_DIM_ATTR_SELECTOR = '[data-qtg-ai-dim="true"]';
+
+/** 薄く表示するカードの、ヒント以外の子要素 */
+const DIMMED_CHILDREN = `> :not(${AI_HINT_ATTR_SELECTOR})`;
+
+/** 薄く表示するカードの濃さ。乗せれば 1 に戻るので、読めなくなるほどは下げない */
+const DIMMED_OPACITY = '0.4';
+
 /**
  * :hover / :focus-within / アニメーションの規則。インラインの style では書けない。
  *
@@ -101,6 +117,17 @@ const STYLE_RULES = [
   `[data-qtg-ai-card]:hover ${AI_HINT_ATTR_SELECTOR}[data-qtg-ai-likely="false"],`,
   `[data-qtg-ai-card]:focus-within ${AI_HINT_ATTR_SELECTOR}[data-qtg-ai-likely="false"] {`,
   `  opacity: ${FADED_OPACITY}; visibility: visible;`,
+  '}',
+  // M4: 印のカードはヒント以外を薄くし、乗せた時・中にフォーカスがある時は戻す
+  `${AI_DIM_ATTR_SELECTOR} ${DIMMED_CHILDREN} {`,
+  `  opacity: ${DIMMED_OPACITY}; transition: opacity 120ms;`,
+  '}',
+  `${AI_DIM_ATTR_SELECTOR}:hover ${DIMMED_CHILDREN},`,
+  `${AI_DIM_ATTR_SELECTOR}:focus-within ${DIMMED_CHILDREN} {`,
+  '  opacity: 1;',
+  '}',
+  '@media (prefers-reduced-motion: reduce) {',
+  `  ${AI_DIM_ATTR_SELECTOR} ${DIMMED_CHILDREN} { transition: none; }`,
   '}',
 ].join('\n');
 
@@ -265,6 +292,9 @@ export function renderAiHints(
       card.querySelector<HTMLElement>(AI_HINT_ATTR_SELECTOR) ?? document.createElement('div');
     fillHint(container, item.itemId, hint, verdicts[item.itemId], onAnswer, prefs);
     card.dataset[AI_CARD_MARKER] = 'true';
+    // 描き直しのたびに付け外しする（線引きを上げた・オフにした時に外れるように）
+    if (prefs.dimLikely && isAiLikely(hint, prefs.threshold)) card.dataset[AI_DIM_MARKER] = 'true';
+    else delete card.dataset[AI_DIM_MARKER];
     if (!container.isConnected) {
       anchorCard(card);
       card.append(container);
@@ -325,6 +355,9 @@ export function clearAiHints(root: ParentNode = document): number {
   }
   for (const card of root.querySelectorAll<HTMLElement>(AI_CARD_ATTR_SELECTOR)) {
     delete card.dataset[AI_CARD_MARKER];
+  }
+  for (const card of root.querySelectorAll<HTMLElement>(AI_DIM_ATTR_SELECTOR)) {
+    delete card.dataset[AI_DIM_MARKER];
   }
   document.getElementById(AI_HINT_STYLE_ID)?.remove();
   return elements.length;

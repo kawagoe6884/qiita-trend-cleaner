@@ -54,6 +54,12 @@ export function setupDom(): void {
           <input type="number" id="ai-min-prose" min="0" max="2000" step="1" placeholder="自由入力" />
         </div>
       </div>
+      <label class="toggle">
+        <input type="checkbox" id="ai-dim-likely" />
+        <span class="track"></span>
+        <span>強調される記事を薄く表示する</span>
+        <strong class="toggle-state" id="ai-dim-likely-state"></strong>
+      </label>
       <p id="ai-agreement-summary"></p>
       <table><tbody id="ai-agreement-rows"></tbody></table>
       <p id="ai-agreement-legacy" hidden></p>
