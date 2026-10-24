@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { saveAiHints, saveAiVerdict, saveToken, saveVerdict, getAiVerdicts } from '../lib/storage';
+import {
+  saveAiHintPrefs,
+  saveAiHints,
+  saveAiVerdict,
+  saveToken,
+  saveVerdict,
+  getAiVerdicts,
+} from '../lib/storage';
 import { SELECTORS, MENU_TEXT, SNACKBAR_TEXT } from '../dom/selectors';
 
 /** chrome は setup.ts が各テストの前に用意する。トップレベルではまだ未定義 */
@@ -573,6 +580,39 @@ describe('content script の AI ヒント', () => {
         (element) => element.textContent === '外れ',
       );
       expect(no?.getAttribute('aria-pressed')).toBe('true');
+    });
+  });
+
+  it('保存済みの線引きで強調する', async () => {
+    // Arrange — 2 点の記事。既定の 5 点なら強調されない
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: { ...hint, fired: ['dash', 'summaryHeading'] } });
+    await saveAiHintPrefs({ threshold: 2, minProseChars: 334 });
+    // Act
+    await bootContentScript();
+    // Assert
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)?.dataset.qtgAiLikely).toBe('true');
+    });
+  });
+
+  it('線引きが変わったら描き直す', async () => {
+    // Arrange — 2 点の記事は既定の 5 点では強調されない
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: { ...hint, fired: ['dash', 'summaryHeading'] } });
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)?.dataset.qtgAiLikely).toBe('false');
+    });
+    // Act — 設定画面で 2 点に下げた
+    const aiHintPrefs = { threshold: 2, minProseChars: 334 };
+    await saveAiHintPrefs(aiHintPrefs);
+    storageListener()({ aiHintPrefs: { newValue: aiHintPrefs } }, 'local');
+    // Assert
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)?.dataset.qtgAiLikely).toBe('true');
     });
   });
 });

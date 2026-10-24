@@ -13,8 +13,22 @@
 import { logger } from '../../lib/logger';
 import { loadState, submitToken, removeToken, describeMode } from './token-form';
 import type { TokenState } from './token-form';
-import { getMuteOnValid, saveMuteOnValid, getFoldTarget, saveFoldTarget } from '../../lib/storage';
-import { isFoldTarget } from '../../types/domain';
+import {
+  getMuteOnValid,
+  saveMuteOnValid,
+  getFoldTarget,
+  saveFoldTarget,
+  getAiHintPrefs,
+  saveAiHintPrefs,
+} from '../../lib/storage';
+import {
+  AI_HINT_MIN_PROSE_RANGE,
+  AI_HINT_THRESHOLD_RANGE,
+  DEFAULT_AI_HINT_PREFS,
+  isFoldTarget,
+  isIntInRange,
+} from '../../types/domain';
+import type { AiHintPrefs } from '../../types/domain';
 
 /**
  * このページが触る DOM セレクタ。
@@ -34,6 +48,10 @@ const SELECTORS = {
   muteOnValid: '#mute-on-valid',
   muteOnValidState: '#mute-on-valid-state',
   foldTarget: 'input[name="fold-target"]',
+  aiThreshold: '#ai-threshold',
+  aiThresholdValue: '#ai-threshold-value',
+  aiMinProse: '#ai-min-prose',
+  aiMinProsePresets: 'button[data-min-prose]',
 } as const;
 
 /**
@@ -231,7 +249,11 @@ function attachListeners(): void {
  * どちらも `storage.local` で、判定の閾値（sync）とは置き場が違う。
  */
 async function renderPrefs(): Promise<void> {
-  const [muteOnValid, foldTarget] = await Promise.all([getMuteOnValid(), getFoldTarget()]);
+  const [muteOnValid, foldTarget, aiHintPrefs] = await Promise.all([
+    getMuteOnValid(),
+    getFoldTarget(),
+    getAiHintPrefs(),
+  ]);
 
   const toggle = find<HTMLInputElement>(SELECTORS.muteOnValid);
   if (toggle) toggle.checked = muteOnValid;
@@ -240,6 +262,146 @@ async function renderPrefs(): Promise<void> {
   for (const radio of document.querySelectorAll<HTMLInputElement>(SELECTORS.foldTarget)) {
     radio.checked = radio.value === foldTarget;
   }
+
+  renderAiHintPrefs(aiHintPrefs);
+}
+
+/**
+ * 「AI文体かも？」の線引きの、画面に出ている値。
+ *
+ * 片方だけ変えたときにもう片方を巻き戻さないよう、保存は常にこの全体で行う。
+ * 読み込みに失敗したときは既定値のまま（init で戻す）。
+ */
+let currentAiHintPrefs: AiHintPrefs = { ...DEFAULT_AI_HINT_PREFS };
+
+/** 「5 / 8 点」。上限を添えて、何点満点かを読めるようにする */
+function describeAiThreshold(threshold: number): string {
+  return `${String(threshold)} / ${String(AI_HINT_THRESHOLD_RANGE.max)} 点`;
+}
+
+function renderAiHintPrefs(prefs: AiHintPrefs): void {
+  currentAiHintPrefs = prefs;
+  const threshold = find<HTMLInputElement>(SELECTORS.aiThreshold);
+  if (threshold) threshold.value = String(prefs.threshold);
+  renderAiThresholdValue(prefs.threshold);
+  renderMinProse(prefs.minProseChars);
+}
+
+/**
+ * 最小文字数を映す。**固定値ならそのボタンを押した状態にし、自由入力は空にする。**
+ * 空にすると薄い「自由入力」が見え、打てる欄だと分かる。固定値以外なら自由入力に数を出す
+ */
+function renderMinProse(minProseChars: number): void {
+  let matched = false;
+  for (const button of presetButtons()) {
+    const pressed = Number(button.dataset.minProse) === minProseChars;
+    button.setAttribute('aria-pressed', String(pressed));
+    matched ||= pressed;
+  }
+  const minProse = find<HTMLInputElement>(SELECTORS.aiMinProse);
+  if (minProse) minProse.value = matched ? '' : String(minProseChars);
+}
+
+/**
+ * 固定値のボタンの値を読む。**空・空白だけは null。**
+ * Number('') は 0 なので、先に弾かないと「0 字（注釈なし）」として保存してしまう
+ */
+function readPreset(button: HTMLButtonElement): number | null {
+  const text = button.dataset.minProse?.trim() ?? '';
+  if (text === '') return null;
+  const value = Number(text);
+  return isIntInRange(value, AI_HINT_MIN_PROSE_RANGE) ? value : null;
+}
+
+function presetButtons(): HTMLButtonElement[] {
+  return [...document.querySelectorAll<HTMLButtonElement>(SELECTORS.aiMinProsePresets)];
+}
+
+/**
+ * 自由入力の値を読む。**上限を超えたら上限にする**（2001 と打った人は「長め」を望んでいる）。
+ * 下限未満・小数・空は null（意図が読めないので保存しない）。
+ * Number('') は 0 なので、空欄を「0 字」と読まないよう先に弾く
+ */
+function readMinProse(input: HTMLInputElement): number | null {
+  const text = input.value.trim();
+  if (text === '') return null;
+  const value = Number(text);
+  const clamped =
+    Number.isFinite(value) && value > AI_HINT_MIN_PROSE_RANGE.max
+      ? AI_HINT_MIN_PROSE_RANGE.max
+      : value;
+  return isIntInRange(clamped, AI_HINT_MIN_PROSE_RANGE) ? clamped : null;
+}
+
+function renderAiThresholdValue(threshold: number): void {
+  const output = find(SELECTORS.aiThresholdValue);
+  if (output) output.textContent = describeAiThreshold(threshold);
+}
+
+/**
+ * スライダーの値を整数として読む。**範囲外・小数・空は null。**
+ * Number('') は 0 なので、空欄を「0 字」と読まないよう先に弾く
+ */
+function readInt(input: HTMLInputElement, range: { min: number; max: number }): number | null {
+  const text = input.value.trim();
+  if (text === '') return null;
+  const value = Number(text);
+  return isIntInRange(value, range) ? value : null;
+}
+
+function saveAiHint(patch: Partial<AiHintPrefs>): void {
+  currentAiHintPrefs = { ...currentAiHintPrefs, ...patch };
+  saveAiHintPrefs(currentAiHintPrefs).catch((error: unknown) => {
+    logger.debug('failed to save ai hint setting:', error);
+  });
+}
+
+/**
+ * 線引きを配線する。**確定したとき（change）だけ保存する。**
+ *
+ * スライダーはドラッグ中（input）に数字だけ追い、離したときに保存する。
+ * 最小文字数は固定値のボタン（押したら保存）と自由入力の 2 通り。自由入力は
+ * 打ちかけの「3」で保存しないよう change で検証してから保存し、不正なら保存せず
+ * 元の表示に戻す。トレンドのページは storage.onChanged で描き直す。
+ */
+function attachAiHintListeners(): void {
+  const threshold = find<HTMLInputElement>(SELECTORS.aiThreshold);
+  if (threshold) {
+    // 上限はシグナル数から決める（HTML の値はスクリプトが動く前の表示用）
+    threshold.min = String(AI_HINT_THRESHOLD_RANGE.min);
+    threshold.max = String(AI_HINT_THRESHOLD_RANGE.max);
+    threshold.addEventListener('input', () => {
+      const value = readInt(threshold, AI_HINT_THRESHOLD_RANGE);
+      if (value !== null) renderAiThresholdValue(value);
+    });
+    threshold.addEventListener('change', () => {
+      const value = readInt(threshold, AI_HINT_THRESHOLD_RANGE);
+      if (value === null) return;
+      renderAiThresholdValue(value);
+      saveAiHint({ threshold: value });
+    });
+  }
+
+  for (const button of presetButtons()) {
+    button.addEventListener('click', () => {
+      const value = readPreset(button);
+      // 知らない値は捨てる。HTML を書き換えられても storage に入らない
+      if (value === null) return;
+      renderMinProse(value);
+      saveAiHint({ minProseChars: value });
+    });
+  }
+
+  const minProse = find<HTMLInputElement>(SELECTORS.aiMinProse);
+  minProse?.addEventListener('change', () => {
+    const value = readMinProse(minProse);
+    if (value === null) {
+      renderMinProse(currentAiHintPrefs.minProseChars);
+      return;
+    }
+    renderMinProse(value);
+    saveAiHint({ minProseChars: value });
+  });
 }
 
 /** 「する」「しない」を映す。**init と change の両方から呼ぶ** */
@@ -280,8 +442,10 @@ function attachPrefListeners(): void {
  */
 export async function init(): Promise<void> {
   setBusy(false);
+  currentAiHintPrefs = { ...DEFAULT_AI_HINT_PREFS };
   attachListeners();
   attachPrefListeners();
+  attachAiHintListeners();
   try {
     render(await loadState());
   } catch (error) {

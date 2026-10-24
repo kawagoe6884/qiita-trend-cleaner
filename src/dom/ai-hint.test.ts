@@ -181,6 +181,47 @@ describe('renderAiHints', () => {
     expect(hintsOn(2)?.querySelector('.qtg-ai-done')).toBeNull();
   });
 
+  it('線引きを渡すと、その点数以上を強調する', () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    const hints: AiHintLog = { [itemIdOf(1)]: hint(3), [itemIdOf(2)]: hint(2) };
+    // Act
+    renderAiHints(hints, {}, vi.fn(), { threshold: 3, minProseChars: AI_HINT_MIN_PROSE_CHARS });
+    // Assert
+    expect(hintsOn(1)?.dataset.qtgAiLikely).toBe('true');
+    expect(hintsOn(2)?.dataset.qtgAiLikely).toBe('false');
+  });
+
+  it('線引きを上げて描き直すと強調が外れる', () => {
+    document.body.innerHTML = card(1);
+    const hints: AiHintLog = { [itemIdOf(1)]: hint(5) };
+    renderAiHints(hints, {}, vi.fn());
+    expect(hintsOn(1)?.dataset.qtgAiLikely).toBe('true');
+    renderAiHints(hints, {}, vi.fn(), { threshold: 6, minProseChars: AI_HINT_MIN_PROSE_CHARS });
+    expect(hintsOn(1)?.dataset.qtgAiLikely).toBe('false');
+    expect(document.querySelectorAll('[data-qtg-ai-hint]')).toHaveLength(1);
+  });
+
+  it('最小文字数を渡すと、それ未満にだけ注釈を付ける', () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    const hints: AiHintLog = { [itemIdOf(1)]: hint(3, 499), [itemIdOf(2)]: hint(3, 500) };
+    // Act
+    renderAiHints(hints, {}, vi.fn(), { threshold: AI_HINT_DEFAULT_THRESHOLD, minProseChars: 500 });
+    // Assert
+    expect(hintsOn(1)?.textContent).toContain('判定が甘い可能性あり');
+    expect(hintsOn(2)?.textContent).not.toContain('判定が甘い可能性あり');
+  });
+
+  it('最小文字数 0 なら注釈を出さない', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(3, 0) }, {}, vi.fn(), {
+      threshold: AI_HINT_DEFAULT_THRESHOLD,
+      minProseChars: 0,
+    });
+    expect(hintsOn(1)?.textContent).not.toContain('判定が甘い可能性あり');
+  });
+
   it('短文の注釈はラベルの行とは別の行に置く', () => {
     // Arrange
     document.body.innerHTML = card(1);

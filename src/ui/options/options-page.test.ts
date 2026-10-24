@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { init, describeToggleState } from './options-page';
 import { loadState, submitToken, removeToken } from './token-form';
 import { logger } from '../../lib/logger';
+import { AI_SIGNALS } from '../../types/domain';
 // 実際に配布される HTML をそのまま読む（Vite の ?raw）。
 // setupDom() は骨格のモックなので、**順序は実ファイルに対して検査する**
 import indexHtml from './index.html?raw';
@@ -58,6 +59,19 @@ function setupDom(): void {
         <label class="fold-option">
           <input type="radio" name="fold-target" value="judged" />評価済みをすべて
         </label>
+      </div>
+    </section>
+    <section class="prefs">
+      <div class="ai-grid">
+        <input type="range" id="ai-threshold" min="1" max="8" step="1" />
+        <output id="ai-threshold-value"></output>
+        <div class="ai-control">
+          <button type="button" class="preset" data-min-prose="0" aria-pressed="false">0</button>
+          <button type="button" class="preset" data-min-prose="200" aria-pressed="false">200</button>
+          <button type="button" class="preset" data-min-prose="400" aria-pressed="false">400</button>
+          <button type="button" class="preset" data-min-prose="1000" aria-pressed="false">1000</button>
+          <input type="number" id="ai-min-prose" min="0" max="2000" step="1" placeholder="自由入力" />
+        </div>
       </div>
     </section>`;
 }
@@ -586,6 +600,243 @@ describe('見え方の設定 — 保存に失敗したときのログ水準', ()
     expect(errorSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
   });
+
+  it('「AI文体かも？」の線引きの保存が失敗しても error / warn には載せない', async () => {
+    // Arrange — 3 本目の経路。スライダーと数値入力は saveAiHint を共有している
+    await init();
+    failNextWrite();
+    const threshold = el<HTMLInputElement>('#ai-threshold');
+    // Act
+    threshold.value = '3';
+    threshold.dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      expect(debugSpy).toHaveBeenCalledWith('failed to save ai hint setting:', expect.any(Error));
+    });
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 「AI文体かも？」の線引き（M2）。`storage.local` の aiHintPrefs。
+ * トレンドのページは storage.onChanged で描き直すので、ここは保存するだけ。
+ */
+describe('「AI文体かも？」の線引き', () => {
+  function threshold(): HTMLInputElement {
+    return el<HTMLInputElement>('#ai-threshold');
+  }
+
+  function minProse(): HTMLInputElement {
+    return el<HTMLInputElement>('#ai-min-prose');
+  }
+
+  function preset(value: number): HTMLButtonElement {
+    return el<HTMLButtonElement>(`button[data-min-prose="${String(value)}"]`);
+  }
+
+  /** 押された状態の固定値。**aria-pressed で示す**（色だけで伝えない） */
+  function pressedPresets(): string[] {
+    return [...document.querySelectorAll<HTMLButtonElement>('button[data-min-prose]')]
+      .filter((button) => button.getAttribute('aria-pressed') === 'true')
+      .map((button) => button.dataset.minProse ?? '');
+  }
+
+  function setLocal(): ReturnType<typeof vi.fn> {
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    return vi.mocked(chrome.storage.local.set);
+  }
+
+  it('未設定なら既定の 5 点 / 334 字を映す', async () => {
+    await init();
+    expect(threshold().value).toBe('5');
+    expect(el('#ai-threshold-value').textContent).toBe('5 / 8 点');
+    expect(minProse().value).toBe('334');
+    // 既定の 334 は固定値に無い。自由入力の欄に出し、固定値はどれも押さない
+    expect(pressedPresets()).toEqual([]);
+  });
+
+  it('保存済みの値を映す（固定値なら、そのボタンを押した状態にして自由入力は空にする）', async () => {
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 3, minProseChars: 0 } });
+    await init();
+    expect(threshold().value).toBe('3');
+    expect(el('#ai-threshold-value').textContent).toBe('3 / 8 点');
+    expect(pressedPresets()).toEqual(['0']);
+    expect(minProse().value).toBe('');
+  });
+
+  it('固定値を押すと保存し、押した状態を示す（点数はそのまま）', async () => {
+    // Arrange
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 4, minProseChars: 334 } });
+    await init();
+    // Act
+    preset(200).click();
+    // Assert
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenCalledWith({
+        aiHintPrefs: { threshold: 4, minProseChars: 200 },
+      });
+    });
+    expect(pressedPresets()).toEqual(['200']);
+    expect(minProse().value).toBe('');
+  });
+
+  it.each(['', ' ', 'abc', '1.5', '-1', '5000'])(
+    '固定値のボタンの値が不正（%j）なら保存せず、表示も変えない',
+    async (value) => {
+      // Arrange — HTML を書き換えられても storage に入らない。
+      // 空文字は Number('') が 0 になるので、0 字として通さないことを特に確かめる
+      await init();
+      setLocal().mockClear();
+      const button = preset(200);
+      button.dataset.minProse = value;
+      // Act
+      button.click();
+      // Assert
+      expect(setLocal()).not.toHaveBeenCalled();
+      expect(pressedPresets()).toEqual([]);
+      expect(minProse().value).toBe('334');
+    },
+  );
+
+  it('自由入力で固定値以外を入れると、固定値の押下は外れる', async () => {
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 5, minProseChars: 400 } });
+    await init();
+    minProse().value = '250';
+    minProse().dispatchEvent(new Event('change'));
+    expect(pressedPresets()).toEqual([]);
+    expect(minProse().value).toBe('250');
+  });
+
+  it('自由入力で固定値と同じ数を入れたら、そのボタンを押した状態にする', async () => {
+    await init();
+    minProse().value = '1000';
+    minProse().dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenCalledWith({
+        aiHintPrefs: { threshold: 5, minProseChars: 1000 },
+      });
+    });
+    expect(pressedPresets()).toEqual(['1000']);
+    expect(minProse().value).toBe('');
+  });
+
+  it('固定値は 0 / 200 / 400 / 1000（既定の 334 は変えない）', () => {
+    const values = [...indexHtml.matchAll(/data-min-prose="(\d+)"/g)].map((match) => match[1]);
+    expect(values).toEqual(['0', '200', '400', '1000']);
+    expect(indexHtml).toContain('placeholder="自由入力"');
+  });
+
+  it('スライダーの範囲はシグナル数から決める', async () => {
+    await init();
+    expect(threshold().min).toBe('1');
+    expect(threshold().max).toBe(String(AI_SIGNALS.length));
+  });
+
+  it('動かしている間は表示だけ変え、離したときに保存する', async () => {
+    // Arrange
+    await init();
+    setLocal().mockClear();
+    // Act — ドラッグ中
+    threshold().value = '3';
+    threshold().dispatchEvent(new Event('input'));
+    // Assert
+    expect(el('#ai-threshold-value').textContent).toBe('3 / 8 点');
+    expect(setLocal()).not.toHaveBeenCalled();
+    // Act — 離した
+    threshold().dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenCalledWith({
+        aiHintPrefs: { threshold: 3, minProseChars: 334 },
+      });
+    });
+  });
+
+  it('最小文字数を確定すると保存する（点数はそのまま）', async () => {
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 4, minProseChars: 334 } });
+    await init();
+    minProse().value = '500';
+    minProse().dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenCalledWith({
+        aiHintPrefs: { threshold: 4, minProseChars: 500 },
+      });
+    });
+  });
+
+  it('続けて変えても、先に変えた方を巻き戻さない', async () => {
+    await init();
+    threshold().value = '2';
+    threshold().dispatchEvent(new Event('change'));
+    minProse().value = '100';
+    minProse().dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenLastCalledWith({
+        aiHintPrefs: { threshold: 2, minProseChars: 100 },
+      });
+    });
+  });
+
+  it.each(['2001', '99999'])('上限を超える数（%s）は上限の 2000 にして保存する', async (value) => {
+    // Arrange
+    await init();
+    // Act
+    minProse().value = value;
+    minProse().dispatchEvent(new Event('change'));
+    // Assert
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenCalledWith({
+        aiHintPrefs: { threshold: 5, minProseChars: 2000 },
+      });
+    });
+    expect(minProse().value).toBe('2000');
+  });
+
+  it('固定値を押している間に自由入力を空にしても、何も保存しない', async () => {
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 5, minProseChars: 200 } });
+    await init();
+    setLocal().mockClear();
+    minProse().value = '';
+    minProse().dispatchEvent(new Event('change'));
+    expect(setLocal()).not.toHaveBeenCalled();
+    expect(pressedPresets()).toEqual(['200']);
+    expect(minProse().value).toBe('');
+  });
+
+  it.each(['', '-1', '12.5', 'abc'])(
+    '最小文字数が不正（%j）なら保存せず、元の値に戻す',
+    async (value) => {
+      // Arrange
+      await init();
+      setLocal().mockClear();
+      // Act
+      minProse().value = value;
+      minProse().dispatchEvent(new Event('change'));
+      // Assert
+      expect(setLocal()).not.toHaveBeenCalled();
+      expect(minProse().value).toBe('334');
+    },
+  );
+
+  it('読み込みに失敗しても入力は既定値のまま操作できる', async () => {
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const get = chrome.storage.local.get;
+    (chrome.storage.local as { get: unknown }).get = () =>
+      Promise.reject(new Error('storage down'));
+    try {
+      await init();
+    } finally {
+      (chrome.storage.local as { get: unknown }).get = get;
+    }
+    threshold().value = '6';
+    threshold().dispatchEvent(new Event('change'));
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenCalledWith({
+        aiHintPrefs: { threshold: 6, minProseChars: 334 },
+      });
+    });
+  });
 });
 
 describe('describeToggleState', () => {
@@ -619,11 +870,21 @@ describe('index.html のレイアウト順序', () => {
     expect(howTo).toBeLessThan(prefs);
   });
 
-  it('候補の見え方はページの最後にある', () => {
-    // トークンは「まず設定するもの」、見え方は「あとから調整するもの」
-    const prefs = indexHtml.indexOf('class="prefs"');
-    const mode = indexHtml.indexOf('id="mode-title"');
-    expect(prefs).toBeGreaterThan(mode);
+  it('あとから調整する設定（候補の見え方・線引き）は、すべてトークンの欄より後ろにある', () => {
+    // トークンは「まず設定するもの」、見え方と線引きは「あとから調整するもの」
+    const howTo = indexHtml.indexOf('トークンの取得手順');
+    const sections = [...indexHtml.matchAll(/class="prefs"/g)].map((match) => match.index);
+    expect(sections).toHaveLength(2);
+    for (const section of sections) expect(section).toBeGreaterThan(howTo);
+  });
+
+  it('線引きは候補の見え方の後ろ（ページの最後）にある', () => {
+    // 線引きはフルモードでしか効かないので、誰でも使う見え方を先に置く
+    const fold = indexHtml.indexOf('<h2>候補の見え方</h2>');
+    const aiHint = indexHtml.indexOf('<h2>「AI文体かも？」の線引き</h2>');
+    expect(fold).toBeGreaterThan(-1);
+    expect(aiHint).toBeGreaterThan(fold);
+    expect(indexHtml.indexOf('class="prefs"', aiHint)).toBe(-1);
   });
 
   it('トグルは <input type="checkbox"> のまま（見た目だけ差し替える）', () => {
@@ -651,6 +912,23 @@ describe('index.html のレイアウト順序', () => {
     // 純赤 (255,0,0) は g > b を満たさず、緑 (0,255,0) は r > g を満たさない
     expect(r).toBeGreaterThan(g ?? 0);
     expect(g).toBeGreaterThan(b ?? 0);
+  });
+
+  it('点数のスライダーの上限はシグナル数と同じ（スクリプトが動く前の表示も合わせる）', () => {
+    expect(indexHtml).toContain(
+      `<input type="range" id="ai-threshold" min="1" max="${String(AI_SIGNALS.length)}"`,
+    );
+  });
+
+  it('「自由入力」の薄い文字も読める濃さにする（本文の色を薄めるだけ）', () => {
+    // ブラウザ既定の灰色をさらに薄めると、背景とのコントラストが 2:1 ほどまで落ちた。
+    // 本文の色（inherit）を 0.6 にすると、黒地の本文で約 #666 = 5.7:1（WCAG 4.5:1 以上）
+    const start = indexHtml.indexOf("input[type='number']::placeholder {");
+    const rule = indexHtml.slice(start, indexHtml.indexOf('}', start));
+    expect(start).toBeGreaterThan(-1);
+    expect(rule).toContain('color: inherit;');
+    const opacity = Number(/opacity:\s*([\d.]+)/.exec(rule)?.[1]);
+    expect(opacity).toBeGreaterThanOrEqual(0.6);
   });
 
   it('実スクショを埋め込まない（実アカウント名が配布物に入る）', () => {

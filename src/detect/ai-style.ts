@@ -199,12 +199,15 @@ export function scoreAiStyle(markdown: string): AiStyleScore {
   return { fired: AI_SIGNALS.filter((signal) => raised.has(signal)), proseChars };
 }
 
-/** 地の文が短く、判定が甘い可能性がある */
-export function isShortProse(hint: AiHint): boolean {
-  return hint.proseChars < AI_HINT_MIN_PROSE_CHARS;
+/** 地の文が短く、判定が甘い可能性がある。最小文字数は利用者が設定画面で変えられる（0 で注釈なし） */
+export function isShortProse(
+  hint: AiHint,
+  minProseChars: number = AI_HINT_MIN_PROSE_CHARS,
+): boolean {
+  return hint.proseChars < minProseChars;
 }
 
-/** 「AI文体かも？」を強調するか。閾値は M2 で利用者が動かせるようにする */
+/** 「AI文体かも？」を強調するか。閾値は利用者が設定画面で変えられる */
 export function isAiLikely(hint: AiHint, threshold: number = AI_HINT_DEFAULT_THRESHOLD): boolean {
   return hint.fired.length >= threshold;
 }

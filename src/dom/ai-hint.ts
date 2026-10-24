@@ -23,8 +23,15 @@
 import { AI_HINT_MARKER, AI_HINT_STYLE_ID } from './selectors';
 import { readTrendCards } from './trend-reader';
 import { isAiLikely, isShortProse } from '../detect/ai-style';
-import { AI_SIGNALS } from '../types/domain';
-import type { AiHint, AiHintLog, AiVerdict, AiVerdictLog, ItemId } from '../types/domain';
+import { AI_SIGNALS, DEFAULT_AI_HINT_PREFS } from '../types/domain';
+import type {
+  AiHint,
+  AiHintLog,
+  AiHintPrefs,
+  AiVerdict,
+  AiVerdictLog,
+  ItemId,
+} from '../types/domain';
 
 /** dataset のキー（qtgAiHint）に対応する属性セレクタ */
 const AI_HINT_ATTR_SELECTOR = '[data-qtg-ai-hint]';
@@ -141,8 +148,9 @@ function fillHint(
   hint: AiHint,
   verdict: AiVerdict | undefined,
   onAnswer: AiAnswerHandler,
+  prefs: AiHintPrefs,
 ): void {
-  const likely = isAiLikely(hint);
+  const likely = isAiLikely(hint, prefs.threshold);
   container.dataset[AI_HINT_MARKER] = itemId;
   container.dataset.qtgAiLikely = String(likely);
   container.title = describeAiHint(hint);
@@ -168,7 +176,7 @@ function fillHint(
   ].join(';');
 
   const rows: HTMLElement[] = [labelRow(itemId, verdict, onAnswer)];
-  if (isShortProse(hint)) {
+  if (isShortProse(hint, prefs.minProseChars)) {
     const note = document.createElement('div');
     note.textContent = SHORT_PROSE_NOTE;
     rows.push(note);
@@ -181,11 +189,14 @@ function fillHint(
  *
  * 描き直しでは要素を作り直さず中身だけ替える。カードの中で位置が動くと、
  * 回答のたびに目で追い直すことになる。
+ *
+ * prefs は利用者の線引き（何点以上を強調し、何字未満に注釈を付けるか）。
  */
 export function renderAiHints(
   hints: AiHintLog,
   verdicts: AiVerdictLog,
   onAnswer: AiAnswerHandler,
+  prefs: AiHintPrefs = DEFAULT_AI_HINT_PREFS,
   root: ParentNode = document,
 ): number {
   let rendered = 0;
@@ -195,7 +206,7 @@ export function renderAiHints(
     ensureStyle();
     const container =
       card.querySelector<HTMLElement>(AI_HINT_ATTR_SELECTOR) ?? document.createElement('div');
-    fillHint(container, item.itemId, hint, verdicts[item.itemId], onAnswer);
+    fillHint(container, item.itemId, hint, verdicts[item.itemId], onAnswer, prefs);
     if (!container.isConnected) {
       anchorCard(card);
       card.append(container);

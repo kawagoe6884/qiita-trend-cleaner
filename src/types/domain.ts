@@ -438,9 +438,49 @@ export const AI_HINT_MIN_PROSE_CHARS = 334;
  * 「AI文体かも？」を強調する既定の点数（以上）。**仮置き。**
  *
  * 根拠のある値が無いので、シグナル数の過半に置いている（Plan D3）。
- * 30 件の当たり / 外れで一致率を見て決め直す。M2 で利用者が動かせるようにする。
+ * 30 件の当たり / 外れで一致率を見て決め直す。利用者は設定画面で変えられる（M2）。
  */
 export const AI_HINT_DEFAULT_THRESHOLD = 5;
+
+/**
+ * 強調する点数の範囲。0 は全件強調で意味がないので 1 から。
+ * 上限はシグナル数から導出する（シグナルが増えても追従する）
+ */
+export const AI_HINT_THRESHOLD_RANGE = { min: 1, max: AI_SIGNALS.length } as const;
+
+/**
+ * 最小文字数の範囲。**0 は「注釈を出さない」。**
+ * 上限は入力ミス（桁違い）を弾くためのもので、根拠のある値ではない
+ */
+export const AI_HINT_MIN_PROSE_RANGE = { min: 0, max: 2000 } as const;
+
+/**
+ * 整数かつ範囲内か。**丸めない** — 3.5 を 4 にすると、壊れた値がそれらしく見えてしまう。
+ * storage の読み込みと設定画面の入力の両方で使う
+ */
+export function isIntInRange(value: unknown, range: { min: number; max: number }): value is number {
+  return (
+    typeof value === 'number' && Number.isInteger(value) && value >= range.min && value <= range.max
+  );
+}
+
+/**
+ * 「AI文体かも？」の線引き（M2）。**表示の設定で、点数の計算には関与しない。**
+ *
+ * 変わるのは「何点以上を強調するか」と「何字未満に注釈を付けるか」だけ。
+ * 保存済みのスコアも回答も書き換えない。
+ */
+export interface AiHintPrefs {
+  /** この点数以上を強調する */
+  threshold: number;
+  /** 地の文がこれ未満なら短文の注釈を付ける */
+  minProseChars: number;
+}
+
+export const DEFAULT_AI_HINT_PREFS: AiHintPrefs = {
+  threshold: AI_HINT_DEFAULT_THRESHOLD,
+  minProseChars: AI_HINT_MIN_PROSE_CHARS,
+};
 
 /**
  * 記事 1 件の文体スコア。**本文そのものは持たない**（Plan D5）。
@@ -521,6 +561,13 @@ export interface LocalState {
   aiHints?: AiHintLog;
   /** 「AI文体かも？」への回答。パージしない */
   aiVerdicts?: AiVerdictLog;
+  /**
+   * 「AI文体かも？」の線引き。**既定は DEFAULT_AI_HINT_PREFS。**
+   *
+   * Settings（sync）に入れないのは、あれが detectCandidates の入力だから。
+   * これは表示の設定で判定に一切関与しない（foldTarget と同じ扱い）
+   */
+  aiHintPrefs?: AiHintPrefs;
   /** 保持期間 7 日 */
   purgeAfter?: IsoDateTime;
   /** 最後にスキャンした時刻 */
