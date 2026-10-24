@@ -262,9 +262,12 @@
         appearance: none;
         margin: 0;
       }
-      /* 薄い「自由入力」で、打てる欄だと知らせる */
+      /* 薄い「自由入力」で、打てる欄だと知らせる。
+         ブラウザ既定の灰色をさらに薄めると読めないほど淡くなる（約 2:1）ので、
+         本文の色を薄めて約 #666 = 5.7:1 に保つ（WCAG 4.5:1 以上） */
       .ai-control input[type='number']::placeholder {
-        opacity: 0.5;
+        color: inherit;
+        opacity: 0.6;
       }
       @media (max-width: 560px) {
         .ai-grid {

@@ -302,6 +302,17 @@ function renderMinProse(minProseChars: number): void {
   if (minProse) minProse.value = matched ? '' : String(minProseChars);
 }
 
+/**
+ * 固定値のボタンの値を読む。**空・空白だけは null。**
+ * Number('') は 0 なので、先に弾かないと「0 字（注釈なし）」として保存してしまう
+ */
+function readPreset(button: HTMLButtonElement): number | null {
+  const text = button.dataset.minProse?.trim() ?? '';
+  if (text === '') return null;
+  const value = Number(text);
+  return isIntInRange(value, AI_HINT_MIN_PROSE_RANGE) ? value : null;
+}
+
 function presetButtons(): HTMLButtonElement[] {
   return [...document.querySelectorAll<HTMLButtonElement>(SELECTORS.aiMinProsePresets)];
 }
@@ -373,9 +384,9 @@ function attachAiHintListeners(): void {
 
   for (const button of presetButtons()) {
     button.addEventListener('click', () => {
-      const value = Number(button.dataset.minProse);
+      const value = readPreset(button);
       // 知らない値は捨てる。HTML を書き換えられても storage に入らない
-      if (!isIntInRange(value, AI_HINT_MIN_PROSE_RANGE)) return;
+      if (value === null) return;
       renderMinProse(value);
       saveAiHint({ minProseChars: value });
     });

@@ -681,6 +681,24 @@ describe('「AI文体かも？」の線引き', () => {
     expect(minProse().value).toBe('');
   });
 
+  it.each(['', ' ', 'abc', '1.5', '-1', '5000'])(
+    '固定値のボタンの値が不正（%j）なら保存せず、表示も変えない',
+    async (value) => {
+      // Arrange — HTML を書き換えられても storage に入らない。
+      // 空文字は Number('') が 0 になるので、0 字として通さないことを特に確かめる
+      await init();
+      setLocal().mockClear();
+      const button = preset(200);
+      button.dataset.minProse = value;
+      // Act
+      button.click();
+      // Assert
+      expect(setLocal()).not.toHaveBeenCalled();
+      expect(pressedPresets()).toEqual([]);
+      expect(minProse().value).toBe('334');
+    },
+  );
+
   it('自由入力で固定値以外を入れると、固定値の押下は外れる', async () => {
     await chrome.storage.local.set({ aiHintPrefs: { threshold: 5, minProseChars: 400 } });
     await init();
@@ -900,6 +918,17 @@ describe('index.html のレイアウト順序', () => {
     expect(indexHtml).toContain(
       `<input type="range" id="ai-threshold" min="1" max="${String(AI_SIGNALS.length)}"`,
     );
+  });
+
+  it('「自由入力」の薄い文字も読める濃さにする（本文の色を薄めるだけ）', () => {
+    // ブラウザ既定の灰色をさらに薄めると、背景とのコントラストが 2:1 ほどまで落ちた。
+    // 本文の色（inherit）を 0.6 にすると、黒地の本文で約 #666 = 5.7:1（WCAG 4.5:1 以上）
+    const start = indexHtml.indexOf("input[type='number']::placeholder {");
+    const rule = indexHtml.slice(start, indexHtml.indexOf('}', start));
+    expect(start).toBeGreaterThan(-1);
+    expect(rule).toContain('color: inherit;');
+    const opacity = Number(/opacity:\s*([\d.]+)/.exec(rule)?.[1]);
+    expect(opacity).toBeGreaterThanOrEqual(0.6);
   });
 
   it('実スクショを埋め込まない（実アカウント名が配布物に入る）', () => {
