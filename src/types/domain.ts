@@ -395,7 +395,7 @@ export const MAX_BURST_WINDOW_MINUTES = Math.max(...BURST_WINDOW_CHOICES);
  * **集団の傾向**の測定であって、記事単位の判定器ではない。点数は
  * 「AI 記事である」の根拠ではなく、利用者が開く前に目安を得るためのもの。
  *
- * 重みを付けないのは、当たり / 外れの回答で閾値を自動調整しないと決めたから
+ * 重みを付けないのは、そうかも / 違うかもの回答で閾値を自動調整しないと決めたから
  * （PRD）。利用者が動かせるのは「何点以上で強調するか」だけにする。
  *
  * **配列から型を導出する**（FOLD_TARGETS と同じ）。storage から読んだ値を検証する。
@@ -438,7 +438,7 @@ export const AI_HINT_MIN_PROSE_CHARS = 334;
  * 「AI文体かも？」を強調する既定の点数（以上）。**仮置き。**
  *
  * 根拠のある値が無いので、シグナル数の過半に置いている（Plan D3）。
- * 30 件の当たり / 外れで一致率を見て決め直す。利用者は設定画面で変えられる（M2）。
+ * 30 件の回答で一致率を見て決め直す（設定画面の一致率の表 — M3）。利用者は設定画面で変えられる（M2）。
  */
 export const AI_HINT_DEFAULT_THRESHOLD = 5;
 
@@ -447,6 +447,12 @@ export const AI_HINT_DEFAULT_THRESHOLD = 5;
  * 上限はシグナル数から導出する（シグナルが増えても追従する）
  */
 export const AI_HINT_THRESHOLD_RANGE = { min: 1, max: AI_SIGNALS.length } as const;
+
+/**
+ * 記事 1 件の点数としてありうる範囲（立ったシグナルの数）。
+ * 保存された回答の点数を読むときの検証に使う（範囲外は壊れた値として捨てる）
+ */
+export const AI_HINT_SCORE_RANGE = { min: 0, max: AI_SIGNALS.length } as const;
 
 /**
  * 最小文字数の範囲。**0 は「注釈を出さない」。**
@@ -498,8 +504,30 @@ export interface AiHint {
 /** 記事 ID -> 文体スコア。保持期間 7 日でパージする */
 export type AiHintLog = Record<ItemId, AiHint>;
 
-/** 「AI文体かも？」への利用者の回答 */
+/**
+ * 「AI文体かも？」への利用者の答え。**yes =「そうかも」、no =「違うかも」。**
+ *
+ * M3 で「当たり / 外れ」から言い換えた（判定口調で角が立つ — 利用者確定）。
+ * 強調の有無に関係なく「利用者が AI 文体だと思うか」を表す。
+ */
 export type AiVerdict = 'yes' | 'no';
+
+/**
+ * 1 記事への回答。**回答した瞬間の点数を一緒に残す**（M3 Plan D2）。
+ *
+ * スコアは 7 日でパージされ、線引きは M2 で動かせる。点数を残さないと、
+ * 線引きを動かしたときの一致率を後から計算できない。
+ */
+export interface AiAnswer {
+  verdict: AiVerdict;
+  /**
+   * 回答時の点数。**null は M3 より前の旧形式**（点数が残っていない）。
+   * 当時のボタンは「Yes / No」「当たり / 外れ」で意味が今と違いうるので、一致率には入れない
+   */
+  score: number | null;
+  /** 回答した時刻。旧形式は null */
+  answeredAt: IsoDateTime | null;
+}
 
 /**
  * 記事 ID -> 回答。一致率の唯一の入力。
@@ -507,7 +535,13 @@ export type AiVerdict = 'yes' | 'no';
  * **閾値の自動調整には使わない**（PRD）。FeedbackLog と同じく、利用者が
  * 積み上げた資産なのでパージしない。
  */
-export type AiVerdictLog = Record<ItemId, AiVerdict>;
+export type AiVerdictLog = Record<ItemId, AiAnswer>;
+
+/** 一致率を判定する回答数（PRD の Success Metrics: N = 30） */
+export const AI_HINT_TARGET_ANSWERS = 30;
+
+/** 目標の一致率（PRD の Success Metrics: 70%） */
+export const AI_HINT_TARGET_AGREEMENT = 0.7;
 
 /** 取得の射程。トークンの有無ではなくレート枠から決まる */
 export type ScanMode = 'light' | 'full';

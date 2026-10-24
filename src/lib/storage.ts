@@ -13,6 +13,7 @@
  */
 import {
   AI_HINT_MIN_PROSE_RANGE,
+  AI_HINT_SCORE_RANGE,
   AI_HINT_THRESHOLD_RANGE,
   DEFAULT_AI_HINT_PREFS,
   DEFAULT_SETTINGS,
@@ -23,6 +24,7 @@ import {
 } from '../types/domain';
 import type {
   AccountHandle,
+  AiAnswer,
   AiHint,
   AiHintPrefs,
   AiHintLog,
@@ -430,6 +432,29 @@ export async function saveAiHints(aiHints: AiHintLog): Promise<void> {
   await chrome.storage.local.set({ aiHints });
 }
 
+function isAiVerdict(value: unknown): value is AiVerdict {
+  return value === 'yes' || value === 'no';
+}
+
+/**
+ * 1 件分の回答を検証する。形が崩れていれば null。
+ *
+ * **M3 より前の旧形式（`'yes' | 'no'` だけ）も読む。**点数が残っていないので
+ * score / answeredAt は null にする。消すと利用者が積み上げた回答が失われる。
+ */
+function asAiAnswer(value: unknown): AiAnswer | null {
+  if (isAiVerdict(value)) return { verdict: value, score: null, answeredAt: null };
+  if (typeof value !== 'object' || value === null) return null;
+  const candidate = value as Partial<Record<keyof AiAnswer, unknown>>;
+  const { verdict, score, answeredAt } = candidate;
+  if (!isAiVerdict(verdict)) return null;
+  if (score === null && answeredAt === null) return { verdict, score, answeredAt };
+  const at = asNonEmptyString(answeredAt);
+  // 点数はシグナルの数（0〜8）を超えない。範囲外を通すと一致率の計算に紛れ込む
+  if (at === null || !isIntInRange(score, AI_HINT_SCORE_RANGE)) return null;
+  return { verdict, score, answeredAt: at };
+}
+
 /** 「AI文体かも？」への回答。1 件だけ壊れていても全体を捨てない（getFeedback と同じ扱い） */
 export async function getAiVerdicts(): Promise<AiVerdictLog> {
   const raw = await readRaw();
@@ -437,7 +462,8 @@ export async function getAiVerdicts(): Promise<AiVerdictLog> {
   if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {};
   const log: AiVerdictLog = {};
   for (const [itemId, value] of Object.entries(stored as Record<string, unknown>)) {
-    if (value === 'yes' || value === 'no') log[itemId] = value;
+    const answer = asAiAnswer(value);
+    if (answer !== null) log[itemId] = answer;
   }
   return log;
 }
@@ -448,8 +474,20 @@ export async function getAiVerdicts(): Promise<AiVerdictLog> {
  * 読んで足して書く（saveVerdict と同じ理由 — トレンドのタブを 2 枚開いて
  * 互いの回答を消し合わない）。
  */
-export async function saveAiVerdict(itemId: ItemId, verdict: AiVerdict): Promise<AiVerdictLog> {
-  const aiVerdicts = { ...(await getAiVerdicts()), [itemId]: verdict };
+export async function saveAiVerdict(itemId: ItemId, answer: AiAnswer): Promise<AiVerdictLog> {
+  const aiVerdicts = { ...(await getAiVerdicts()), [itemId]: answer };
+  await chrome.storage.local.set({ aiVerdicts });
+  return aiVerdicts;
+}
+
+/**
+ * 回答を 1 件取り消し、**消した後の全体を返す。**回答済みの側をもう一度押したとき（M3）。
+ * 読んで消して書く（saveAiVerdict と同じ理由）
+ */
+export async function removeAiVerdict(itemId: ItemId): Promise<AiVerdictLog> {
+  const aiVerdicts = Object.fromEntries(
+    Object.entries(await getAiVerdicts()).filter(([key]) => key !== itemId),
+  );
   await chrome.storage.local.set({ aiVerdicts });
   return aiVerdicts;
 }

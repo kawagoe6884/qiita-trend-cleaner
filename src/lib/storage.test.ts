@@ -873,28 +873,75 @@ describe('getAiHints / saveAiHints', () => {
 });
 
 describe('getAiVerdicts / saveAiVerdict', () => {
+  const at = '2026-10-24T00:00:00.000Z';
+  const yes = { verdict: 'yes', score: 6, answeredAt: at } as const;
+  const no = { verdict: 'no', score: 2, answeredAt: at } as const;
+
   it('未保存なら空を返す', async () => {
     expect(await storage.getAiVerdicts()).toEqual({});
   });
 
   it('既存の回答を消さずに足し、書いた後の全体を返す', async () => {
     // Arrange
-    await storage.saveAiVerdict('item-a', 'yes');
+    await storage.saveAiVerdict('item-a', yes);
     // Act
-    const merged = await storage.saveAiVerdict('item-b', 'no');
+    const merged = await storage.saveAiVerdict('item-b', no);
     // Assert
-    expect(merged).toEqual({ 'item-a': 'yes', 'item-b': 'no' });
+    expect(merged).toEqual({ 'item-a': yes, 'item-b': no });
     expect(await storage.getAiVerdicts()).toEqual(merged);
   });
 
   it('同じ記事は上書きする（押し直せる）', async () => {
-    await storage.saveAiVerdict('item-a', 'yes');
-    await storage.saveAiVerdict('item-a', 'no');
-    expect(await storage.getAiVerdicts()).toEqual({ 'item-a': 'no' });
+    await storage.saveAiVerdict('item-a', yes);
+    await storage.saveAiVerdict('item-a', no);
+    expect(await storage.getAiVerdicts()).toEqual({ 'item-a': no });
   });
 
-  it('知らない値が混ざっていても他の回答は残す', async () => {
-    await chrome.storage.local.set({ aiVerdicts: { 'item-a': 'yes', 'item-b': 'maybe' } });
-    expect(await storage.getAiVerdicts()).toEqual({ 'item-a': 'yes' });
+  it('回答を取り消すと、その記事だけ消して残りを返す', async () => {
+    // Arrange
+    await storage.saveAiVerdict('item-a', yes);
+    await storage.saveAiVerdict('item-b', no);
+    // Act
+    const rest = await storage.removeAiVerdict('item-a');
+    // Assert
+    expect(rest).toEqual({ 'item-b': no });
+    expect(await storage.getAiVerdicts()).toEqual({ 'item-b': no });
+  });
+
+  it('M3 より前の旧形式（文字列だけ）は、点数なしの回答として読む', async () => {
+    // Arrange — M1/M2 の保存形式
+    await chrome.storage.local.set({ aiVerdicts: { 'item-a': 'yes', 'item-b': 'no' } });
+    // Act & Assert — 消さずに残す。点数が null なので一致率には入らない
+    expect(await storage.getAiVerdicts()).toEqual({
+      'item-a': { verdict: 'yes', score: null, answeredAt: null },
+      'item-b': { verdict: 'no', score: null, answeredAt: null },
+    });
+  });
+
+  it('新しい回答を足しても旧形式の回答を消さない', async () => {
+    await chrome.storage.local.set({ aiVerdicts: { 'item-a': 'yes' } });
+    await storage.saveAiVerdict('item-b', no);
+    expect(await storage.getAiVerdicts()).toEqual({
+      'item-a': { verdict: 'yes', score: null, answeredAt: null },
+      'item-b': no,
+    });
+  });
+
+  it('壊れた回答だけ落とし、他の回答は残す', async () => {
+    // Arrange
+    await chrome.storage.local.set({
+      aiVerdicts: {
+        good: yes,
+        unknownVerdict: { verdict: 'maybe', score: 3, answeredAt: at },
+        unknownString: 'maybe',
+        badScore: { verdict: 'yes', score: '6', answeredAt: at },
+        negativeScore: { verdict: 'yes', score: -1, answeredAt: at },
+        // シグナルの数（8）を超える点数はありえない。一致率の計算に入れない
+        tooHighScore: { verdict: 'yes', score: 99, answeredAt: at },
+        noTime: { verdict: 'yes', score: 6 },
+      },
+    });
+    // Act & Assert
+    expect(await storage.getAiVerdicts()).toEqual({ good: yes });
   });
 });

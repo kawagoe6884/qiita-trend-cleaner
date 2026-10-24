@@ -140,9 +140,17 @@ async function applyHiding(): Promise<void> {
   }
 }
 
-/** 当たり / 外れを押したとき。描き直しは storage.onChanged に任せる（評価と同じ経路） */
-function onAiAnswer(itemId: ItemId, verdict: AiVerdict): void {
-  storage.saveAiVerdict(itemId, verdict).catch((error: unknown) => {
+/**
+ * そうかも / 違うかもを押したとき。**回答時の点数と時刻を一緒に残す**（M3 — 線引きを
+ * 動かしたあとでも一致率を数え直せるように）。描き直しは storage.onChanged に任せる。
+ * verdict が null なら取り消し（回答済みの側をもう一度押した）
+ */
+function onAiAnswer(itemId: ItemId, verdict: AiVerdict | null, score: number): void {
+  const saving =
+    verdict === null
+      ? storage.removeAiVerdict(itemId)
+      : storage.saveAiVerdict(itemId, { verdict, score, answeredAt: new Date().toISOString() });
+  saving.catch((error: unknown) => {
     logger.debug('failed to save ai verdict:', itemId, error);
   });
 }
