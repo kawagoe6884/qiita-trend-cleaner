@@ -937,3 +937,21 @@ describe('index.html のレイアウト順序', () => {
     expect(indexHtml).not.toContain('.jpg');
   });
 });
+
+describe('ダークモード', () => {
+  it('OS / Chrome の配色に追従する（背景・文字・入力欄の既定色を切り替える）', () => {
+    // 背景色を書いていないので、これが無いとダークモードでも白地のままになる。
+    // CSS より先に読まれる meta に置き、白い画面が一瞬出るのも防ぐ
+    expect(indexHtml).toContain('<meta name="color-scheme" content="light dark" />');
+  });
+
+  it('ページ全体の背景色と文字色を直書きしない（書くとダークモードで白地・黒字に戻る）', () => {
+    // Arrange — html・body・:root で始まる規則を取り出す（コメント中の「body」は拾わない）
+    const rules = [...indexHtml.matchAll(/^\s*(?:html|body|:root)\b[^{\n]*\{([^}]*)\}/gm)].map(
+      (match) => match[1] ?? '',
+    );
+    // Act / Assert — body の規則は必ずあるので、空振りで通らないことも確かめる
+    expect(rules.length).toBeGreaterThan(0);
+    for (const rule of rules) expect(rule).not.toMatch(/(?:^|[\s;])(?:background|color)\s*:/);
+  });
+});
