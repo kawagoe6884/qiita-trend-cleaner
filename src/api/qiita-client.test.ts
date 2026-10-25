@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { fetchItemBody, fetchLikes, fetchUserItems, verifyToken } from './qiita-client';
-import { QtgError, RateLimitError } from '../lib/errors';
+import { AuthRejectedError, QtgError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 
 // Chrome は console.warn も chrome://extensions のエラー欄に集めるため、
@@ -90,6 +90,13 @@ describe('fetchLikes', () => {
   it('401 なら QtgError を投げる', async () => {
     stubFetch({ message: 'Unauthorized' }, { status: 401 });
     await expect(fetchLikes('0123456789abcdef0123', 'bad')).rejects.toThrow(QtgError);
+  });
+
+  it('401 は AuthRejectedError として区別できる（scanner が失敗を記録しない）', async () => {
+    stubFetch({ message: 'Unauthorized' }, { status: 401 });
+    await expect(fetchLikes('0123456789abcdef0123', 'bad')).rejects.toBeInstanceOf(
+      AuthRejectedError,
+    );
   });
 
   it('429 なら RateLimitError を投げ、Rate-Reset を載せる', async () => {

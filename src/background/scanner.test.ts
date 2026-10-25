@@ -12,7 +12,7 @@ import {
   getAiHints,
   saveAiHints,
 } from '../lib/storage';
-import { RateLimitError } from '../lib/errors';
+import { AuthRejectedError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { countRecords } from '../detect/like-index';
 // **rate-budget から取る。**qiita-client はこのファイルが vi.mock しているので、
@@ -1245,6 +1245,22 @@ describe('runScan の AI ヒント', () => {
     // Assert
     expect(bodyMock).toHaveBeenCalledTimes(1);
     expect(bodyMock.mock.calls[0]?.[0]).toBe(TWO_ITEMS[0]?.itemId);
+  });
+
+  it('401/403 は失敗として記録しない（トークンを直せばすぐ取れる）', async () => {
+    // Arrange — 失効トークンだと全記事が落ちる。記録すると直しても 24 時間出ない
+    await saveToken('dummy-token-value');
+    bodyMock.mockRejectedValue(new AuthRejectedError(401));
+    await runScan(TWO_ITEMS);
+    bodyMock.mockReset();
+    bodyMock.mockResolvedValue({
+      data: { id: 'unused', body: BODY_MARKER },
+      rate: { limit: 1000, remaining: 980, resetAt: null },
+    });
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).toHaveBeenCalledTimes(2);
   });
 
   it('429 は失敗として記録しない（枠が戻れば次のスキャンで取る）', async () => {

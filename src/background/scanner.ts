@@ -21,7 +21,7 @@
  * Promise.all で 30 本並べると 429 に一気に当たり、どこで止まったかも分からなくなる。
  */
 import { logger } from '../lib/logger';
-import { RateLimitError } from '../lib/errors';
+import { AuthRejectedError, RateLimitError } from '../lib/errors';
 import { updateBadge } from '../lib/badge';
 import { authorsToVisit, recordVisits, pruneVisits } from './author-visits';
 import { isRetryDue, pruneFailures, recordFailures } from './body-failures';
@@ -488,7 +488,8 @@ async function scoreAiHints(
         break;
       }
       logger.debug('skip ai hint:', item.itemId, error);
-      failed.push(item.itemId);
+      // 失効トークンは記事の問題ではない。記録するとトークンを直しても 24 時間出ない
+      if (!(error instanceof AuthRejectedError)) failed.push(item.itemId);
     }
   }
   return { progress, hints, failed };

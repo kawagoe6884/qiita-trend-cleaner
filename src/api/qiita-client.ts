@@ -11,7 +11,7 @@
  * content-script.ts の isPongResponse と同じ方針で、レスポンスは型ガードで検証する。
  * JSON.parse の結果を型アサーションで信用しない。
  */
-import { QtgError, RateLimitError } from '../lib/errors';
+import { AuthRejectedError, QtgError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { readRateHeaders, API_PER_PAGE } from './rate-budget';
 import type { RateState } from './rate-budget';
@@ -122,7 +122,7 @@ async function request(path: string, token: string | null): Promise<Response> {
   // 記録するため、ここは開発時にだけ見える debug で足りる。
   if (response.status === 401 || response.status === 403) {
     logger.debug('api auth rejected:', response.status, path);
-    throw new QtgError(`api auth rejected (${String(response.status)})`);
+    throw new AuthRejectedError(response.status);
   }
   // 429 は改訂 6 で「設計どおりの停止信号」になった。ライトモードの枠は 60 req/h で、
   // トレンド 30 件のスキャンを 2 回まわせば届く。正常な無料プランの挙動を warn に
