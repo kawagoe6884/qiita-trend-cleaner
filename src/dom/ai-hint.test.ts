@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderAiHints, clearAiHints, describeAiHint, isOwnMutation } from './ai-hint';
 import { AI_HINT_STYLE_ID } from './selectors';
-import { AI_HINT_DEFAULT_THRESHOLD, AI_HINT_MIN_PROSE_CHARS, AI_SIGNALS } from '../types/domain';
+import {
+  AI_HINT_DEFAULT_THRESHOLD,
+  AI_HINT_MIN_PROSE_CHARS,
+  AI_SIGNALS,
+  DEFAULT_AI_HINT_PREFS,
+} from '../types/domain';
 import type { AiAnswer, AiHint, AiHintLog, AiVerdict, AiVerdictLog } from '../types/domain';
 
 /** hider.test.ts と同じ骨格。実測どおり記事リンクを 2 本持たせる。合成値のみ */
@@ -289,7 +294,11 @@ describe('renderAiHints', () => {
     document.body.innerHTML = card(1) + card(2);
     const hints: AiHintLog = { [itemIdOf(1)]: hint(3), [itemIdOf(2)]: hint(2) };
     // Act
-    renderAiHints(hints, {}, vi.fn(), { threshold: 3, minProseChars: AI_HINT_MIN_PROSE_CHARS });
+    renderAiHints(hints, {}, vi.fn(), {
+      threshold: 3,
+      minProseChars: AI_HINT_MIN_PROSE_CHARS,
+      dimLikely: false,
+    });
     // Assert
     expect(hintsOn(1)?.dataset.qtgAiLikely).toBe('true');
     expect(hintsOn(2)?.dataset.qtgAiLikely).toBe('false');
@@ -300,7 +309,11 @@ describe('renderAiHints', () => {
     const hints: AiHintLog = { [itemIdOf(1)]: hint(5) };
     renderAiHints(hints, {}, vi.fn());
     expect(hintsOn(1)?.dataset.qtgAiLikely).toBe('true');
-    renderAiHints(hints, {}, vi.fn(), { threshold: 6, minProseChars: AI_HINT_MIN_PROSE_CHARS });
+    renderAiHints(hints, {}, vi.fn(), {
+      threshold: 6,
+      minProseChars: AI_HINT_MIN_PROSE_CHARS,
+      dimLikely: false,
+    });
     expect(hintsOn(1)?.dataset.qtgAiLikely).toBe('false');
     expect(document.querySelectorAll('[data-qtg-ai-hint]')).toHaveLength(1);
   });
@@ -310,7 +323,11 @@ describe('renderAiHints', () => {
     document.body.innerHTML = card(1) + card(2);
     const hints: AiHintLog = { [itemIdOf(1)]: hint(3, 499), [itemIdOf(2)]: hint(3, 500) };
     // Act
-    renderAiHints(hints, {}, vi.fn(), { threshold: AI_HINT_DEFAULT_THRESHOLD, minProseChars: 500 });
+    renderAiHints(hints, {}, vi.fn(), {
+      threshold: AI_HINT_DEFAULT_THRESHOLD,
+      minProseChars: 500,
+      dimLikely: false,
+    });
     // Assert
     expect(hintsOn(1)?.textContent).toContain('判定が甘い可能性あり');
     expect(hintsOn(2)?.textContent).not.toContain('判定が甘い可能性あり');
@@ -321,6 +338,7 @@ describe('renderAiHints', () => {
     renderAiHints({ [itemIdOf(1)]: hint(3, 0) }, {}, vi.fn(), {
       threshold: AI_HINT_DEFAULT_THRESHOLD,
       minProseChars: 0,
+      dimLikely: false,
     });
     expect(hintsOn(1)?.textContent).not.toContain('判定が甘い可能性あり');
   });
@@ -349,6 +367,67 @@ describe('renderAiHints', () => {
  * 描き直しの監視が、自分の描画に反応して止まらなくなるのを防ぐ判定。
  * MutationObserver の記録を jsdom で実際に作って確かめる。
  */
+/** 強調される記事を薄く表示する（M4）。カードに印を付け、head の規則で薄くする */
+describe('renderAiHints（薄く表示する）', () => {
+  const dimOn = { ...DEFAULT_AI_HINT_PREFS, dimLikely: true };
+
+  function cardOf(n: number): HTMLElement | null | undefined {
+    return hintsOn(n)?.parentElement;
+  }
+
+  it('既定（オフ）ではどのカードにも印を付けない', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(8) }, {}, vi.fn());
+    expect(cardOf(1)?.dataset.qtgAiDim).toBeUndefined();
+  });
+
+  it('オンなら強調される記事のカードだけに印を付ける', () => {
+    // Arrange
+    document.body.innerHTML = card(1) + card(2);
+    const hints: AiHintLog = {
+      [itemIdOf(1)]: hint(AI_HINT_DEFAULT_THRESHOLD),
+      [itemIdOf(2)]: hint(AI_HINT_DEFAULT_THRESHOLD - 1),
+    };
+    // Act
+    renderAiHints(hints, {}, vi.fn(), dimOn);
+    // Assert
+    expect(cardOf(1)?.dataset.qtgAiDim).toBe('true');
+    expect(cardOf(2)?.dataset.qtgAiDim).toBeUndefined();
+  });
+
+  it('印はカードに付け、ヒント自体には付けない（ヒントと回答ボタンは薄くしない）', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(8) }, {}, vi.fn(), dimOn);
+    expect(hintsOn(1)?.dataset.qtgAiDim).toBeUndefined();
+    expect(buttonOf(1, 'そうかも')).toBeDefined();
+  });
+
+  it('線引きを上げて描き直すと印が外れる', () => {
+    document.body.innerHTML = card(1);
+    const hints: AiHintLog = { [itemIdOf(1)]: hint(5) };
+    renderAiHints(hints, {}, vi.fn(), dimOn);
+    renderAiHints(hints, {}, vi.fn(), { ...dimOn, threshold: 6 });
+    expect(cardOf(1)?.dataset.qtgAiDim).toBeUndefined();
+  });
+
+  it('オフに戻して描き直すと印が外れる', () => {
+    document.body.innerHTML = card(1);
+    const hints: AiHintLog = { [itemIdOf(1)]: hint(8) };
+    renderAiHints(hints, {}, vi.fn(), dimOn);
+    renderAiHints(hints, {}, vi.fn());
+    expect(cardOf(1)?.dataset.qtgAiDim).toBeUndefined();
+  });
+
+  it('規則は、ヒント以外を薄くし、乗せた時・フォーカス時に戻す', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(8) }, {}, vi.fn(), dimOn);
+    const rules = document.getElementById(AI_HINT_STYLE_ID)?.textContent ?? '';
+    expect(rules).toContain('[data-qtg-ai-dim="true"] > :not([data-qtg-ai-hint])');
+    expect(rules).toContain('[data-qtg-ai-dim="true"]:hover > :not([data-qtg-ai-hint])');
+    expect(rules).toContain('[data-qtg-ai-dim="true"]:focus-within > :not([data-qtg-ai-hint])');
+  });
+});
+
 describe('isOwnMutation', () => {
   // 同期で取り出す。マイクロタスクを挟むとコールバックに渡って空になる
   function recordsOf(mutate: () => void): MutationRecord[] {
@@ -418,5 +497,15 @@ describe('clearAiHints', () => {
     renderAiHints({ [itemIdOf(1)]: hint(1) }, {}, vi.fn());
     clearAiHints();
     expect(document.querySelector<HTMLElement>('.card')?.dataset.qtgAiCard).toBeUndefined();
+  });
+
+  it('薄く表示する印も消す', () => {
+    document.body.innerHTML = card(1);
+    renderAiHints({ [itemIdOf(1)]: hint(8) }, {}, vi.fn(), {
+      ...DEFAULT_AI_HINT_PREFS,
+      dimLikely: true,
+    });
+    clearAiHints();
+    expect(document.querySelector<HTMLElement>('.card')?.dataset.qtgAiDim).toBeUndefined();
   });
 });

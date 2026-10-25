@@ -59,6 +59,8 @@ const SELECTORS = {
   aiThresholdValue: '#ai-threshold-value',
   aiMinProse: '#ai-min-prose',
   aiMinProsePresets: 'button[data-min-prose]',
+  aiDimLikely: '#ai-dim-likely',
+  aiDimLikelyState: '#ai-dim-likely-state',
   aiAgreementSummary: '#ai-agreement-summary',
   aiAgreementRows: '#ai-agreement-rows',
   aiAgreementLegacy: '#ai-agreement-legacy',
@@ -365,6 +367,9 @@ function renderAiHintPrefs(prefs: AiHintPrefs): void {
   if (threshold) threshold.value = String(prefs.threshold);
   renderAiThresholdValue(prefs.threshold);
   renderMinProse(prefs.minProseChars);
+  const dim = find<HTMLInputElement>(SELECTORS.aiDimLikely);
+  if (dim) dim.checked = prefs.dimLikely;
+  renderToggleState(prefs.dimLikely, SELECTORS.aiDimLikelyState);
 }
 
 /**
@@ -485,11 +490,18 @@ function attachAiHintListeners(): void {
     renderMinProse(value);
     saveAiHint({ minProseChars: value });
   });
+
+  // 「薄く表示する」（M4）。保存を待たずに文言を映す（muteOnValid と同じ）
+  find<HTMLInputElement>(SELECTORS.aiDimLikely)?.addEventListener('change', (event) => {
+    const checked = event.target instanceof HTMLInputElement && event.target.checked;
+    renderToggleState(checked, SELECTORS.aiDimLikelyState);
+    saveAiHint({ dimLikely: checked });
+  });
 }
 
 /** 「する」「しない」を映す。**init と change の両方から呼ぶ** */
-function renderToggleState(checked: boolean): void {
-  const state = find(SELECTORS.muteOnValidState);
+function renderToggleState(checked: boolean, selector: string = SELECTORS.muteOnValidState): void {
+  const state = find(selector);
   if (state) state.textContent = describeToggleState(checked);
 }
 

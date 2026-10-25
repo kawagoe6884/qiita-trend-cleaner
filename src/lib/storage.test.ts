@@ -338,41 +338,102 @@ describe('getFoldTarget / saveFoldTarget', () => {
 
 /** 「AI文体かも？」の線引き。表示の設定なので local に置く（foldTarget と同じ） */
 describe('getAiHintPrefs / saveAiHintPrefs', () => {
-  it('未設定なら既定値（5 点 / 334 字）', async () => {
-    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 5, minProseChars: 334 });
+  it('未設定なら既定値（5 点 / 334 字 / 薄くしない）', async () => {
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 5,
+      minProseChars: 334,
+      dimLikely: false,
+    });
   });
 
   it('保存した値を読み戻せる', async () => {
-    await storage.saveAiHintPrefs({ threshold: 3, minProseChars: 500 });
-    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 3, minProseChars: 500 });
+    await storage.saveAiHintPrefs({ threshold: 3, minProseChars: 500, dimLikely: false });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 3,
+      minProseChars: 500,
+      dimLikely: false,
+    });
   });
 
   it('範囲の両端を受け付ける', async () => {
-    await storage.saveAiHintPrefs({ threshold: 1, minProseChars: 0 });
-    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 1, minProseChars: 0 });
-    await storage.saveAiHintPrefs({ threshold: 8, minProseChars: 2000 });
-    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 8, minProseChars: 2000 });
+    await storage.saveAiHintPrefs({ threshold: 1, minProseChars: 0, dimLikely: false });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 1,
+      minProseChars: 0,
+      dimLikely: false,
+    });
+    await storage.saveAiHintPrefs({ threshold: 8, minProseChars: 2000, dimLikely: false });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 8,
+      minProseChars: 2000,
+      dimLikely: false,
+    });
   });
 
   it('壊れた項目だけ既定値に倒し、もう片方は生かす', async () => {
     await chrome.storage.local.set({ aiHintPrefs: { threshold: 9, minProseChars: 100 } });
-    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 5, minProseChars: 100 });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 5,
+      minProseChars: 100,
+      dimLikely: false,
+    });
     await chrome.storage.local.set({ aiHintPrefs: { threshold: 2, minProseChars: -1 } });
-    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 2, minProseChars: 334 });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 2,
+      minProseChars: 334,
+      dimLikely: false,
+    });
   });
 
   it('非整数・型違いは丸めず既定値に倒す', async () => {
     await chrome.storage.local.set({ aiHintPrefs: { threshold: 3.5, minProseChars: '500' } });
-    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 5, minProseChars: 334 });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 5,
+      minProseChars: 334,
+      dimLikely: false,
+    });
   });
 
   it('オブジェクトでなくても例外を投げず既定値', async () => {
     await chrome.storage.local.set({ aiHintPrefs: 'strict' });
-    await expect(storage.getAiHintPrefs()).resolves.toEqual({ threshold: 5, minProseChars: 334 });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 5,
+      minProseChars: 334,
+      dimLikely: false,
+    });
+  });
+
+  it('薄くする設定を読み戻せる', async () => {
+    await storage.saveAiHintPrefs({ threshold: 5, minProseChars: 334, dimLikely: true });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 5,
+      minProseChars: 334,
+      dimLikely: true,
+    });
+  });
+
+  it('M4 より前の保存値（dimLikely なし）は薄くしない', async () => {
+    await chrome.storage.local.set({ aiHintPrefs: { threshold: 3, minProseChars: 200 } });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 3,
+      minProseChars: 200,
+      dimLikely: false,
+    });
+  });
+
+  it('dimLikely が boolean でなければ薄くしない（他の項目は生かす）', async () => {
+    await chrome.storage.local.set({
+      aiHintPrefs: { threshold: 3, minProseChars: 200, dimLikely: 'true' },
+    });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 3,
+      minProseChars: 200,
+      dimLikely: false,
+    });
   });
 
   it('local に置く（sync には書かない）', async () => {
-    await storage.saveAiHintPrefs({ threshold: 4, minProseChars: 334 });
+    await storage.saveAiHintPrefs({ threshold: 4, minProseChars: 334, dimLikely: false });
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(chrome.storage.sync.set).not.toHaveBeenCalled();
   });

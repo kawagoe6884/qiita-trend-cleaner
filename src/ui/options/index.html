@@ -294,6 +294,13 @@
         text-align: left;
         font-size: 0.85rem;
         margin-bottom: 4px;
+        /* 表は数字の幅まで縮むので、見出しが表の幅で折り返されて「あなた / の」で割れた */
+        white-space: nowrap;
+      }
+      @media (max-width: 560px) {
+        table.ai-agreement caption {
+          white-space: normal;
+        }
       }
       table.ai-agreement th,
       table.ai-agreement td {
@@ -568,11 +575,21 @@
         字にします。コードを除いた地の文の字数で数えます。
       </p>
 
+      <label class="toggle" style="margin-top: 16px">
+        <input type="checkbox" id="ai-dim-likely" />
+        <span class="track"></span>
+        <span>強調される記事を薄く表示する</span>
+        <strong class="toggle-state" id="ai-dim-likely-state"></strong>
+      </label>
+      <p class="hint">
+        既定はオフです。マウスを乗せると元の濃さに戻り、「AI文体かも？」と 「そうかも /
+        違うかも」は薄くならないので、そのまま答えられます。
+      </p>
+
       <h2 style="margin-top: 24px">あなたの答えとの一致率</h2>
       <p class="hint">
         トレンドの「AI文体かも？」にマウスを乗せて「そうかも / 違うかも」を押すと数えます。<br />
-        強調された記事に「そうかも」、強調されなかった記事に「違うかも」と答えたら一致です。30
-        件たまったら、目標の 70% に届いたかを判定します。
+        強調された記事に「そうかも」、強調されなかった記事に「違うかも」と答えたら一致です。
       </p>
       <p id="ai-agreement-summary" role="status" aria-live="polite"></p>
       <table class="ai-agreement">

@@ -481,11 +481,19 @@ export interface AiHintPrefs {
   threshold: number;
   /** 地の文がこれ未満なら短文の注釈を付ける */
   minProseChars: number;
+  /**
+   * 強調される記事のカードを薄く表示するか（M4）。**既定は false。**
+   *
+   * 自動非表示の代わり（PRD「検証後の再検討」）。隠さず、乗せれば戻り、
+   * ヒントと回答ボタンは薄くしない。視界を狭める変更なので FoldTarget と同じく既定はオフ
+   */
+  dimLikely: boolean;
 }
 
 export const DEFAULT_AI_HINT_PREFS: AiHintPrefs = {
   threshold: AI_HINT_DEFAULT_THRESHOLD,
   minProseChars: AI_HINT_MIN_PROSE_CHARS,
+  dimLikely: false,
 };
 
 /**
