@@ -5,7 +5,9 @@ export default defineManifest({
   manifest_version: 3,
   name: 'Qiita Trend Cleaner',
   version: pkg.version,
-  description: 'Qiita のトレンドから、不自然ないいねパターンが検出された記事を隠します。',
+  // ストアの「短い説明」にもなる（132 文字以内）。単一目的に合わせ、機能はその手段として書く
+  description:
+    'Qiita のトレンドを、あなたが決めた基準で見分けやすくします。不自然ないいねパターンの検出と、AI 文体の目安を表示します（非公式）。',
   icons: {
     16: 'icons/icon-16.png',
     48: 'icons/icon-48.png',
