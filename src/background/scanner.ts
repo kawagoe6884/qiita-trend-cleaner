@@ -24,6 +24,7 @@ import { logger } from '../lib/logger';
 import { RateLimitError } from '../lib/errors';
 import { updateBadge } from '../lib/badge';
 import { authorsToVisit, recordVisits, pruneVisits } from './author-visits';
+import { isRetryDue, pruneFailures, recordFailures } from './body-failures';
 import { fetchItemBody, fetchLikes, fetchUserItems } from '../api/qiita-client';
 import { decideMode, API_PER_PAGE } from '../api/rate-budget';
 import {
@@ -44,6 +45,7 @@ import type {
   Candidate,
   Settings,
   IsoDateTime,
+  ItemId,
   LikeIndex,
   ScanMode,
   ScanResult,
@@ -459,20 +461,23 @@ async function scanAuthor(
  * ライトモードで蓄積したあとにトークンを設定した人の記事も数えるため
  * （著者巡回で items から handles を取るのと同じ理由）。
  *
- * 429 で止めるのはいいねの取得と同じ。1 件の失敗は debug に留めて先へ進む。
+ * 429 で止めるのはいいねの取得と同じ。1 件の失敗は debug に留めて先へ進み、
+ * `failed` に載せて BODY_RETRY_HOURS のあいだ取り直さない（body-failures.ts）。
+ * `shouldFetch` は呼び出し側がスコア済み・失敗済みから組み立てる。
  */
 async function scoreAiHints(
   items: TrendItem[],
   token: string | null,
-  scored: AiHintLog,
+  shouldFetch: (itemId: ItemId) => boolean,
   initial: ScanProgress,
   now: Date,
-): Promise<{ progress: ScanProgress; hints: AiHintLog }> {
+): Promise<{ progress: ScanProgress; hints: AiHintLog; failed: ItemId[] }> {
   let progress = initial;
   const hints: AiHintLog = {};
+  const failed: ItemId[] = [];
   for (const item of items) {
     if (progress.rateLimited) break;
-    if (item.itemId in scored || item.itemId in hints) continue;
+    if (!shouldFetch(item.itemId) || item.itemId in hints) continue;
     try {
       const response = await fetchItemBody(item.itemId, token);
       progress = { ...progress, rate: response.rate ?? progress.rate };
@@ -483,9 +488,33 @@ async function scoreAiHints(
         break;
       }
       logger.debug('skip ai hint:', item.itemId, error);
+      failed.push(item.itemId);
     }
   }
-  return { progress, hints };
+  return { progress, hints, failed };
+}
+
+/**
+ * 本文を数えて保存する一連の流れ（フルモードのみ）。
+ *
+ * 失敗の記録も**保存の直前に読み直す**（persistAiHints と同じ理由）。
+ * 失敗が無くても保存するのは、時期の来た記録を掃除するため。
+ */
+async function runAiHints(
+  items: TrendItem[],
+  token: string | null,
+  initial: ScanProgress,
+  now: Date,
+): Promise<ScanProgress> {
+  const scored = await storage.getAiHints();
+  const failures = await storage.getAiHintFailures();
+  const shouldFetch = (itemId: ItemId): boolean =>
+    !(itemId in scored) && isRetryDue(failures, itemId, now);
+  const ai = await scoreAiHints(items, token, shouldFetch, initial, now);
+  if (Object.keys(ai.hints).length > 0) await persistAiHints(ai.hints, now);
+  const latest = await storage.getAiHintFailures();
+  await storage.saveAiHintFailures(pruneFailures(recordFailures(latest, ai.failed, now), now));
+  return ai.progress;
 }
 
 /**
@@ -744,9 +773,7 @@ async function scanTrend(items: TrendItem[], startedAt: IsoDateTime): Promise<Sc
   // 「AI文体かも？」は著者巡回より先に置く。利用者に見えるのはトレンドの 30 件で、
   // 本文は 30 req 程度。巡回で枠を使い切ってから数えると、表示が出ない
   if (mode === 'full' && !progress.rateLimited) {
-    const ai = await scoreAiHints(items, token, await storage.getAiHints(), progress, now);
-    progress = ai.progress;
-    if (Object.keys(ai.hints).length > 0) await persistAiHints(ai.hints, now);
+    progress = await runAiHints(items, token, progress, now);
   }
 
   // 著者は **items（トレンド全件）から取る。newItems ではない。**

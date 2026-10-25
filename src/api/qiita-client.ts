@@ -21,6 +21,20 @@ const API_BASE = 'https://qiita.com/api/v2';
 const PER_PAGE = API_PER_PAGE;
 
 /**
+ * 著者の記事一覧だけは件数を絞る。**応答は 1 本ごとに本文（Markdown と HTML）込み。**
+ *
+ * 使うのは保持期間（7 日）内の未取得の記事を 1 回に 2 本、24 時間ごとの再訪で
+ * 遡れるのは多くて 14 本前後。100 本取っても 8 割以上は捨てる本文だった。
+ *
+ * 【実機 2026-10-25】Norton のセーフ ウェブがこの応答を `BV:Downloader` として
+ * 遮断した。記事中のインストール手順（ダウンロード→展開→実行）がスクリプト用の
+ * シグネチャに当たったとみられる。受け取る本文を減らせば当たる確率も下がる。
+ *
+ * likes の完全性の判定（API_PER_PAGE）とは無関係。共有しない。
+ */
+const USER_ITEMS_PER_PAGE = 20;
+
+/**
  * パスセグメントに入れてよい形式。
  *
  * encodeURIComponent は "." をエンコードしないため ".." を防げない。
@@ -170,7 +184,7 @@ export async function fetchUserItems(
   handle: string,
   token: string | null,
 ): Promise<ApiResponse<QiitaItem[]>> {
-  const path = `/users/${toSafeSegment(handle, 'handle')}/items?per_page=${String(PER_PAGE)}`;
+  const path = `/users/${toSafeSegment(handle, 'handle')}/items?per_page=${String(USER_ITEMS_PER_PAGE)}`;
   const response = await request(path, token);
   return readArray(response, isQiitaItem, `items(${handle})`);
 }

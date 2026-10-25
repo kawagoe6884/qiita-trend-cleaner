@@ -144,6 +144,12 @@ export type FeedbackLog = Record<AccountHandle, Verdict>;
 export type AuthorVisits = Record<AccountHandle, IsoDateTime>;
 
 /**
+ * 記事 ID -> 「AI文体かも？」用の本文取得に最後に失敗した時刻（フルモードのみ）。
+ * 429 は含めない。判断は background/body-failures.ts に集める。
+ */
+export type AiHintFailures = Record<ItemId, IsoDateTime>;
+
+/**
  * ミュートを試みた結果。**例外ではなく値で返す**（DOM 層は投げない・約束 3）。
  *
  * **popup-state.ts が使うのでここに置く。**dom/muter.ts に置くと、
@@ -599,6 +605,8 @@ export interface LocalState {
   foldTarget?: FoldTarget;
   /** 著者ごとの過去記事巡回の記録。保持期間 7 日でパージする */
   authorVisits?: AuthorVisits;
+  /** 本文の取得に失敗した記事の記録。24 時間でパージする */
+  aiHintFailures?: AiHintFailures;
   /** 記事ごとの文体スコア（フルモードのみ）。保持期間 7 日でパージする */
   aiHints?: AiHintLog;
   /** 「AI文体かも？」への回答。パージしない */
