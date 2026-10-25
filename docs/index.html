@@ -6,7 +6,7 @@
     <title>Qiita Trend Cleaner</title>
     <meta
       name="description"
-      content="Qiita のトレンドから不自然ないいねパターンが見られる記事を検出して隠す非公式の Chrome 拡張機能。"
+      content="Qiita のトレンドを、あなたが決めた基準で見分けやすくする非公式の Chrome 拡張機能。不自然ないいねパターンの検出と、AI 文体の目安の表示。"
     />
     <link rel="stylesheet" href="./m3.css" />
   </head>
@@ -16,8 +16,9 @@
         <span class="chip">非公式</span>
         <h1>Qiita Trend Cleaner</h1>
         <p class="lead">
-          Qiita のトレンドから<strong>不自然ないいねパターン</strong>が見られる記事を検出して隠す
-          Chrome 拡張機能です。
+          Qiita のトレンドを、<strong>あなたが決めた基準で見分けやすくする</strong> Chrome
+          拡張機能です。<strong>不自然ないいねパターン</strong>が見られる記事を検出して隠せるほか、
+          トークンを設定すると記事の文体から「<strong>AI文体かも？</strong>」の目安を出します。
         </p>
       </div>
     </header>
@@ -73,6 +74,11 @@
             Qiita のページ自身が発行します
           </li>
           <li>収集した いいね の記録は<strong>7 日で自動的に破棄</strong>されます</li>
+          <li>
+            「AI文体かも？」のために取得した記事の本文は、ブラウザの中で数えたあと破棄し、<strong
+              >保存しません</strong
+            >
+          </li>
           <li>権限は <code>storage</code> と <code>https://qiita.com/*</code> だけです</li>
         </ul>
 

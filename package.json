@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Detect and hide Qiita trend articles boosted by coordinated likes.",
+  "description": "Make Qiita trends easier to sort through by your own criteria: coordinated-like detection and AI-style hints.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
