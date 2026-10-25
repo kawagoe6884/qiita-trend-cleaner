@@ -164,13 +164,15 @@ describe('パスセグメントの検証', () => {
 });
 
 describe('fetchUserItems', () => {
-  it('著者ハンドルをパスに入れる', async () => {
+  it('著者ハンドルをパスに入れ、per_page は 20 に絞る', async () => {
+    // 応答は記事の本文込み。使うのは保持期間内の数本だけなので、
+    // 100 本ぶんの本文を受け取らない（セキュリティソフトの誤検知を招いた）
     const mock = stubFetch([
       { id: '0123456789abcdef0123', created_at: '2026-08-18T10:00:00+09:00' },
     ]);
     const result = await fetchUserItems('example-author', null);
     expect(mock.mock.calls[0]?.[0]).toBe(
-      'https://qiita.com/api/v2/users/example-author/items?per_page=100',
+      'https://qiita.com/api/v2/users/example-author/items?per_page=20',
     );
     expect(result.data[0]?.id).toBe('0123456789abcdef0123');
   });
