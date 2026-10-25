@@ -26,6 +26,20 @@ export class QtgError extends Error {
  * クライアント側にあると、モックの戻り値が undefined になって instanceof が
  * 実行時に壊れる。例外型は例外の置き場に集める。
  */
+/**
+ * 401 / 403。トークンが無効なだけで、記事や通信の異常ではない。
+ *
+ * scanner は本文取得の失敗を記録して 24 時間取り直さないが、これは記録しない。
+ * 失効トークンでは全記事が落ちるため、記録するとトークンを直しても
+ * 24 時間「AI文体かも？」が出なくなる。置き場の理由は RateLimitError と同じ。
+ */
+export class AuthRejectedError extends QtgError {
+  constructor(status: number) {
+    super(`api auth rejected (${String(status)})`);
+    this.name = 'AuthRejectedError';
+  }
+}
+
 export class RateLimitError extends QtgError {
   /** Unix 秒。Rate-Reset ヘッダーが無ければ null */
   readonly resetAt: number | null;

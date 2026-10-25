@@ -26,6 +26,8 @@ import {
   saveVerdict,
   getAuthorVisits,
   saveAuthorVisits,
+  getAiHintFailures,
+  saveAiHintFailures,
 } from './storage';
 import { DEFAULT_SETTINGS } from '../types/domain';
 import type { AiAnswer, Candidate, LikeIndex, ScanResult } from '../types/domain';
@@ -542,6 +544,33 @@ describe('getAuthorVisits', () => {
   it('空文字は落とす（時刻として使えない）', async () => {
     await chrome.storage.local.set({ authorVisits: { 'example-author-1': '' } });
     expect(await getAuthorVisits()).toEqual({});
+  });
+});
+
+/** 本文の取得に失敗した記事の記録。getAuthorVisits と同じく 1 件の破損で全体を捨てない */
+describe('getAiHintFailures / saveAiHintFailures', () => {
+  it('保存した記録をそのまま返す', async () => {
+    const failures = { '0123456789abcdef0001': '2026-08-19T12:00:00.000Z' };
+    await saveAiHintFailures(failures);
+    expect(await getAiHintFailures()).toEqual(failures);
+  });
+
+  it('未保存なら空を返す', async () => {
+    expect(await getAiHintFailures()).toEqual({});
+  });
+
+  it('配列は空に倒す', async () => {
+    await chrome.storage.local.set({ aiHintFailures: ['2026-08-19T12:00:00.000Z'] });
+    expect(await getAiHintFailures()).toEqual({});
+  });
+
+  it('壊れた 1 件だけを落として残りは返す', async () => {
+    await chrome.storage.local.set({
+      aiHintFailures: { '0123456789abcdef0001': '2026-08-19T12:00:00.000Z', bad: 42, empty: '' },
+    });
+    expect(await getAiHintFailures()).toEqual({
+      '0123456789abcdef0001': '2026-08-19T12:00:00.000Z',
+    });
   });
 });
 

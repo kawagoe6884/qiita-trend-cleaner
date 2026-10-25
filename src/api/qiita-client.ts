@@ -11,7 +11,7 @@
  * content-script.ts の isPongResponse と同じ方針で、レスポンスは型ガードで検証する。
  * JSON.parse の結果を型アサーションで信用しない。
  */
-import { QtgError, RateLimitError } from '../lib/errors';
+import { AuthRejectedError, QtgError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { readRateHeaders, API_PER_PAGE } from './rate-budget';
 import type { RateState } from './rate-budget';
@@ -19,6 +19,20 @@ import type { RateState } from './rate-budget';
 const API_BASE = 'https://qiita.com/api/v2';
 /** rate-budget から取る。**2 箇所に 100 と書かない** — 完全性の判定でも使う値 */
 const PER_PAGE = API_PER_PAGE;
+
+/**
+ * 著者の記事一覧だけは件数を絞る。**応答は 1 本ごとに本文（Markdown と HTML）込み。**
+ *
+ * 使うのは保持期間（7 日）内の未取得の記事を 1 回に 2 本、24 時間ごとの再訪で
+ * 遡れるのは多くて 14 本前後。100 本取っても 8 割以上は捨てる本文だった。
+ *
+ * 【実機 2026-10-25】Norton のセーフ ウェブがこの応答を `BV:Downloader` として
+ * 遮断した。記事中のインストール手順（ダウンロード→展開→実行）がスクリプト用の
+ * シグネチャに当たったとみられる。受け取る本文を減らせば当たる確率も下がる。
+ *
+ * likes の完全性の判定（API_PER_PAGE）とは無関係。共有しない。
+ */
+const USER_ITEMS_PER_PAGE = 20;
 
 /**
  * パスセグメントに入れてよい形式。
@@ -108,7 +122,7 @@ async function request(path: string, token: string | null): Promise<Response> {
   // 記録するため、ここは開発時にだけ見える debug で足りる。
   if (response.status === 401 || response.status === 403) {
     logger.debug('api auth rejected:', response.status, path);
-    throw new QtgError(`api auth rejected (${String(response.status)})`);
+    throw new AuthRejectedError(response.status);
   }
   // 429 は改訂 6 で「設計どおりの停止信号」になった。ライトモードの枠は 60 req/h で、
   // トレンド 30 件のスキャンを 2 回まわせば届く。正常な無料プランの挙動を warn に
@@ -170,7 +184,7 @@ export async function fetchUserItems(
   handle: string,
   token: string | null,
 ): Promise<ApiResponse<QiitaItem[]>> {
-  const path = `/users/${toSafeSegment(handle, 'handle')}/items?per_page=${String(PER_PAGE)}`;
+  const path = `/users/${toSafeSegment(handle, 'handle')}/items?per_page=${String(USER_ITEMS_PER_PAGE)}`;
   const response = await request(path, token);
   return readArray(response, isQiitaItem, `items(${handle})`);
 }

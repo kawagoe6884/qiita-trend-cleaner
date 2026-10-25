@@ -12,7 +12,7 @@ import {
   getAiHints,
   saveAiHints,
 } from '../lib/storage';
-import { RateLimitError } from '../lib/errors';
+import { AuthRejectedError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 import { countRecords } from '../detect/like-index';
 // **rate-budget から取る。**qiita-client はこのファイルが vi.mock しているので、
@@ -1214,5 +1214,64 @@ describe('runScan の AI ヒント', () => {
     // Assert
     expect(bodyMock).toHaveBeenCalledTimes(2);
     expect(Object.keys(await getAiHints())).toEqual([TWO_ITEMS[1]?.itemId]);
+  });
+
+  /**
+   * セキュリティソフトが特定の記事の本文を遮断すると、取得は毎回失敗する。
+   * 記録しないとトレンドを開くたびに叩き直し、そのたびに遮断の通知が出る
+   * （2026-10-25 の実機で Norton が著者一覧を遮断した件から）。
+   */
+  it('本文の取得に失敗した記事は、次のスキャンで取り直さない', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    bodyMock.mockRejectedValueOnce(new Error('network'));
+    await runScan(TWO_ITEMS);
+    bodyMock.mockClear();
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).not.toHaveBeenCalled();
+  });
+
+  it('失敗から 24 時間経てば取り直す', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    bodyMock.mockRejectedValueOnce(new Error('network'));
+    await runScan(TWO_ITEMS);
+    bodyMock.mockClear();
+    vi.setSystemTime(new Date('2026-08-20T12:00:00+09:00'));
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).toHaveBeenCalledTimes(1);
+    expect(bodyMock.mock.calls[0]?.[0]).toBe(TWO_ITEMS[0]?.itemId);
+  });
+
+  it('401/403 は失敗として記録しない（トークンを直せばすぐ取れる）', async () => {
+    // Arrange — 失効トークンだと全記事が落ちる。記録すると直しても 24 時間出ない
+    await saveToken('dummy-token-value');
+    bodyMock.mockRejectedValue(new AuthRejectedError(401));
+    await runScan(TWO_ITEMS);
+    bodyMock.mockReset();
+    bodyMock.mockResolvedValue({
+      data: { id: 'unused', body: BODY_MARKER },
+      rate: { limit: 1000, remaining: 980, resetAt: null },
+    });
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('429 は失敗として記録しない（枠が戻れば次のスキャンで取る）', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    bodyMock.mockRejectedValueOnce(new RateLimitError(1_755_600_000));
+    await runScan(TWO_ITEMS);
+    bodyMock.mockClear();
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(bodyMock).toHaveBeenCalledTimes(2);
   });
 });

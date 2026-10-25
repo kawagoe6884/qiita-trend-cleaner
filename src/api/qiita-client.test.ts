@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { fetchItemBody, fetchLikes, fetchUserItems, verifyToken } from './qiita-client';
-import { QtgError, RateLimitError } from '../lib/errors';
+import { AuthRejectedError, QtgError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
 
 // Chrome は console.warn も chrome://extensions のエラー欄に集めるため、
@@ -92,6 +92,13 @@ describe('fetchLikes', () => {
     await expect(fetchLikes('0123456789abcdef0123', 'bad')).rejects.toThrow(QtgError);
   });
 
+  it('401 は AuthRejectedError として区別できる（scanner が失敗を記録しない）', async () => {
+    stubFetch({ message: 'Unauthorized' }, { status: 401 });
+    await expect(fetchLikes('0123456789abcdef0123', 'bad')).rejects.toBeInstanceOf(
+      AuthRejectedError,
+    );
+  });
+
   it('429 なら RateLimitError を投げ、Rate-Reset を載せる', async () => {
     // Arrange — 呼び出し側は「読み飛ばして続行」と「そこで止める」を
     // 区別する必要がある。message の文字列一致で見分けるのは脆い
@@ -164,13 +171,15 @@ describe('パスセグメントの検証', () => {
 });
 
 describe('fetchUserItems', () => {
-  it('著者ハンドルをパスに入れる', async () => {
+  it('著者ハンドルをパスに入れ、per_page は 20 に絞る', async () => {
+    // 応答は記事の本文込み。使うのは保持期間内の数本だけなので、
+    // 100 本ぶんの本文を受け取らない（セキュリティソフトの誤検知を招いた）
     const mock = stubFetch([
       { id: '0123456789abcdef0123', created_at: '2026-08-18T10:00:00+09:00' },
     ]);
     const result = await fetchUserItems('example-author', null);
     expect(mock.mock.calls[0]?.[0]).toBe(
-      'https://qiita.com/api/v2/users/example-author/items?per_page=100',
+      'https://qiita.com/api/v2/users/example-author/items?per_page=20',
     );
     expect(result.data[0]?.id).toBe('0123456789abcdef0123');
   });

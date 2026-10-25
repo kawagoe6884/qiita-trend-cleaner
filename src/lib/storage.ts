@@ -33,6 +33,7 @@ import type {
   AiVerdict,
   AiVerdictLog,
   ItemId,
+  AiHintFailures,
   AuthorVisits,
   Candidate,
   FeedbackLog,
@@ -398,6 +399,29 @@ export async function getAuthorVisits(): Promise<AuthorVisits> {
 
 export async function saveAuthorVisits(authorVisits: AuthorVisits): Promise<void> {
   await chrome.storage.local.set({ authorVisits });
+}
+
+/**
+ * 本文の取得に失敗した記事の記録。フルモードだけが読み書きする。
+ *
+ * 1 件だけ壊れていても全体を捨てない（getAuthorVisits と同じ扱い）。
+ * 捨てると遮断された記事を次のスキャンで一斉に叩き直す。
+ */
+export async function getAiHintFailures(): Promise<AiHintFailures> {
+  const raw = await readRaw();
+  const stored = raw.aiHintFailures;
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {};
+  const failures: AiHintFailures = {};
+  for (const [itemId, value] of Object.entries(stored as Record<string, unknown>)) {
+    const at = asNonEmptyString(value);
+    if (at !== null) failures[itemId] = at;
+  }
+  return failures;
+}
+
+/** パージ済みの全体を書く。記録とパージは呼び出し側（scanner）が保存の直前に行う */
+export async function saveAiHintFailures(aiHintFailures: AiHintFailures): Promise<void> {
+  await chrome.storage.local.set({ aiHintFailures });
 }
 
 /** 1 件分の文体スコアを検証する。知らないシグナルは捨て、形が崩れていれば null */
