@@ -20,13 +20,13 @@ describe('describeAgreementSummary', () => {
   it('30 件未満は % を出しつつ、判定はせずに残りの件数を出す', () => {
     const text = describeAgreementSummary(agreement(12, 9));
     expect(text).toBe(
-      'いまの線引き（5 点以上）: 12 件中 9 件が一致（75%）。あと 18 件で判定します。',
+      'いまの基準（5 点以上）: 12 件中 9 件が一致（75%）。あと 18 件で判定します。',
     );
   });
 
   it('30 件で 70% 以上なら目標に届いたと出す', () => {
     expect(describeAgreementSummary(agreement(30, 21))).toBe(
-      'いまの線引き（5 点以上）: 30 件中 21 件が一致（70%）。目標の 70% に届いています。',
+      'いまの基準（5 点以上）: 30 件中 21 件が一致（70%）。目標の 70% に届いています。',
     );
   });
 

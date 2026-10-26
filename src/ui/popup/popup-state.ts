@@ -418,7 +418,7 @@ export function describeMode(hasToken: boolean, coverage: AuthorCoverage): ModeC
   // ライトでも検出できる（蓄積ゼロの初回スキャンで 5 候補・OQ-12）
   return {
     title: 'ライトモードで動作中',
-    detail: `トレンドに出た記事の likers だけを見ます。${describeLightGap(coverage)}トークンを設定すると著者の過去記事まで辿れ、1 時間あたりの枠も ${String(RATE_LIMIT_ANON)} → ${String(RATE_LIMIT_AUTH)} リクエストに広がります。`,
+    detail: `トレンド記事のいいねだけを見ます。${describeLightGap(coverage)}トークンを設定すると著者の過去記事まで辿れ、1 時間あたりの枠も ${String(RATE_LIMIT_ANON)} → ${String(RATE_LIMIT_AUTH)} リクエストに広がります。`,
     action: 'トークンを設定する',
   };
 }

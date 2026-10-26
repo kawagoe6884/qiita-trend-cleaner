@@ -79,7 +79,7 @@ export function describeToggleState(checked: boolean): string {
 }
 
 /** 想定外の失敗で出す文言。ハンドラ側とリスナー側の 2 箇所で使うため定数にする */
-const UNEXPECTED_SUBMIT_ERROR = '予期しないエラーが発生しました。ページを再読み込みしてください。';
+const UNEXPECTED_SUBMIT_ERROR = '保存できませんでした。ページを再読み込みしてください。';
 const UNEXPECTED_REMOVE_ERROR = '削除できませんでした。ページを再読み込みしてください。';
 
 function find<T extends HTMLElement>(selector: string): T | null {

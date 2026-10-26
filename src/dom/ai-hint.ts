@@ -145,7 +145,7 @@ export type AiAnswerHandler = (
 
 /** title に出す説明。点数は「目安」であって判定ではないと書く */
 export function describeAiHint(hint: AiHint): string {
-  return `文体の目安 ${String(hint.fired.length)} / ${String(AI_SIGNALS.length)}（断定ではありません）`;
+  return `文体の目安 ${String(hint.fired.length)} / ${String(AI_SIGNALS.length)}（AI 生成とは限りません）`;
 }
 
 /** スタイルの規則を 1 つだけ入れる。body ではなく head に置く（描き直しの監視の外） */

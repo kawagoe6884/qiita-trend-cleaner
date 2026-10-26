@@ -336,7 +336,7 @@
       <!-- name を付けない: 万一ネイティブ送信が起きてもトークンをクエリに載せないため -->
       <input type="password" id="token" autocomplete="off" spellcheck="false" />
       <p class="hint">
-        設定すると著者の過去記事まで辿れるようになり、検出の射程が広がります。未設定でも検出は動きます。
+        設定すると著者の過去記事も調べるようになり、検出できる範囲が広がります。未設定のままでも使えます。
       </p>
       <button type="submit" id="save">保存する</button>
     </form>
@@ -355,7 +355,7 @@
         </li>
         <li>「個人用アクセストークン」を発行する</li>
         <li>
-          スコープは <code>read_qiita</code> だけで足ります。この拡張は Qiita に書き込みを行いません
+          スコープは <code>read_qiita</code> だけで構いません。この拡張機能から Qiita に書き込むことはありません
         </li>
       </ol>
     </details>
@@ -373,9 +373,9 @@
         <strong class="toggle-state" id="mute-on-valid-state"></strong>
       </label>
       <p class="hint">
-        既定はオフです。オンにすると「妥当」を押した著者をその場で
+        初期設定はオフです。オンにすると、「妥当」を押した著者をその場で
         <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a>
-        に追加します。一覧と解除も同じページから行えます。
+        に追加します。確認や解除も同じページから行えます。
       </p>
 
       <h2 style="margin-top: 24px">評価が済んだものは</h2>
@@ -532,10 +532,10 @@
     </section>
 
     <section class="prefs">
-      <h2>「AI文体かも？」の線引き</h2>
+      <h2>「AI文体かも？」の基準</h2>
       <p class="hint">
-        トークンを設定したとき、トレンドの記事の右上に出る目安です（断定ではありません）。<br />
-        点数の数え方は変わらず、どこから強調するかだけが変わります。開いているトレンドにもすぐ反映されます。
+        トークンを設定したときに、トレンド記事の右上へ表示する目安です。<br />
+        点数の計算方法はそのままで、何点から目立たせるかだけを変えられます。開いているトレンドにもすぐ反映されます。
       </p>
       <div class="ai-grid">
         <label class="ai-label" for="ai-threshold">何点以上で強調するか</label>
@@ -571,8 +571,8 @@
         </div>
       </div>
       <p class="hint">
-        既定は 5 点 / 334 字です。0 字にすると注釈を出しません。2000 字を超える数は 2000
-        字にします。コードを除いた地の文の字数で数えます。
+        初期設定は 5 点・334 字です。0 字にすると注釈を出しません（上限は 2000
+        字）。コードを除いた地の文の字数で数えます。
       </p>
 
       <label class="toggle" style="margin-top: 16px">
@@ -582,8 +582,8 @@
         <strong class="toggle-state" id="ai-dim-likely-state"></strong>
       </label>
       <p class="hint">
-        既定はオフです。マウスを乗せると元の濃さに戻り、「AI文体かも？」と 「そうかも /
-        違うかも」は薄くならないので、そのまま答えられます。
+        初期設定はオフです。マウスを乗せると元の濃さに戻り、「AI文体かも？」と「そうかも /
+        違うかも」は薄くならないため、そのまま答えられます。
       </p>
 
       <h2 style="margin-top: 24px">あなたの答えとの一致率</h2>
@@ -598,7 +598,7 @@
         </caption>
         <thead>
           <tr>
-            <th scope="col">線引き</th>
+            <th scope="col">基準</th>
             <th scope="col">一致率</th>
           </tr>
         </thead>

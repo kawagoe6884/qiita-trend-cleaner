@@ -64,7 +64,7 @@ export function describeMode(state: TokenState): ModeCopy {
   if (state.kind === 'full') {
     return {
       title: 'フルモードで動作中',
-      detail: `いま画面に出ている記事に加えて、著者の過去記事まで辿ります。1 時間あたり ${String(RATE_LIMIT_AUTH)} リクエストまで使えます。`,
+      detail: `表示中の記事に加えて著者の過去記事も調べます。1 時間あたり ${String(RATE_LIMIT_AUTH)} リクエストまで使えます。`,
     };
   }
   if (state.kind === 'verifying') {
@@ -72,7 +72,7 @@ export function describeMode(state: TokenState): ModeCopy {
   }
   return {
     title: 'ライトモードで動作中',
-    detail: `いま画面に出ている記事の範囲で検出します。1 時間あたり ${String(RATE_LIMIT_ANON)} リクエストまで。`,
+    detail: `表示中の記事の範囲で検出します。1 時間あたり ${String(RATE_LIMIT_ANON)} リクエストまで使えます。`,
   };
 }
 
@@ -100,8 +100,8 @@ export async function submitToken(raw: string): Promise<SettledState> {
     return withMessage(
       await loadState(),
       result.reason === 'invalid'
-        ? 'トークンが受け付けられませんでした。値と、read_qiita スコープが付いているかを確認してください。'
-        : 'Qiita に接続できませんでした。通信状況を確認して、もう一度お試しください。',
+        ? 'トークンを確認できませんでした。入力した値と read_qiita スコープの設定を確認してください。'
+        : 'Qiita に接続できませんでした。通信状況を確認してからもう一度お試しください。',
     );
   }
 

@@ -6,7 +6,7 @@
     <title>Qiita Trend Cleaner</title>
     <meta
       name="description"
-      content="Qiita のトレンドを、あなたが決めた基準で見分けやすくする非公式の Chrome 拡張機能。不自然ないいねパターンの検出と、AI 文体の目安の表示。"
+      content="Qiita のトレンドを自分の基準で整理する非公式の Chrome 拡張機能です。短時間に集中するいいねの検出結果や、AI 文体の目安を表示します。"
     />
     <link rel="stylesheet" href="./m3.css" />
   </head>
@@ -16,71 +16,50 @@
         <span class="chip">非公式</span>
         <h1>Qiita Trend Cleaner</h1>
         <p class="lead">
-          Qiita のトレンドを、<strong>あなたが決めた基準で見分けやすくする</strong> Chrome
-          拡張機能です。<strong>不自然ないいねパターン</strong>が見られる記事を検出して隠せるほか、
-          トークンを設定すると記事の文体から「<strong>AI文体かも？</strong>」の目安を出します。
+          Qiita のトレンドを自分の基準で整理する Chrome 拡張機能です。短時間に同じメンバーからのいいねが集中している記事を検出して隠せるほか、トークンを設定すると記事の文体から「AI文体かも？」という目安を表示します。
         </p>
       </div>
     </header>
 
     <main class="page">
       <div class="callout">
-        <p>
-          <strong>Qiita 株式会社とは無関係の非公式な拡張機能です。</strong
-          >個人が開発・公開しています。
-        </p>
+        <p>Qiita 株式会社とは無関係の非公式な拡張機能です。個人が開発・公開しています。</p>
       </div>
 
       <section aria-labelledby="what">
-        <h2 id="what">これは何をするか</h2>
+        <h2 id="what">仕組み</h2>
 
         <p>
-          同じアカウントの集まりが複数の記事に短時間でいいねを集中させている——この<strong>共起のパターン</strong>をローカルに蓄積したデータから検出します。検出した著者は一覧に出ます。<strong
-            >「妥当 / 誤り」はあなたが判断します。</strong
-          >
+          同じアカウントの集まりが複数の記事へ短時間にいいねしている共起パターンを、ブラウザに貯まったデータから見つけます。検出された著者はポップアップに一覧表示され、「妥当 / 誤り」はあなた自身が判断します。
         </p>
 
-        <ul>
-          <li>判定は<strong>あなたが決めた閾値</strong>で行われます</li>
-          <li>
-            「妥当」と評価した著者を Qiita
-            側でミュートすることもできます（<strong>既定はオフ</strong>）
-          </li>
-          <li><strong>一括自動ミュートはしません。</strong>ブロックも行いません</li>
-        </ul>
+        <p>
+          判定の条件はスライダーで自由に変更できます。「妥当」と評価した著者はトレンド上から隠せるほか、設定をオンにすれば Qiita 側のミュートも同時に行えます（初期設定はオフ）。一括での自動ミュートやブロックは行いません。
+        </p>
       </section>
 
       <section aria-labelledby="no-verdict">
-        <h2 id="no-verdict">断定はしません</h2>
+        <h2 id="no-verdict">不正とは決めつけません</h2>
 
         <p>
-          この拡張が示すのは「<strong>不自然ないいねパターン</strong>」だけです。不正や規約違反とは断定しません。同じ組織の人が互いの記事を読んでいいねするのは正常な行動です。それも同じパターンとして現れます。
+          この拡張機能が出すのは「いいねの重なり方」と「文体の目安」だけで、不正や規約違反を判定するものではありません。同じ組織やコミュニティの人たちが互いの記事を読んでいいねした場合も、同じパターンとして現れます。
         </p>
 
         <div class="callout callout--caution">
-          <p><strong>誤検知は起こります。</strong>判断は必ずあなたが行ってください。</p>
+          <p>誤検知は起こります。根拠の記事を確認したうえで、あなた自身が判断してください。</p>
         </div>
       </section>
 
       <section aria-labelledby="data">
         <h2 id="data">データの扱い</h2>
 
-        <ul>
-          <li>
-            保存先は<strong>あなたのブラウザの中だけ</strong>です。外部サーバーへの送信はありません
-          </li>
-          <li>
-            通信先は <strong>Qiita の公式 API のみ</strong>。ミュートの操作で発生するリクエストは
-            Qiita のページ自身が発行します
-          </li>
-          <li>収集した いいね の記録は<strong>7 日で自動的に破棄</strong>されます</li>
-          <li>
-            「AI文体かも？」のために取得した記事の本文は、ブラウザの中で数えたあと破棄し、<strong
-              >保存しません</strong
-            >
-          </li>
-          <li>権限は <code>storage</code> と <code>https://qiita.com/*</code> だけです</li>
-        </ul>
+        <p>
+          データの保存先はあなたのブラウザ内（<code>chrome.storage</code>）だけで、外部サーバーへの送信はありません。通信先は Qiita の公式 API のみです（ミュート操作のリクエストは Qiita のページ自身が発行します）。
+        </p>
+
+        <p>
+          収集したいいねの記録は 7 日で自動的に削除されます。また、「AI文体かも？」のために取得した記事の本文はブラウザ内で数えた直後に破棄し、保存しません。要求する権限は <code>storage</code> と <code>https://qiita.com/*</code> だけです。
+        </p>
 
         <p>詳しくは<a href="./privacy.html">プライバシーポリシー</a>をご覧ください。</p>
       </section>

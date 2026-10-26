@@ -24,7 +24,7 @@ export function describeAgreementSummary(agreement: Agreement): string {
   if (agreement.ratio === null) {
     return 'まだ回答がありません。トレンドの「AI文体かも？」にマウスを乗せて「そうかも / 違うかも」を押すと、ここに一致率が出ます。';
   }
-  const head = `いまの線引き（${String(agreement.threshold)} 点以上）: ${String(agreement.answered)} 件中 ${String(agreement.agreed)} 件が一致（${toPercent(agreement.ratio)}）。`;
+  const head = `いまの基準（${String(agreement.threshold)} 点以上）: ${String(agreement.answered)} 件中 ${String(agreement.agreed)} 件が一致（${toPercent(agreement.ratio)}）。`;
   const status = judgeAgreement(agreement);
   switch (status.kind) {
     case 'pending':
@@ -32,7 +32,7 @@ export function describeAgreementSummary(agreement: Agreement): string {
     case 'met':
       return `${head}目標の ${TARGET} に届いています。`;
     case 'unmet':
-      return `${head}目標の ${TARGET} に届いていません。線引きを動かすなら、下の表で一致率の高い点数を探せます。`;
+      return `${head}目標の ${TARGET} に届いていません。基準を変える場合は、下の表で一致率の高い点数を探せます。`;
   }
 }
 
