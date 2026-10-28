@@ -335,9 +335,7 @@
       <label for="token">アクセストークン (任意)</label>
       <!-- name を付けない: 万一ネイティブ送信が起きてもトークンをクエリに載せないため -->
       <input type="password" id="token" autocomplete="off" spellcheck="false" />
-      <p class="hint">
-        設定すると著者の過去記事も調べるようになり、検出できる範囲が広がります。未設定のままでも使えます。
-      </p>
+      <p class="hint">設定すると著者の過去記事も調べるようになり、検出できる範囲が広がります。未設定のままでも使えます。</p>
       <button type="submit" id="save">保存する</button>
     </form>
 
@@ -348,16 +346,11 @@
       <ol>
         <li>
           Qiita の
-          <a href="https://qiita.com/settings/applications" target="_blank" rel="noreferrer">
-            設定 → アプリケーション
-          </a>
+          <a href="https://qiita.com/settings/applications" target="_blank" rel="noreferrer"> 設定 → アプリケーション </a>
           を開く
         </li>
         <li>「個人用アクセストークン」を発行する</li>
-        <li>
-          スコープは <code>read_qiita</code> だけで構いません。この拡張機能から Qiita
-          に書き込むことはありません
-        </li>
+        <li>スコープは <code>read_qiita</code> だけで構いません。この拡張機能から Qiita に書き込むことはありません</li>
       </ol>
     </details>
 
@@ -373,104 +366,28 @@
         <span>「妥当」と同時に Qiita 側でもミュート</span>
         <strong class="toggle-state" id="mute-on-valid-state"></strong>
       </label>
-      <p class="hint">
-        初期設定はオフです。オンにすると、「妥当」を押した著者をその場で
-        <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a>
-        に追加します。確認や解除も同じページから行えます。
-      </p>
+      <p class="hint">初期設定はオフです。オンにすると、「妥当」を押した著者をその場で <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a> に追加します。確認や解除も同じページから行えます。</p>
 
       <h2 style="margin-top: 24px">評価が済んだものは</h2>
       <!-- **実スクショを置かない。**実アカウント名が配布物に入る。
            図は「4 件の候補がどう分かれるか」だけを示す -->
-      <p class="fold-caption">
-        例: 未評価 1 件 / 妥当 (ミュート済み) 1 件 / 妥当 1 件 / 誤り 1 件 のとき
-      </p>
+      <p class="fold-caption">例: 未評価 1 件 / 妥当 (ミュート済み) 1 件 / 妥当 1 件 / 誤り 1 件 のとき</p>
       <div class="fold-grid">
         <label class="fold-option">
           <input type="radio" name="fold-target" value="none" />そのまま一覧に出す
           <svg viewBox="0 0 168 70" role="img" aria-hidden="true" focusable="false">
-            <rect
-              x="1"
-              y="1"
-              width="166"
-              height="14"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1"
-              opacity="0.55"
-            />
-            <rect
-              x="1"
-              y="19"
-              width="166"
-              height="14"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1"
-              opacity="0.55"
-            />
-            <rect
-              x="1"
-              y="37"
-              width="166"
-              height="14"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1"
-              opacity="0.55"
-            />
-            <rect
-              x="1"
-              y="55"
-              width="166"
-              height="14"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1"
-              opacity="0.55"
-            />
+            <rect x="1" y="1" width="166" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55" />
+            <rect x="1" y="19" width="166" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55" />
+            <rect x="1" y="37" width="166" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55" />
+            <rect x="1" y="55" width="166" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55" />
           </svg>
         </label>
         <label class="fold-option">
           <input type="radio" name="fold-target" value="muted" />ミュート済みだけ
           <svg viewBox="0 0 168 70" role="img" aria-hidden="true" focusable="false">
-            <rect
-              x="1"
-              y="1"
-              width="166"
-              height="14"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1"
-              opacity="0.55"
-            />
-            <rect
-              x="1"
-              y="19"
-              width="166"
-              height="14"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1"
-              opacity="0.55"
-            />
-            <rect
-              x="1"
-              y="37"
-              width="166"
-              height="14"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1"
-              opacity="0.55"
-            />
+            <rect x="1" y="1" width="166" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55" />
+            <rect x="1" y="19" width="166" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55" />
+            <rect x="1" y="37" width="166" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55" />
             <rect x="1" y="55" width="166" height="14" rx="3" fill="currentColor" opacity="0.12" />
             <path d="M7 59 l4 3 l-4 3 z" fill="currentColor" opacity="0.7" />
             <text x="16" y="65" font-size="9" fill="currentColor" opacity="0.8">1 件</text>
@@ -479,28 +396,8 @@
         <label class="fold-option">
           <input type="radio" name="fold-target" value="valid" />「妥当」だけ
           <svg viewBox="0 0 168 52" role="img" aria-hidden="true" focusable="false">
-            <rect
-              x="1"
-              y="1"
-              width="166"
-              height="14"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1"
-              opacity="0.55"
-            />
-            <rect
-              x="1"
-              y="19"
-              width="166"
-              height="14"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1"
-              opacity="0.55"
-            />
+            <rect x="1" y="1" width="166" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55" />
+            <rect x="1" y="19" width="166" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55" />
             <rect x="1" y="37" width="166" height="14" rx="3" fill="currentColor" opacity="0.12" />
             <path d="M7 41 l4 3 l-4 3 z" fill="currentColor" opacity="0.7" />
             <text x="16" y="47" font-size="9" fill="currentColor" opacity="0.8">2 件</text>
@@ -509,27 +406,14 @@
         <label class="fold-option">
           <input type="radio" name="fold-target" value="judged" />評価済みをすべて
           <svg viewBox="0 0 168 34" role="img" aria-hidden="true" focusable="false">
-            <rect
-              x="1"
-              y="1"
-              width="166"
-              height="14"
-              rx="3"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1"
-              opacity="0.55"
-            />
+            <rect x="1" y="1" width="166" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1" opacity="0.55" />
             <rect x="1" y="19" width="166" height="14" rx="3" fill="currentColor" opacity="0.12" />
             <path d="M7 23 l4 3 l-4 3 z" fill="currentColor" opacity="0.7" />
             <text x="16" y="29" font-size="9" fill="currentColor" opacity="0.8">3 件</text>
           </svg>
         </label>
       </div>
-      <p class="hint">
-        折りたたんだ中でも「誤り」に押し直せます。ただし
-        <strong>「誤り」を押しても Qiita 側のミュートは解除されません。</strong>
-      </p>
+      <p class="hint">折りたたんだ中でも「誤り」に押し直せます。ただし <strong>「誤り」を押しても Qiita 側のミュートは解除されません。</strong></p>
     </section>
 
     <section class="prefs">
@@ -549,32 +433,14 @@
         <div class="ai-control" role="group" aria-labelledby="ai-min-prose-label">
           <!-- 既定の 334 は固定値に入れない（自由入力の欄に出る） -->
           <button type="button" class="preset" data-min-prose="0" aria-pressed="false">0</button>
-          <button type="button" class="preset" data-min-prose="200" aria-pressed="false">
-            200
-          </button>
-          <button type="button" class="preset" data-min-prose="400" aria-pressed="false">
-            400
-          </button>
-          <button type="button" class="preset" data-min-prose="1000" aria-pressed="false">
-            1000
-          </button>
-          <input
-            type="number"
-            id="ai-min-prose"
-            min="0"
-            max="2000"
-            step="1"
-            inputmode="numeric"
-            placeholder="自由入力"
-            aria-label="字数を自由入力（0〜2000）"
-          />
+          <button type="button" class="preset" data-min-prose="200" aria-pressed="false">200</button>
+          <button type="button" class="preset" data-min-prose="400" aria-pressed="false">400</button>
+          <button type="button" class="preset" data-min-prose="1000" aria-pressed="false">1000</button>
+          <input type="number" id="ai-min-prose" min="0" max="2000" step="1" inputmode="numeric" placeholder="自由入力" aria-label="字数を自由入力（0〜2000）" />
           <span class="unit">字</span>
         </div>
       </div>
-      <p class="hint">
-        初期設定は 5 点・334 字です。0 字にすると注釈を出しません（上限は 2000
-        字）。コードを除いた地の文の字数で数えます。
-      </p>
+      <p class="hint">初期設定は 5 点・334 字です。0 字にすると注釈を出しません（上限は 2000 字）。コードを除いた地の文の字数で数えます。</p>
 
       <label class="toggle" style="margin-top: 16px">
         <input type="checkbox" id="ai-dim-likely" />
@@ -582,10 +448,7 @@
         <span>強調される記事を薄く表示する</span>
         <strong class="toggle-state" id="ai-dim-likely-state"></strong>
       </label>
-      <p class="hint">
-        初期設定はオフです。マウスを乗せると元の濃さに戻り、「AI文体かも？」と「そうかも /
-        違うかも」は薄くならないため、そのまま答えられます。
-      </p>
+      <p class="hint">初期設定はオフです。マウスを乗せると元の濃さに戻り、「AI文体かも？」と「そうかも / 違うかも」は薄くならないため、そのまま答えられます。</p>
 
       <h2 style="margin-top: 24px">あなたの答えとの一致率</h2>
       <p class="hint">
