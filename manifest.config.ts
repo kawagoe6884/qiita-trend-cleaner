@@ -7,7 +7,7 @@ export default defineManifest({
   version: pkg.version,
   // ストアの「短い説明」にもなる（132 文字以内）。単一目的に合わせ、機能はその手段として書く
   description:
-    'Qiita のトレンドを、あなたが決めた基準で見分けやすくします。不自然ないいねパターンの検出と、AI 文体の目安を表示します（非公式）。',
+    'Qiita のトレンドを自分の基準で整理する非公式の拡張機能です。短時間に集中するいいねの検出結果や、AI 文体の目安を表示します。',
   icons: {
     16: 'icons/icon-16.png',
     48: 'icons/icon-48.png',

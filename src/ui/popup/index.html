@@ -252,13 +252,7 @@
 
          中の button は #mute-note のクリック処理を通るが、handleLinkClick は
          closest('a[href]') で判定するので反応しない（button に a の先祖は無い）。 -->
-    <p class="footnote" id="mute-note">
-      ミュートは
-      <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a>
-      から一覧・解除ができます。表示や動作は
-      <button type="button" class="link-button" id="open-settings">拡張機能の設定</button>
-      から変えられます。
-    </p>
+    <p class="footnote" id="mute-note">ミュートは <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a> から一覧・解除ができます。表示や動作は <button type="button" class="link-button" id="open-settings">拡張機能の設定</button> から変えられます。</p>
 
     <details id="conditions">
       <summary id="conditions-summary">判定の条件</summary>
@@ -285,32 +279,22 @@
         <input type="range" id="burst-window" min="0" max="6" step="1" />
         <output id="burst-window-value"></output>
       </p>
-      <p class="footnote">
-        条件を変えても Qiita には問い合わせません。すでに集めたデータで判定をやり直すだけです。
-      </p>
+      <p class="footnote">条件を変えても Qiita への通信は発生せず、手元のデータで判定をやり直します。</p>
       <!-- **幅は候補を絞らない。**下限を設けない理由は burst.ts のヘッダーに書いてある
            （いつ押すかを握っているのは相手側なので、下限は盲点になる）。
            絞り込みだと誤解されると、ユーザーは件数が変わるのを待ち続けることになる -->
-      <p class="footnote">
-        「投稿から何分以内」は候補の件数を変えません。同じ著者でも時間を延ばすとスコアが上がることがあり、いいねの時刻がずらされているかを見る目安になります。
-      </p>
+      <p class="footnote">「投稿から何分以内」は候補の件数を変えません。同じ著者でも時間を延ばすとスコアが上がることがあり、いいねの時刻がずらされているかを見る目安になります。</p>
     </details>
 
     <ul id="candidates"></ul>
-    <p id="empty" hidden>
-      いまの条件に当てはまる候補はありません。トレンドページを開くと蓄積が増えます。
-    </p>
+    <p id="empty" hidden>いまの条件に当てはまる候補はありません。トレンドページを開くと蓄積が増えます。</p>
 
     <details id="folded" hidden>
       <summary id="folded-summary"></summary>
       <!-- 解除の導線。**文言を JS で組み立てず、ここにリンクごと置く**
            （#mute-note と同じ形）。textContent で書くとリンクにならず、
            誤検知でミュートしたアカウントを回収する経路が押せなくなる -->
-      <p class="footnote" id="fold-note" hidden>
-        ここで「誤り」を押しても、Qiita 側のミュートは解除されません。解除は
-        <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a>
-        から行ってください。
-      </p>
+      <p class="footnote" id="fold-note" hidden>ここで「誤り」を押しても、Qiita 側のミュートは解除されません。解除は <a href="https://qiita.com/settings/mutes" target="_blank" rel="noreferrer">ミュート設定</a> から行ってください。</p>
       <ul id="folded-candidates"></ul>
     </details>
 

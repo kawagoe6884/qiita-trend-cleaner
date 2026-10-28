@@ -870,7 +870,7 @@ describe('index.html のレイアウト順序', () => {
   it('線引きは候補の見え方の後ろ（ページの最後）にある', () => {
     // 線引きはフルモードでしか効かないので、誰でも使う見え方を先に置く
     const fold = indexHtml.indexOf('<h2>候補の見え方</h2>');
-    const aiHint = indexHtml.indexOf('<h2>「AI文体かも？」の線引き</h2>');
+    const aiHint = indexHtml.indexOf('<h2>「AI文体かも？」の基準</h2>');
     expect(fold).toBeGreaterThan(-1);
     expect(aiHint).toBeGreaterThan(fold);
     expect(indexHtml.indexOf('class="prefs"', aiHint)).toBe(-1);

@@ -62,7 +62,7 @@ describe('「AI文体かも？」の一致率', () => {
     await init();
     // Assert
     expect(el('#ai-agreement-summary').textContent).toBe(
-      'いまの線引き（5 点以上）: 2 件中 1 件が一致（50%）。あと 28 件で判定します。',
+      'いまの基準（5 点以上）: 2 件中 1 件が一致（50%）。あと 28 件で判定します。',
     );
   });
 
@@ -92,7 +92,7 @@ describe('「AI文体かも？」の一致率', () => {
     slider.dispatchEvent(new Event('input'));
     // Assert
     expect(el('#ai-agreement-summary').textContent).toContain(
-      'いまの線引き（2 点以上）: 2 件中 2 件',
+      'いまの基準（2 点以上）: 2 件中 2 件',
     );
     expect(currentRow()?.textContent).toContain('2 点以上');
   });
@@ -142,7 +142,7 @@ describe('「AI文体かも？」の一致率', () => {
     // Assert — 保存済みの 5 ではなく、画面の 2 で数える（コードレビュー LOW）
     await vi.waitFor(() => {
       expect(el('#ai-agreement-summary').textContent).toContain(
-        'いまの線引き（2 点以上）: 3 件中 3 件',
+        'いまの基準（2 点以上）: 3 件中 3 件',
       );
     });
     expect(currentRow()?.textContent).toContain('2 点以上');
