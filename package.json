@@ -1,6 +1,6 @@
 {
   "name": "qiita-trend-cleaner",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Make Qiita trends easier to sort through by your own criteria: coordinated-like detection and AI-style hints.",
