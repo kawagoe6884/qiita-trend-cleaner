@@ -45,7 +45,12 @@ const sequence: string[] = [];
  *
  * 実測どおり「フォロー / **ブロック** / ミュート」の順にする。
  */
-function mountCardWithMenu(n: number, author = `example-author-${String(n)}`): void {
+function mountCardWithMenu(
+  n: number,
+  author = `example-author-${String(n)}`,
+  /** Snackbar が出るまでの時間。カードの描き直しの待ち時間より長いミュートを再現する */
+  snackbarDelayMs = 0,
+): void {
   const itemId = `0123456789abcdef${String(n).padStart(4, '0')}`;
   const url = `https://qiita.com/${author}/items/${itemId}`;
   const menuId = `:R${String(n)}elbk:`;
@@ -95,7 +100,7 @@ function mountCardWithMenu(n: number, author = `example-author-${String(n)}`): v
               'beforeend',
               `<div id="Snackbar-react-component-abc"><div aria-live="polite" aria-atomic="true"><p>${SNACKBAR_TEXT.muteCompleted}</p></div></div>`,
             );
-          }, 0);
+          }, snackbarDelayMs);
         });
         entry.append(action);
         menu.append(entry);
@@ -397,9 +402,15 @@ describe('content script の非表示の描き直し', () => {
     // Arrange
     await bootWithOneHidden();
     document.querySelector<HTMLButtonElement>('#qtg-hidden-notice button')?.click();
-    // Act — いったん空になり、描き直しが走ったあとでカードが戻る
+    // Act — いったん空になり、描き直しが走ったあとでカードが戻る。
+    // 時間で待つと、遅いマシンでは空の状態を通らずに通ってしまうので、storage を読んだことで待つ
+    const getSpy = vi.spyOn(chrome.storage.local, 'get');
+    const readsBefore = getSpy.mock.calls.length;
     rebuildCards('');
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await vi.waitFor(() => {
+      expect(getSpy.mock.calls.length).toBeGreaterThan(readsBefore);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     rebuildCards(card(1) + card(2));
     await vi.waitFor(() => {
       expect(document.querySelectorAll('[data-qtg-judged="true"]')).toHaveLength(1);
@@ -407,6 +418,37 @@ describe('content script の非表示の描き直し', () => {
     // Assert
     expect(visibleCards()).toBe(2);
     expect(noticeText()).toContain('1 件を表示中');
+  });
+
+  it('ミュートの最中は隠し直さず、終わったら隠し直す', async () => {
+    // Arrange — 妥当と評価済みで、監視が始まっている。ミュートは描き直しの待ち時間より長くかかる
+    const SLOW_SNACKBAR_MS = 600;
+    mountCardWithMenu(1, 'example-author-1', SLOW_SNACKBAR_MS);
+    await saveVerdict('example-author-1', 'valid');
+    await bootContentScript();
+    const target = document.querySelector<HTMLElement>('[data-n="1"]');
+    await vi.waitFor(() => {
+      expect(target?.style.display).toBe('none');
+    });
+    // Act — muter はメニューを押すためにカードを表示に戻す。メニューが出るのはページの変化
+    const { sendResponse } = requestMute('example-author-1');
+    await vi.waitFor(() => {
+      expect(sequence).toContain('mute-1');
+    });
+    // Assert — 描き直しの待ち時間（300 ms）を過ぎても、ミュート中は隠し直さない
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    expect(sendResponse).not.toHaveBeenCalled();
+    expect(target?.style.display).not.toBe('none');
+    // Assert — 終わったら隠れ直す
+    await vi.waitFor(
+      () => {
+        expect(sendResponse).toHaveBeenCalled();
+      },
+      { timeout: 3000 },
+    );
+    await vi.waitFor(() => {
+      expect(target?.style.display).toBe('none');
+    });
   });
 
   it('通知の書き換えには反応しない（隠し直しが止まらなくならない）', async () => {

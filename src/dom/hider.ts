@@ -140,11 +140,12 @@ export function unhideAll(root: ParentNode = document): number {
 }
 
 /**
- * 背景の目印を消す。**評価が変わったときに呼ぶ。**
+ * 背景の目印を消す。**評価に従って付け直す直前に呼ぶ**（content-script.ts の
+ * applyHiding が、評価の変更・トグル・カードの作り直しのたびに呼ぶ）。
  *
  * unhideAll は display だけを戻し、背景は残す（「表示する」で戻したときに
- * どのカードが該当かを示すため）。評価そのものが変わったときは、
- * ここで消してから付け直す。
+ * どのカードが該当かを示すため）。付け直すときは、ここで消してから付ける。
+ * 消さないと、誤りに押し直した著者のカードに印が残る。
  */
 export function clearHighlights(root: ParentNode = document): number {
   const cards = [...root.querySelectorAll<HTMLElement>(HIGHLIGHT_ATTR_SELECTOR)];
