@@ -7,6 +7,7 @@ import {
   countHidden,
   renderNotice,
   clearHighlights,
+  isNoticeMutation,
 } from '../dom/hider';
 import { muteAuthor, MUTE_INTERVAL_MS } from '../dom/muter';
 import { renderAiHints, clearAiHints, isOwnMutation } from '../dom/ai-hint';
@@ -131,6 +132,17 @@ async function applyHiding(): Promise<void> {
     const result = hideJudgedAuthors(feedback);
     if (result.hidden > 0) {
       logger.info('hidden:', result.hidden, 'authors:', result.authors.length);
+      // Qiita はページを開いた直後にカードを作り直し、隠したカードごと消える
+      // （2026-10-31 実機）。作り直されたら隠し直せるように監視する
+      watchTrendCards();
+    }
+    // 「表示する」で戻している間に作り直されたら、背景の目印だけ付け直して戻したままにする。
+    // 同期で戻すので、隠れたカードが描画されることはない。
+    // **0 件なら件数を書き換えない** — 作り直しの途中（カードがまだ無い）で 0 にすると
+    // 「表示する」の状態が解け、次の作り直しで隠れてしまう
+    if (shownByUser > 0) {
+      const shown = unhideAll();
+      if (shown > 0) shownByUser = shown;
     }
     refreshNotice();
   } catch (error) {
@@ -189,32 +201,42 @@ async function applyAiHints(): Promise<void> {
 }
 
 /** ページの変化が落ち着くのを待つ時間。Qiita の描画が続いている間は描き直さない */
-const AI_HINT_REDRAW_DELAY_MS = 300;
+const CARD_REDRAW_DELAY_MS = 300;
 
 /**
  * 変化が続いても、最初の変化からこれ以上は待たない。
  * 広告や時刻表示が 300 ms より短い間隔で変わり続けると、待つだけでは永久に描き直せない
  * （コードレビュー M2）。
  */
-const AI_HINT_REDRAW_MAX_WAIT_MS = 1000;
+const CARD_REDRAW_MAX_WAIT_MS = 1000;
 
 /** 監視を始めたか。**1 ページに 1 本だけ。** */
 let watchingCards = false;
 
+/** 拡張自身が起こした変化か。無視しないと、描き直し → 変化 → 描き直し… と止まらない */
+function isExtensionMutation(record: MutationRecord): boolean {
+  return isOwnMutation(record) || isNoticeMutation(record);
+}
+
 /**
- * カードが作り直されたら「AI文体かも？」を描き直す。
+ * カードが作り直されたら、非表示と「AI文体かも？」をやり直す。
  *
- * 【なぜ要るか】（2026-10-24 実機）
- * スコアが保存済みだと、ページを開いた直後に描く。そのあと Qiita のページが
- * カードを作り直し、**足した要素ごと消える**（要素が 0 件になった）。
- * 新しいスコアが無いので storage は変わらず、onChanged では描き直せない。
+ * 【なぜ要るか】
+ * ページを開いた直後に Qiita がカードを作り直し、**拡張が足した要素も、隠すための
+ * 目印と display:none も消える**（AI 表示は 2026-10-24、非表示は 2026-10-31 の実機）。
+ * storage は変わらないので、onChanged ではやり直せない。
  *
  * 【いつ始めるか】
- * 実際に描いたときだけ（applyAiHints から呼ぶ）。ライトモードや描くものが無い
- * ページでは監視せず、変化のたびに storage を読みに行かない。
+ * 実際に描いたか隠したときだけ（applyAiHints / applyHiding から呼ぶ）。どちらも無い
+ * ページでは監視せず、変化のたびに storage を読みに行かない。**初回にカードがまだ
+ * 無かった場合も監視は始まらない**（実機では初回に読めているので、そこまでは追わない）。
  *
- * 自分の描画による変化は isOwnMutation で無視する（無視しないと止まらない）。
- * 変化が落ち着いてから描くが、最初の変化から AI_HINT_REDRAW_MAX_WAIT_MS で必ず描く。
+ * 【ミュートの最中は隠し直さない】
+ * muter.ts はメニューを押すためにカードを一時的に表示に戻す。そこで隠し直すと
+ * メニューに届かずミュートが失敗する。ミュートが全部終わったところでやり直す。
+ *
+ * 拡張自身による変化は isExtensionMutation で無視する。
+ * 変化が落ち着いてからやり直すが、最初の変化から CARD_REDRAW_MAX_WAIT_MS で必ずやる。
  */
 function watchTrendCards(): void {
   if (watchingCards) return;
@@ -222,17 +244,18 @@ function watchTrendCards(): void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let firstChangeAt: number | undefined;
   const observer = new MutationObserver((records) => {
-    if (records.every(isOwnMutation)) return;
+    if (records.every(isExtensionMutation)) return;
     const now = Date.now();
     firstChangeAt ??= now;
-    const untilDeadline = firstChangeAt + AI_HINT_REDRAW_MAX_WAIT_MS - now;
+    const untilDeadline = firstChangeAt + CARD_REDRAW_MAX_WAIT_MS - now;
     clearTimeout(timer);
     timer = setTimeout(
       () => {
         firstChangeAt = undefined;
+        if (mutesInFlight === 0) void applyHiding();
         void applyAiHints();
       },
-      Math.max(0, Math.min(AI_HINT_REDRAW_DELAY_MS, untilDeadline)),
+      Math.max(0, Math.min(CARD_REDRAW_DELAY_MS, untilDeadline)),
     );
   });
   observer.observe(document.body, { childList: true, subtree: true });
@@ -277,8 +300,25 @@ function sleep(ms: number): Promise<void> {
  */
 let muteQueue: Promise<unknown> = Promise.resolve();
 
+/** 実行中のミュートの件数。0 でない間は、カードの作り直しに追従して隠し直さない */
+let mutesInFlight = 0;
+
+/**
+ * ミュートを 1 件実行する。実行中は mutesInFlight を数える（watchTrendCards 参照）。
+ * 全部終わったら、待たせていた隠し直しをここでやる
+ */
+async function runMute(handle: AccountHandle): Promise<MuteOutcome> {
+  mutesInFlight += 1;
+  try {
+    return await muteAuthor(handle);
+  } finally {
+    mutesInFlight -= 1;
+    if (mutesInFlight === 0 && watchingCards) void applyHiding();
+  }
+}
+
 function enqueueMute(handle: AccountHandle): Promise<MuteOutcome> {
-  const result = muteQueue.then(() => muteAuthor(handle));
+  const result = muteQueue.then(() => runMute(handle));
   muteQueue = result.then(
     () => sleep(MUTE_INTERVAL_MS),
     () => sleep(MUTE_INTERVAL_MS),

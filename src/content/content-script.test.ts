@@ -149,7 +149,10 @@ async function bootContentScript(pathname = '/trend'): Promise<void> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  document.body.innerHTML = '';
+  // body ごと差し替える。前のテストで起動した content script の監視は古い body に
+  // 付いたまま残るので、こうしないと**前のテストの content script が次のテストの
+  // DOM を書き換える**（「表示する」で戻した状態を、別の content script が隠し直す等）
+  document.body.replaceWith(document.createElement('body'));
   sequence.length = 0;
   // @types/chrome の sendMessage は 5 つのオーバーロードを持ち、vi.mocked が
   // void を返すシグネチャを拾う。実行時には正しい応答が返るので、ここだけ型を黙らせる
@@ -322,6 +325,104 @@ describe('content script の通知トグル', () => {
       expect(visibleCards()).toBe(0);
     });
     expect(noticeButton().textContent).toBe('表示する');
+  });
+});
+
+/**
+ * Qiita はページを開いた直後にカードを作り直す（2026-10-31 実機: `hidden: 4` のログのあと
+ * `[data-qtg-hidden="true"]` が 0 件）。作り直されたカードには目印も display:none も無く、
+ * 右下の通知だけが「○件を非表示中」のまま残っていた。
+ */
+describe('content script の非表示の描き直し', () => {
+  function noticeText(): string {
+    return document.querySelector('#qtg-hidden-notice')?.textContent ?? '';
+  }
+
+  /** Qiita がカードの一覧を丸ごと作り直した状況。右下の通知は body 直下なので残る */
+  function rebuildCards(html: string): void {
+    const list = document.getElementById('list');
+    if (!list) throw new Error('list not found');
+    list.innerHTML = html;
+  }
+
+  async function bootWithOneHidden(): Promise<void> {
+    document.body.innerHTML = `<main id="list">${card(1) + card(2)}</main>`;
+    await saveVerdict('example-author-1', 'valid');
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(1);
+    });
+  }
+
+  it('カードが作り直されたら、隠し直す', async () => {
+    // Arrange
+    await bootWithOneHidden();
+    // Act
+    rebuildCards(card(1) + card(2));
+    // Assert
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(1);
+    });
+  });
+
+  it('作り直しで件数が変わったら、通知の件数も合わせる', async () => {
+    // Arrange
+    await bootWithOneHidden();
+    expect(noticeText()).toContain('1 件を非表示中');
+    // Act — 同じ著者の記事が 1 件増えた
+    rebuildCards(card(1) + card(2) + card(3, 'example-author-1'));
+    // Assert
+    await vi.waitFor(() => {
+      expect(noticeText()).toContain('2 件を非表示中');
+    });
+    expect(visibleCards()).toBe(1);
+  });
+
+  it('「表示する」で戻している間は、作り直されても隠さず、背景の目印は付け直す', async () => {
+    // Arrange
+    await bootWithOneHidden();
+    document.querySelector<HTMLButtonElement>('#qtg-hidden-notice button')?.click();
+    expect(visibleCards()).toBe(2);
+    // Act
+    rebuildCards(card(1) + card(2));
+    // Assert — 目印が付け直されるまで待ち、そのときも戻したまま
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('[data-qtg-judged="true"]')).toHaveLength(1);
+    });
+    expect(visibleCards()).toBe(2);
+    expect(noticeText()).toContain('1 件を表示中');
+  });
+
+  it('「表示する」の状態は、作り直しの途中でカードが一時的に無くなっても解けない', async () => {
+    // Arrange
+    await bootWithOneHidden();
+    document.querySelector<HTMLButtonElement>('#qtg-hidden-notice button')?.click();
+    // Act — いったん空になり、描き直しが走ったあとでカードが戻る
+    rebuildCards('');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    rebuildCards(card(1) + card(2));
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll('[data-qtg-judged="true"]')).toHaveLength(1);
+    });
+    // Assert
+    expect(visibleCards()).toBe(2);
+    expect(noticeText()).toContain('1 件を表示中');
+  });
+
+  it('通知の書き換えには反応しない（隠し直しが止まらなくならない）', async () => {
+    // Arrange
+    await bootWithOneHidden();
+    rebuildCards(card(1) + card(2));
+    await vi.waitFor(() => {
+      expect(visibleCards()).toBe(1);
+    });
+    const getSpy = vi.spyOn(chrome.storage.local, 'get');
+    // Act — 監視の待ち時間より長く待つ
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const settled = getSpy.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    // Assert — 落ち着いたあとは storage を読みに行かない
+    expect(getSpy.mock.calls.length).toBe(settled);
   });
 });
 

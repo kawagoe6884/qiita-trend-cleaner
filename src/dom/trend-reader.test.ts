@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readTrendItems, isTrendPage } from './trend-reader';
+import { readTrendItems, readTrendCards, isTrendPage } from './trend-reader';
 
 /**
  * 1 カード分の骨格。実測どおり **記事リンクを 2 本** 持たせる
@@ -165,6 +165,42 @@ describe('readTrendItems のカード特定', () => {
     document.body.innerHTML = deep;
     // Act & Assert
     expect(readTrendItems()).toEqual([]);
+  });
+
+  it('イベント枠（Advent Calendar）があっても、記事の article をカードとして返す', () => {
+    // Arrange — 2026-10-31 実測の構造を合成値で再現。トレンドの上にイベント枠の
+    // article が並ぶが、/items/ へのリンクも <time> も持たない
+    const article = (n: number): string => {
+      const url = `https://qiita.com/example-author-${String(n)}/items/0123456789abcdef000${String(n)}`;
+      return [
+        `<article class="trend"><a href="${url}" tabindex="-1" aria-hidden="true"></a>`,
+        `<header><a href="/example-author-${String(n)}"><img alt=""></a><div><p>`,
+        `<a href="/example-author-${String(n)}">@example-author-${String(n)}</a><span>in</span>`,
+        '<a href="/organizations/example-org"><span>例</span></a></p>',
+        '<span><time datetime="2026-10-30T06:39:46Z">2026年10月30日</time></span></div></header>',
+        `<h2><a href="${url}">タイトル</a></h2>`,
+        '<footer><ul><li><a href="/tags/example">example</a></li></ul>',
+        '<div><button aria-haspopup="dialog" aria-label="ユーザーを管理"></button></div></footer></article>',
+      ].join('');
+    };
+    const eventCard =
+      '<article class="event"><a href="/advent-calendar/2026/example" aria-hidden="true"></a>' +
+      '<div><header><p>Qiita Advent Calendar 2026</p></header>' +
+      '<h3><a href="/advent-calendar/2026/example">例</a></h3>' +
+      '<footer><ul><li><a href="/tags/example">example</a></li></ul></footer></div></article>';
+    document.body.innerHTML =
+      `<main><div><div><p>おすすめのAdvent Calendar</p><a href="/advent-calendar/2026">探す</a></div>` +
+      `<div>${eventCard}${eventCard}</div></div>` +
+      '<div><a href="/popular-items/feed">RSS</a></div>' +
+      `<div>${article(1)}${article(2)}</div></main>`;
+    // Act
+    const cards = readTrendCards();
+    // Assert
+    expect(cards.map(({ card }) => card.className)).toEqual(['trend', 'trend']);
+    expect(cards.map(({ item }) => item.authorHandle)).toEqual([
+      'example-author-1',
+      'example-author-2',
+    ]);
   });
 
   it('リンクが 1 本だけのカードでも読める', () => {

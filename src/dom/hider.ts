@@ -155,6 +155,23 @@ export function clearHighlights(root: ParentNode = document): number {
   return cards.length;
 }
 
+/**
+ * 通知の書き換えによる DOM の変化か。**ページの監視（content-script.ts）が無視するために要る。**
+ *
+ * 通知の文言を書き換えると、span の中のテキストノードが差し替わる（childList の変化）。
+ * これに反応すると、隠し直す → 通知を書き換える → 変化 → 隠し直す… と止まらなくなる
+ * （ai-hint.ts の isOwnMutation と同じ理由）。通知そのものの追加・削除も自分のものとみなす。
+ */
+export function isNoticeMutation(record: MutationRecord): boolean {
+  // instanceof Element を使わないのは isOwnMutation と同じ理由
+  const target = record.target as Partial<Element>;
+  if (typeof target.closest === 'function' && target.closest(`#${NOTICE_ID}`) !== null) {
+    return true;
+  }
+  const nodes = [...record.addedNodes, ...record.removedNodes];
+  return nodes.length > 0 && nodes.every((node) => (node as Partial<Element>).id === NOTICE_ID);
+}
+
 /** 通知の状態。隠れているか、手で表示中か */
 export type NoticeMode = 'hidden' | 'shown';
 
