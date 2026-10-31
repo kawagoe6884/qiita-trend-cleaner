@@ -529,6 +529,17 @@ async function persistAiHints(fresh: AiHintLog, now: Date): Promise<void> {
   logger.info('ai hints:', 'scored:', Object.keys(fresh).length, 'kept:', Object.keys(kept).length);
 }
 
+/**
+ * 保持期間を過ぎたスコアだけを捨てる。**消すものが無ければ書かない** —
+ * 書くと content script の onChanged が走り、変わっていない表示を描き直す
+ */
+async function purgeStaleAiHints(now: Date): Promise<void> {
+  const stored = await storage.getAiHints();
+  const kept = purgeAiHints(stored, now);
+  if (Object.keys(kept).length === Object.keys(stored).length) return;
+  await storage.saveAiHints(kept);
+}
+
 /** 著者を順に巡回する */
 interface AuthorScanResult {
   progress: ScanProgress;
@@ -772,9 +783,14 @@ async function scanTrend(items: TrendItem[], startedAt: IsoDateTime): Promise<Sc
   }
 
   // 「AI文体かも？」は著者巡回より先に置く。利用者に見えるのはトレンドの 30 件で、
-  // 本文は 30 req 程度。巡回で枠を使い切ってから数えると、表示が出ない
-  if (mode === 'full' && !progress.rateLimited) {
+  // 本文は 30 req 程度。巡回で枠を使い切ってから数えると、表示が出ない。
+  // 設定画面で「表示しない」にしている間は本文を取らず、その枠を巡回に回す
+  if (mode === 'full' && !progress.rateLimited && (await storage.getAiHintPrefs()).showHints) {
     progress = await runAiHints(items, token, progress, now);
+  } else {
+    // 数えないスキャンでも古いスコアは捨てる。保存は persistAiHints の中でしか
+    // 掃除しないので、ここを抜けると「7 日で消える」（プライバシーポリシー）が守れない
+    await purgeStaleAiHints(now);
   }
 
   // 著者は **items（トレンド全件）から取る。newItems ではない。**

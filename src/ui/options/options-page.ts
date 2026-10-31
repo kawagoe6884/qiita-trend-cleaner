@@ -61,6 +61,8 @@ const SELECTORS = {
   aiMinProsePresets: 'button[data-min-prose]',
   aiDimLikely: '#ai-dim-likely',
   aiDimLikelyState: '#ai-dim-likely-state',
+  aiShowHints: '#ai-show-hints',
+  aiShowHintsState: '#ai-show-hints-state',
   aiAgreementSummary: '#ai-agreement-summary',
   aiAgreementRows: '#ai-agreement-rows',
   aiAgreementLegacy: '#ai-agreement-legacy',
@@ -370,6 +372,9 @@ function renderAiHintPrefs(prefs: AiHintPrefs): void {
   const dim = find<HTMLInputElement>(SELECTORS.aiDimLikely);
   if (dim) dim.checked = prefs.dimLikely;
   renderToggleState(prefs.dimLikely, SELECTORS.aiDimLikelyState);
+  const show = find<HTMLInputElement>(SELECTORS.aiShowHints);
+  if (show) show.checked = prefs.showHints;
+  renderToggleState(prefs.showHints, SELECTORS.aiShowHintsState);
 }
 
 /**
@@ -496,6 +501,13 @@ function attachAiHintListeners(): void {
     const checked = event.target instanceof HTMLInputElement && event.target.checked;
     renderToggleState(checked, SELECTORS.aiDimLikelyState);
     saveAiHint({ dimLikely: checked });
+  });
+
+  // 「AI文体かも？」そのものを使うか。オフでもスコアと回答は消さない
+  find<HTMLInputElement>(SELECTORS.aiShowHints)?.addEventListener('change', (event) => {
+    const checked = event.target instanceof HTMLInputElement && event.target.checked;
+    renderToggleState(checked, SELECTORS.aiShowHintsState);
+    saveAiHint({ showHints: checked });
   });
 }
 

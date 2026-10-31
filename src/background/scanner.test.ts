@@ -11,6 +11,7 @@ import {
   getAuthorVisits,
   getAiHints,
   saveAiHints,
+  saveAiHintPrefs,
 } from '../lib/storage';
 import { AuthRejectedError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
@@ -1148,6 +1149,43 @@ describe('runScan の AI ヒント', () => {
     expect(Object.keys(hints).sort()).toEqual(TWO_ITEMS.map((item) => item.itemId).sort());
     expect(hints[TWO_ITEMS[0]?.itemId ?? '']?.fired).toContain('dash');
     expect(hints[TWO_ITEMS[0]?.itemId ?? '']?.scoredAt).toBe(new Date().toISOString());
+  });
+
+  it('「AI文体かも？」を表示しない設定なら、フルモードでも本文を取りに行かない', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    await saveAiHintPrefs({ threshold: 5, minProseChars: 334, dimLikely: false, showHints: false });
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert — 著者巡回は今までどおり走る（いいねの検出はフルモードのまま）
+    expect(bodyMock).not.toHaveBeenCalled();
+    expect(await getAiHints()).toEqual({});
+    expect(itemsMock).toHaveBeenCalled();
+  });
+
+  it('表示しない設定の間も、保持期間を過ぎたスコアは捨てる（7 日で消すと約束している）', async () => {
+    // Arrange
+    await saveToken('dummy-token-value');
+    await saveAiHintPrefs({ threshold: 5, minProseChars: 334, dimLikely: false, showHints: false });
+    await saveAiHints({
+      'stale-item': { fired: [], proseChars: 500, scoredAt: '2026-08-01T00:00:00.000Z' },
+      'fresh-item': { fired: [], proseChars: 500, scoredAt: new Date().toISOString() },
+    });
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(Object.keys(await getAiHints())).toEqual(['fresh-item']);
+  });
+
+  it('ライトモードでも、保持期間を過ぎたスコアは捨てる（トークンを外した人）', async () => {
+    // Arrange
+    await saveAiHints({
+      'stale-item': { fired: [], proseChars: 500, scoredAt: '2026-08-01T00:00:00.000Z' },
+    });
+    // Act
+    await runScan(TWO_ITEMS);
+    // Assert
+    expect(await getAiHints()).toEqual({});
   });
 
   it('本文そのものは storage のどこにも残さない', async () => {

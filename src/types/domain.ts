@@ -494,12 +494,20 @@ export interface AiHintPrefs {
    * ヒントと回答ボタンは薄くしない。視界を狭める変更なので FoldTarget と同じく既定はオフ
    */
   dimLikely: boolean;
+  /**
+   * 「AI文体かも？」そのものを使うか。**既定は true。**
+   *
+   * false の間はトレンドに描かず、スキャンでも本文を取りに行かない（API の枠を使わない）。
+   * スコアと回答は消さない。true に戻すと残っているスコアはすぐ描き、新しい記事は次のスキャンで数える
+   */
+  showHints: boolean;
 }
 
 export const DEFAULT_AI_HINT_PREFS: AiHintPrefs = {
   threshold: AI_HINT_DEFAULT_THRESHOLD,
   minProseChars: AI_HINT_MIN_PROSE_CHARS,
   dimLikely: false,
+  showHints: true,
 };
 
 /**
