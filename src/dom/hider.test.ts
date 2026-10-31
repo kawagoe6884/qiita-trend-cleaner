@@ -7,6 +7,7 @@ import {
   describeHidden,
   noticeAction,
   clearHighlights,
+  isNoticeMutation,
 } from './hider';
 import { NOTICE_ID } from './selectors';
 import type { FeedbackLog } from '../types/domain';
@@ -353,5 +354,67 @@ describe('背景の目印', () => {
     // Assert — 「不正」と決めつける見た目にしない
     const marked = document.querySelector<HTMLElement>('[data-qtg-judged="true"]');
     expect(marked?.style.backgroundColor).not.toMatch(/^rgba?\(2[0-9]{2},\s*[0-5][0-9]?,/);
+  });
+});
+
+/**
+ * ページの監視（content-script.ts）が通知の書き換えに反応すると、隠し直す → 通知を
+ * 書き換える → 隠し直す… と止まらなくなる。通知だけの変化を見分けられること
+ */
+describe('isNoticeMutation', () => {
+  const noop = (): void => undefined;
+
+  // 同期で取り出す。マイクロタスクを挟むとコールバックに渡って空になる
+  function recordsOf(mutate: () => void): MutationRecord[] {
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(document.body, { childList: true, subtree: true });
+    mutate();
+    const records = observer.takeRecords();
+    observer.disconnect();
+    return records;
+  }
+
+  it('通知を出す・消す変化は通知のもの', () => {
+    // Act
+    const records = recordsOf(() => {
+      renderNotice(1, noop);
+      renderNotice(0, noop);
+    });
+    // Assert
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.every(isNoticeMutation)).toBe(true);
+  });
+
+  it('通知の文言を書き換える変化は通知のもの', () => {
+    // Arrange
+    renderNotice(1, noop);
+    // Act — 既にあれば要素は作り直さず、中のテキストだけが差し替わる
+    const records = recordsOf(() => {
+      renderNotice(2, noop, document, 'shown');
+    });
+    // Assert
+    expect(records.length).toBeGreaterThan(0);
+    expect(records.every(isNoticeMutation)).toBe(true);
+  });
+
+  it('カードの作り直しは通知のものではない', () => {
+    setupCards(card(1));
+    const records = recordsOf(() => {
+      setupCards(card(1));
+    });
+    expect(records.some((record) => !isNoticeMutation(record))).toBe(true);
+  });
+
+  it('通知とカードを一度に足した変化は通知のものとみなさない', () => {
+    // Arrange — 1 件の記録にカードが混ざっていたら、描き直しを止めてはいけない
+    const notice = document.createElement('div');
+    notice.id = NOTICE_ID;
+    const qiitaCard = document.createElement('div');
+    // Act
+    const records = recordsOf(() => {
+      document.body.append(notice, qiitaCard);
+    });
+    // Assert
+    expect(records.some((record) => !isNoticeMutation(record))).toBe(true);
   });
 });
