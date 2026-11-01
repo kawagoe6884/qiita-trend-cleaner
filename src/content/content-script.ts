@@ -175,7 +175,7 @@ function onAiAnswer(itemId: ItemId, verdict: AiVerdict | null, fired: AiSignal[]
 }
 
 /**
- * 「AI文体かも？」を描く。**フルモードのときだけ。**
+ * 「AI文体かも？」を描く。**フルモードで、設定画面で「表示しない」にしていないときだけ。**
  *
  * スコアは 7 日残るので、トークンを外した直後にも storage には残っている。
  * フルモードの特典（PRD）なので、ここでも見る。
@@ -193,6 +193,11 @@ async function applyAiHints(): Promise<void> {
       storage.getAiVerdicts(),
       storage.getAiHintPrefs(),
     ]);
+    // 設定画面で「表示しない」にした。トークンが無いときと同じく、描いた分も消す
+    if (!prefs.showHints) {
+      clearAiHints();
+      return;
+    }
     if (renderAiHints(hints, verdicts, onAiAnswer, prefs) > 0) watchTrendCards();
   } catch (error) {
     // 描けないだけで、ページの表示そのものは壊さない（applyHiding と同じ）

@@ -43,6 +43,12 @@ export function setupDom(): void {
       </div>
     </section>
     <section class="prefs">
+      <label class="toggle">
+        <input type="checkbox" id="ai-show-hints" checked />
+        <span class="track"></span>
+        <span>「AI文体かも？」を表示する</span>
+        <strong class="toggle-state" id="ai-show-hints-state"></strong>
+      </label>
       <div class="ai-grid">
         <input type="range" id="ai-threshold" min="1" max="8" step="1" />
         <output id="ai-threshold-value"></output>

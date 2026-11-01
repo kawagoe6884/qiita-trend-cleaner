@@ -345,30 +345,49 @@ describe('getAiHintPrefs / saveAiHintPrefs', () => {
       threshold: 5,
       minProseChars: 334,
       dimLikely: false,
+      showHints: true,
     });
   });
 
   it('保存した値を読み戻せる', async () => {
-    await storage.saveAiHintPrefs({ threshold: 3, minProseChars: 500, dimLikely: false });
+    await storage.saveAiHintPrefs({
+      threshold: 3,
+      minProseChars: 500,
+      dimLikely: false,
+      showHints: true,
+    });
     await expect(storage.getAiHintPrefs()).resolves.toEqual({
       threshold: 3,
       minProseChars: 500,
       dimLikely: false,
+      showHints: true,
     });
   });
 
   it('範囲の両端を受け付ける', async () => {
-    await storage.saveAiHintPrefs({ threshold: 1, minProseChars: 0, dimLikely: false });
+    await storage.saveAiHintPrefs({
+      threshold: 1,
+      minProseChars: 0,
+      dimLikely: false,
+      showHints: true,
+    });
     await expect(storage.getAiHintPrefs()).resolves.toEqual({
       threshold: 1,
       minProseChars: 0,
       dimLikely: false,
+      showHints: true,
     });
-    await storage.saveAiHintPrefs({ threshold: 8, minProseChars: 2000, dimLikely: false });
+    await storage.saveAiHintPrefs({
+      threshold: 8,
+      minProseChars: 2000,
+      dimLikely: false,
+      showHints: true,
+    });
     await expect(storage.getAiHintPrefs()).resolves.toEqual({
       threshold: 8,
       minProseChars: 2000,
       dimLikely: false,
+      showHints: true,
     });
   });
 
@@ -378,12 +397,14 @@ describe('getAiHintPrefs / saveAiHintPrefs', () => {
       threshold: 5,
       minProseChars: 100,
       dimLikely: false,
+      showHints: true,
     });
     await chrome.storage.local.set({ aiHintPrefs: { threshold: 2, minProseChars: -1 } });
     await expect(storage.getAiHintPrefs()).resolves.toEqual({
       threshold: 2,
       minProseChars: 334,
       dimLikely: false,
+      showHints: true,
     });
   });
 
@@ -393,6 +414,7 @@ describe('getAiHintPrefs / saveAiHintPrefs', () => {
       threshold: 5,
       minProseChars: 334,
       dimLikely: false,
+      showHints: true,
     });
   });
 
@@ -402,15 +424,22 @@ describe('getAiHintPrefs / saveAiHintPrefs', () => {
       threshold: 5,
       minProseChars: 334,
       dimLikely: false,
+      showHints: true,
     });
   });
 
   it('薄くする設定を読み戻せる', async () => {
-    await storage.saveAiHintPrefs({ threshold: 5, minProseChars: 334, dimLikely: true });
+    await storage.saveAiHintPrefs({
+      threshold: 5,
+      minProseChars: 334,
+      dimLikely: true,
+      showHints: true,
+    });
     await expect(storage.getAiHintPrefs()).resolves.toEqual({
       threshold: 5,
       minProseChars: 334,
       dimLikely: true,
+      showHints: true,
     });
   });
 
@@ -420,6 +449,7 @@ describe('getAiHintPrefs / saveAiHintPrefs', () => {
       threshold: 3,
       minProseChars: 200,
       dimLikely: false,
+      showHints: true,
     });
   });
 
@@ -431,11 +461,44 @@ describe('getAiHintPrefs / saveAiHintPrefs', () => {
       threshold: 3,
       minProseChars: 200,
       dimLikely: false,
+      showHints: true,
+    });
+  });
+
+  it('表示しない設定を読み戻せる', async () => {
+    await storage.saveAiHintPrefs({
+      threshold: 5,
+      minProseChars: 334,
+      dimLikely: false,
+      showHints: false,
+    });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 5,
+      minProseChars: 334,
+      dimLikely: false,
+      showHints: false,
+    });
+  });
+
+  it('showHints が boolean でなければ表示する（他の項目は生かす）', async () => {
+    await chrome.storage.local.set({
+      aiHintPrefs: { threshold: 3, minProseChars: 200, dimLikely: true, showHints: 'false' },
+    });
+    await expect(storage.getAiHintPrefs()).resolves.toEqual({
+      threshold: 3,
+      minProseChars: 200,
+      dimLikely: true,
+      showHints: true,
     });
   });
 
   it('local に置く（sync には書かない）', async () => {
-    await storage.saveAiHintPrefs({ threshold: 4, minProseChars: 334, dimLikely: false });
+    await storage.saveAiHintPrefs({
+      threshold: 4,
+      minProseChars: 334,
+      dimLikely: false,
+      showHints: true,
+    });
     // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(chrome.storage.sync.set).not.toHaveBeenCalled();
   });

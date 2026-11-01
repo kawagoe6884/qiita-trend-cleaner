@@ -298,6 +298,7 @@ describe('renderAiHints', () => {
       threshold: 3,
       minProseChars: AI_HINT_MIN_PROSE_CHARS,
       dimLikely: false,
+      showHints: true,
     });
     // Assert
     expect(hintsOn(1)?.dataset.qtgAiLikely).toBe('true');
@@ -313,6 +314,7 @@ describe('renderAiHints', () => {
       threshold: 6,
       minProseChars: AI_HINT_MIN_PROSE_CHARS,
       dimLikely: false,
+      showHints: true,
     });
     expect(hintsOn(1)?.dataset.qtgAiLikely).toBe('false');
     expect(document.querySelectorAll('[data-qtg-ai-hint]')).toHaveLength(1);
@@ -327,6 +329,7 @@ describe('renderAiHints', () => {
       threshold: AI_HINT_DEFAULT_THRESHOLD,
       minProseChars: 500,
       dimLikely: false,
+      showHints: true,
     });
     // Assert
     expect(hintsOn(1)?.textContent).toContain('判定が甘い可能性あり');
@@ -339,6 +342,7 @@ describe('renderAiHints', () => {
       threshold: AI_HINT_DEFAULT_THRESHOLD,
       minProseChars: 0,
       dimLikely: false,
+      showHints: true,
     });
     expect(hintsOn(1)?.textContent).not.toContain('判定が甘い可能性あり');
   });
@@ -369,7 +373,7 @@ describe('renderAiHints', () => {
  */
 /** 強調される記事を薄く表示する（M4）。カードに印を付け、head の規則で薄くする */
 describe('renderAiHints（薄く表示する）', () => {
-  const dimOn = { ...DEFAULT_AI_HINT_PREFS, dimLikely: true };
+  const dimOn = { ...DEFAULT_AI_HINT_PREFS, dimLikely: true, showHints: true };
 
   function cardOf(n: number): HTMLElement | null | undefined {
     return hintsOn(n)?.parentElement;
@@ -504,6 +508,7 @@ describe('clearAiHints', () => {
     renderAiHints({ [itemIdOf(1)]: hint(8) }, {}, vi.fn(), {
       ...DEFAULT_AI_HINT_PREFS,
       dimLikely: true,
+      showHints: true,
     });
     clearAiHints();
     expect(document.querySelector<HTMLElement>('.card')?.dataset.qtgAiDim).toBeUndefined();

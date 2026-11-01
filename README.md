@@ -54,6 +54,11 @@ npm run build
   </thead>
   <tbody>
     <tr>
+      <td nowrap>「AI文体かも？」を表示する</td>
+      <td>オフにするとトレンドに表示せず、本文も取得しない（API の利用枠を使わない）。点数と回答は残る</td>
+      <td nowrap>オン</td>
+    </tr>
+    <tr>
       <td nowrap>何点以上で強調するか</td>
       <td>1〜8 点（点数の計算や回答記録はそのまま）</td>
       <td nowrap>5 点</td>

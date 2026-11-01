@@ -422,7 +422,14 @@
         トークンを設定したときに、トレンド記事の右上へ表示する目安です。<br />
         点数の計算方法はそのままで、何点から目立たせるかだけを変えられます。開いているトレンドにもすぐ反映されます。
       </p>
-      <div class="ai-grid">
+      <label class="toggle">
+        <input type="checkbox" id="ai-show-hints" checked />
+        <span class="track"></span>
+        <span>「AI文体かも？」を表示する</span>
+        <strong class="toggle-state" id="ai-show-hints-state"></strong>
+      </label>
+      <p class="hint">初期設定はオンです。オフにするとトレンドに表示せず、記事の本文も取得しません（API の利用枠を使いません）。これまでの点数と回答は残り、オンに戻すとそのまま表示されます。</p>
+      <div class="ai-grid" style="margin-top: 16px">
         <label class="ai-label" for="ai-threshold">何点以上で強調するか</label>
         <div class="ai-control">
           <!-- max はシグナル数（AI_SIGNALS.length）。スクリプトでも上書きする -->

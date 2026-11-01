@@ -767,12 +767,43 @@ describe('content script の AI ヒント', () => {
     });
   });
 
+  it('表示しない設定なら、フルモードでスコアがあっても表示しない', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    await saveAiHintPrefs({ threshold: 5, minProseChars: 334, dimLikely: false, showHints: false });
+    // Act
+    await bootContentScript();
+    // Assert
+    expect(hintOn(ITEM_1)).toBeNull();
+  });
+
+  it('表示しない設定に変えたら、開いているページから消す', async () => {
+    // Arrange
+    document.body.innerHTML = card(1);
+    await saveToken('dummy-token-value');
+    await saveAiHints({ [ITEM_1]: hint });
+    await bootContentScript();
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)).not.toBeNull();
+    });
+    // Act — 設定画面でオフにした
+    const aiHintPrefs = { threshold: 5, minProseChars: 334, dimLikely: false, showHints: false };
+    await saveAiHintPrefs(aiHintPrefs);
+    storageListener()({ aiHintPrefs: { newValue: aiHintPrefs } }, 'local');
+    // Assert
+    await vi.waitFor(() => {
+      expect(hintOn(ITEM_1)).toBeNull();
+    });
+  });
+
   it('保存済みの線引きで強調する', async () => {
     // Arrange — 2 点の記事。既定の 5 点なら強調されない
     document.body.innerHTML = card(1);
     await saveToken('dummy-token-value');
     await saveAiHints({ [ITEM_1]: { ...hint, fired: ['dash', 'summaryHeading'] } });
-    await saveAiHintPrefs({ threshold: 2, minProseChars: 334, dimLikely: false });
+    await saveAiHintPrefs({ threshold: 2, minProseChars: 334, dimLikely: false, showHints: true });
     // Act
     await bootContentScript();
     // Assert
@@ -791,7 +822,7 @@ describe('content script の AI ヒント', () => {
       expect(hintOn(ITEM_1)?.dataset.qtgAiLikely).toBe('false');
     });
     // Act — 設定画面で 2 点に下げた
-    const aiHintPrefs = { threshold: 2, minProseChars: 334, dimLikely: false };
+    const aiHintPrefs = { threshold: 2, minProseChars: 334, dimLikely: false, showHints: true };
     await saveAiHintPrefs(aiHintPrefs);
     storageListener()({ aiHintPrefs: { newValue: aiHintPrefs } }, 'local');
     // Assert
@@ -805,14 +836,14 @@ describe('content script の AI ヒント', () => {
     document.body.innerHTML = card(1);
     await saveToken('dummy-token-value');
     await saveAiHints({ [ITEM_1]: { ...hint, fired: ['dash', 'summaryHeading'] } });
-    await saveAiHintPrefs({ threshold: 2, minProseChars: 334, dimLikely: false });
+    await saveAiHintPrefs({ threshold: 2, minProseChars: 334, dimLikely: false, showHints: true });
     await bootContentScript();
     await vi.waitFor(() => {
       expect(hintOn(ITEM_1)?.dataset.qtgAiLikely).toBe('true');
     });
     expect(hintOn(ITEM_1)?.parentElement?.dataset.qtgAiDim).toBeUndefined();
     // Act — 設定画面でオンにした
-    const aiHintPrefs = { threshold: 2, minProseChars: 334, dimLikely: true };
+    const aiHintPrefs = { threshold: 2, minProseChars: 334, dimLikely: true, showHints: true };
     await saveAiHintPrefs(aiHintPrefs);
     storageListener()({ aiHintPrefs: { newValue: aiHintPrefs } }, 'local');
     // Assert

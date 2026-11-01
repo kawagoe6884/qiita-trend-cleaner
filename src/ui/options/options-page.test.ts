@@ -615,7 +615,7 @@ describe('「AI文体かも？」の線引き', () => {
     // Assert
     await vi.waitFor(() => {
       expect(setLocal()).toHaveBeenCalledWith({
-        aiHintPrefs: { threshold: 4, minProseChars: 200, dimLikely: false },
+        aiHintPrefs: { threshold: 4, minProseChars: 200, dimLikely: false, showHints: true },
       });
     });
     expect(pressedPresets()).toEqual(['200']);
@@ -655,7 +655,7 @@ describe('「AI文体かも？」の線引き', () => {
     minProse().dispatchEvent(new Event('change'));
     await vi.waitFor(() => {
       expect(setLocal()).toHaveBeenCalledWith({
-        aiHintPrefs: { threshold: 5, minProseChars: 1000, dimLikely: false },
+        aiHintPrefs: { threshold: 5, minProseChars: 1000, dimLikely: false, showHints: true },
       });
     });
     expect(pressedPresets()).toEqual(['1000']);
@@ -689,7 +689,7 @@ describe('「AI文体かも？」の線引き', () => {
     // Assert
     await vi.waitFor(() => {
       expect(setLocal()).toHaveBeenCalledWith({
-        aiHintPrefs: { threshold: 3, minProseChars: 334, dimLikely: false },
+        aiHintPrefs: { threshold: 3, minProseChars: 334, dimLikely: false, showHints: true },
       });
     });
   });
@@ -701,7 +701,7 @@ describe('「AI文体かも？」の線引き', () => {
     minProse().dispatchEvent(new Event('change'));
     await vi.waitFor(() => {
       expect(setLocal()).toHaveBeenCalledWith({
-        aiHintPrefs: { threshold: 4, minProseChars: 500, dimLikely: false },
+        aiHintPrefs: { threshold: 4, minProseChars: 500, dimLikely: false, showHints: true },
       });
     });
   });
@@ -714,7 +714,7 @@ describe('「AI文体かも？」の線引き', () => {
     minProse().dispatchEvent(new Event('change'));
     await vi.waitFor(() => {
       expect(setLocal()).toHaveBeenLastCalledWith({
-        aiHintPrefs: { threshold: 2, minProseChars: 100, dimLikely: false },
+        aiHintPrefs: { threshold: 2, minProseChars: 100, dimLikely: false, showHints: true },
       });
     });
   });
@@ -728,7 +728,7 @@ describe('「AI文体かも？」の線引き', () => {
     // Assert
     await vi.waitFor(() => {
       expect(setLocal()).toHaveBeenCalledWith({
-        aiHintPrefs: { threshold: 5, minProseChars: 2000, dimLikely: false },
+        aiHintPrefs: { threshold: 5, minProseChars: 2000, dimLikely: false, showHints: true },
       });
     });
     expect(minProse().value).toBe('2000');
@@ -770,14 +770,53 @@ describe('「AI文体かも？」の線引き', () => {
     } finally {
       (chrome.storage.local as { get: unknown }).get = get;
     }
+    // 保存される既定値（表示する）と見た目を揃える
+    expect(el<HTMLInputElement>('#ai-show-hints').checked).toBe(true);
     threshold().value = '6';
     threshold().dispatchEvent(new Event('change'));
     await vi.waitFor(() => {
       expect(setLocal()).toHaveBeenCalledWith({
-        aiHintPrefs: { threshold: 6, minProseChars: 334, dimLikely: false },
+        aiHintPrefs: { threshold: 6, minProseChars: 334, dimLikely: false, showHints: true },
       });
     });
   });
+  function showHints(): HTMLInputElement {
+    return el<HTMLInputElement>('#ai-show-hints');
+  }
+
+  it('「AI文体かも？」を表示するは未設定ならオン（「する」）', async () => {
+    await init();
+    expect(showHints().checked).toBe(true);
+    expect(el('#ai-show-hints-state').textContent).toBe('する');
+  });
+
+  it('保存済みの「表示しない」を映す', async () => {
+    await chrome.storage.local.set({
+      aiHintPrefs: { threshold: 5, minProseChars: 334, dimLikely: false, showHints: false },
+    });
+    await init();
+    expect(showHints().checked).toBe(false);
+    expect(el('#ai-show-hints-state').textContent).toBe('しない');
+  });
+
+  it('表示を切り替えると、文言をその場で変えて保存する（他の項目はそのまま）', async () => {
+    // Arrange
+    await chrome.storage.local.set({
+      aiHintPrefs: { threshold: 4, minProseChars: 200, dimLikely: true },
+    });
+    await init();
+    // Act
+    showHints().checked = false;
+    showHints().dispatchEvent(new Event('change'));
+    // Assert
+    expect(el('#ai-show-hints-state').textContent).toBe('しない');
+    await vi.waitFor(() => {
+      expect(setLocal()).toHaveBeenCalledWith({
+        aiHintPrefs: { threshold: 4, minProseChars: 200, dimLikely: true, showHints: false },
+      });
+    });
+  });
+
   function dimLikely(): HTMLInputElement {
     return el<HTMLInputElement>('#ai-dim-likely');
   }
@@ -790,7 +829,7 @@ describe('「AI文体かも？」の線引き', () => {
 
   it('保存済みの「薄く表示する」を映す', async () => {
     await chrome.storage.local.set({
-      aiHintPrefs: { threshold: 5, minProseChars: 334, dimLikely: true },
+      aiHintPrefs: { threshold: 5, minProseChars: 334, dimLikely: true, showHints: true },
     });
     await init();
     expect(dimLikely().checked).toBe(true);
@@ -808,21 +847,21 @@ describe('「AI文体かも？」の線引き', () => {
     expect(el('#ai-dim-likely-state').textContent).toBe('する');
     await vi.waitFor(() => {
       expect(setLocal()).toHaveBeenCalledWith({
-        aiHintPrefs: { threshold: 4, minProseChars: 200, dimLikely: true },
+        aiHintPrefs: { threshold: 4, minProseChars: 200, dimLikely: true, showHints: true },
       });
     });
   });
 
   it('線引きを変えても「薄く表示する」を巻き戻さない', async () => {
     await chrome.storage.local.set({
-      aiHintPrefs: { threshold: 5, minProseChars: 334, dimLikely: true },
+      aiHintPrefs: { threshold: 5, minProseChars: 334, dimLikely: true, showHints: true },
     });
     await init();
     threshold().value = '6';
     threshold().dispatchEvent(new Event('change'));
     await vi.waitFor(() => {
       expect(setLocal()).toHaveBeenCalledWith({
-        aiHintPrefs: { threshold: 6, minProseChars: 334, dimLikely: true },
+        aiHintPrefs: { threshold: 6, minProseChars: 334, dimLikely: true, showHints: true },
       });
     });
   });

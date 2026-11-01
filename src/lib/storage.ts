@@ -225,7 +225,7 @@ export async function getAiHintPrefs(): Promise<AiHintPrefs> {
   const raw = await readRaw();
   const stored = raw.aiHintPrefs;
   if (typeof stored !== 'object' || stored === null) return { ...DEFAULT_AI_HINT_PREFS };
-  const { threshold, minProseChars, dimLikely } = stored as Record<string, unknown>;
+  const { threshold, minProseChars, dimLikely, showHints } = stored as Record<string, unknown>;
   return {
     threshold: isIntInRange(threshold, AI_HINT_THRESHOLD_RANGE)
       ? threshold
@@ -235,6 +235,8 @@ export async function getAiHintPrefs(): Promise<AiHintPrefs> {
       : DEFAULT_AI_HINT_PREFS.minProseChars,
     // M4 より前の保存値には無い。boolean 以外は既定（薄くしない）に倒す
     dimLikely: typeof dimLikely === 'boolean' ? dimLikely : DEFAULT_AI_HINT_PREFS.dimLikely,
+    // この項目より前の保存値には無い。boolean 以外は既定（表示する）に倒す
+    showHints: typeof showHints === 'boolean' ? showHints : DEFAULT_AI_HINT_PREFS.showHints,
   };
 }
 
