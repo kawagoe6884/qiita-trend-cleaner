@@ -16,9 +16,13 @@ Qiita のトレンドを自分の基準で整理する Chrome 拡張機能です
 
 ## 現在の状態
 
-Chrome ウェブストアには未公開です。開発者の環境で 8 件を評価したところ 8 件とも「妥当」でしたが、サンプル数が少なく評価者も開発者本人のため、実際の誤検知率はまだ分かりません（0/8 でも真の誤検知率が 3 割程度ある可能性は統計的に残ります）。
+[Chrome ウェブストア](https://chromewebstore.google.com/detail/qiita-trend-cleaner/bjomdjjggbmoapngpcjcgipeephjneai)で公開しています。開発者の環境で 8 件を評価したところ 8 件とも「妥当」でしたが、サンプル数が少なく評価者も開発者本人のため、実際の誤検知率はまだ分かりません（0/8 でも真の誤検知率が 3 割程度ある可能性は統計的に残ります）。
 
 ## インストール
+
+[Chrome ウェブストアのページ](https://chromewebstore.google.com/detail/qiita-trend-cleaner/bjomdjjggbmoapngpcjcgipeephjneai)から「Chrome に追加」でインストールできます。その後 <https://qiita.com/trend> を開くとスキャンが始まります。
+
+### ソースからビルドする
 
 ```bash
 npm install
