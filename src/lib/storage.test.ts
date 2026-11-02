@@ -897,7 +897,16 @@ describe('トレンドのスナップショット', () => {
 
   it('撮っていなければ null（「1 件も読めなかった」と区別する）', async () => {
     // **空配列と取り違えない。**null を空配列にすると、更新直後のユーザーの
-    // 候補が全員「トレンドに出ていません」になる
+    // 候補が全員一覧から外れる（hideOffTrend。2026-11-02）
+    await expect(storage.getTrendSnapshot()).resolves.toBeNull();
+  });
+
+  it('消すと null に戻る（保存に失敗したとき、古い記録で一覧を絞らない）', async () => {
+    // Arrange
+    await storage.saveTrendSnapshot(['example-author-a'], NOW);
+    // Act
+    await storage.clearTrendSnapshot();
+    // Assert
     await expect(storage.getTrendSnapshot()).resolves.toBeNull();
   });
 

@@ -15,6 +15,7 @@ import { detectCandidates } from '../../detect/detector';
 import { countAuthorCoverage } from '../../detect/like-index';
 import { RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from '../../api/rate-budget';
 import { isTrendPage } from '../../dom/trend-reader';
+import { isHiddenAsOffTrend } from '../../lib/visibility';
 import { isMuteOutcome, BURST_WINDOW_CHOICES } from '../../types/domain';
 import type {
   AccountHandle,
@@ -102,12 +103,14 @@ export interface CandidateView {
    * 出ていた場合と、**スナップショットをまだ 1 つも持っていない場合**は null。
    *
    * 候補は 7 日ぶんの蓄積から出るので、5 日前に検出した著者はトレンドから
-   * 去ったあとも候補に残る。ミュートは表示中のカードを操作するので、
-   * その状態で押しても必ず失敗する。**押す前に理由を出すためのフィールド。**
+   * 去ったあとも候補に残る。**これが立っている候補は、ミュート済みでなければ一覧に
+   * 出さない**（{@link hideOffTrend}。2026-11-02 まではこの時刻を添えて出していた）。
+   * 一覧に残ったミュート済みの著者で「妥当」を押し直したときは、popup-page の
+   * muteOnVerdict がこれを見て依頼を送らずに見送る。
    *
-   * 【なぜ boolean ではなく時刻なのか】
-   * スナップショット自体が古くなる。「出ていません」は現在形の主張になり、
-   * 2 日開いていなければ偽になりうる。時刻に紐づければ偽にならない。
+   * 【値は null かどうかしか読んでいない】（2026-11-02）
+   * 時刻を画面に出していた describeOffTrend を消したので、いまは null 判定だけに
+   * 使う。時刻のまま持つのは onTrendAt（押し直しの判定が時刻を比べる）と対にするため。
    */
   offTrendAt: IsoDateTime | null;
   /**
@@ -128,8 +131,8 @@ export interface CandidateView {
  * 呼び出し（Phase 6 からの経路）を書き換えずに済ませるため。
  *
  * **スナップショットが無いときは全員 null。**「まだ一度もトレンドを開いて
- * いない」を「全員トレンドに出ていない」と読み替えると、更新直後のユーザーに
- * 候補 30 件ぶんの嘘が並ぶ（itemCoveredMinutes で踏んだのと同じ形）。
+ * いない」を「全員トレンドに出ていない」と読み替えると、更新直後のユーザーの
+ * 一覧から候補 30 件ぶんが消える（hideOffTrend。itemCoveredMinutes で踏んだのと同じ形）。
  */
 export function toViews(
   candidates: Candidate[],
@@ -155,6 +158,44 @@ export function toViews(
         ? trendSnapshot.at
         : null,
   }));
+}
+
+/**
+ * トレンドに出ていなかった候補を外す。**純粋関数。順序は保つ。**
+ *
+ * 【なぜ外すのか】（2026-11-02 ユーザー「トレンドページにいないのに、拡張機能に
+ * いるという矛盾を解消したい」）
+ * 候補は 7 日ぶんの蓄積から出るので、トレンドを去った著者も一覧に残っていた。
+ * 「◯◯ 時点でトレンド外」と書き添えても、画面に居ない著者が並ぶ違和感は消えなかった。
+ * **外すのは表示だけ。**蓄積・候補の保存・判定（妥当 / 誤り）は消さないので、
+ * トレンドに戻れば一覧にも戻る。
+ *
+ * 【スナップショットが無ければ 1 件も外さない】
+ * offTrendAt は「出ていなかったと確認できた」ときだけ時刻を持つ（toViews）。
+ * 未確認を不在と読み替えると、更新直後のユーザーの一覧が理由も出ないまま空になる。
+ *
+ * 【ミュート済みと確認できた著者は外さない】（2026-11-02 ユーザー「折りたたみに残す」）
+ * 規則そのものは lib/visibility の isHiddenAsOffTrend にある。**バッジ（background の
+ * badge-sync）も同じ関数で数える**ので、一覧の件数とバッジは食い違わない。
+ */
+export function hideOffTrend(views: CandidateView[]): CandidateView[] {
+  return views.filter((view) => !isHiddenAsOffTrend(view.offTrendAt !== null, view.mute));
+}
+
+/**
+ * 一覧に出すビューを作る。**ポップアップが候補を描くときは必ずここを通す。**
+ *
+ * toViews と hideOffTrend を呼び出し側で組み合わせると、3 つ目の呼び出し元が
+ * hideOffTrend を付け忘れたとき、トレンド外の著者が黙って戻ってくる
+ * （applySettings が trendSnapshot を読み忘れていた 2026-09-17 と同じ形）。
+ */
+export function toShownViews(
+  candidates: Candidate[],
+  feedback: FeedbackLog,
+  muteLog: MuteLog,
+  trendSnapshot: TrendSnapshot | null,
+): CandidateView[] {
+  return hideOffTrend(toViews(candidates, feedback, muteLog, trendSnapshot));
 }
 
 export interface PartitionedViews {
@@ -278,7 +319,8 @@ export function describeCall(views: CandidateView[], precision: Precision): stri
  *
  * 根拠記事はこの著者のぶんしか持たない（popup-state が根拠 URL を
  * authorHandle から組み立てるため）。他の著者の記事を見たければ、その著者の
- * 候補を開けば根拠リンクがある。
+ * 候補を開けば根拠リンクがある。**ただし、その著者がトレンド外なら一覧には居ない**
+ * （hideOffTrend。2026-11-02）。名前は出すが、候補が並んでいるとは限らない。
  *
  * **断定しない**（設計上の約束 6）。「組織票」「不正」とは書かない。
  */
@@ -288,19 +330,33 @@ export function describeCoAuthors(coAuthors: AccountHandle[] | undefined): strin
 }
 
 /**
- * 候補ゼロのときの案内。**原因が 2 つあるので言い分ける。**
+ * 候補ゼロのときの案内。**原因ごとに言い分ける。**
  *
- * 蓄積がまだ無いのか、蓄積はあるが条件が厳しいのかで、次にやることが違う。
- * 1 つの文言にすると、スライダーを上げてゼロになった人に
+ * 蓄積がまだ無いのか、蓄積はあるが条件が厳しいのか、折りたたみの中に居るのかで、
+ * 次にやることが違う。1 つの文言にすると、スライダーを上げてゼロになった人に
  * 「トレンドページを開いてください」と的外れな案内を出すことになる。
+ *
+ * 【スナップショットの時刻に紐づけて範囲を言う】（2026-11-02）
+ * トレンド外の候補は hideOffTrend で外しているので、範囲を言わないと保存済みの
+ * 候補があるのに「当てはまる候補はありません」が嘘になる。**「いまのトレンド」とは
+ * 言わない** — 絞りに使った記録はトレンドを最後に開いた時点のもので、2 日開いて
+ * いなければ 2 日前のもの（TrendSnapshot の JSDoc）。スナップショットが無ければ
+ * 1 件も絞っていないので、範囲は言わない。
  */
-export function describeEmpty(hasIndex: boolean, foldedCount = 0): string {
+export function describeEmpty(
+  hasIndex: boolean,
+  foldedCount = 0,
+  trendSnapshotAt: IsoDateTime | null = null,
+): string {
   // 折りたたみの中に居るのに「条件をゆるめると増えます」と言うと、
-  // 何もしていない人に条件をいじらせることになる。**原因は 3 つある**
+  // 何もしていない人に条件をいじらせることになる
   if (foldedCount > 0) return '出ている候補はすべて折りたたみの中にあります。';
-  return hasIndex
-    ? 'いまの条件に当てはまる候補はありません。条件をゆるめると増えます。'
-    : 'まだ何も集めていません。トレンドページを開くと蓄積が始まります。';
+  if (!hasIndex) return 'まだ何も集めていません。トレンドページを開くと蓄積が始まります。';
+  const scope =
+    trendSnapshotAt === null
+      ? 'いまの条件に'
+      : `${formatJst(trendSnapshotAt)} に読み込んだトレンドには、条件に`;
+  return `${scope}当てはまる候補はありません。条件をゆるめると増えます。`;
 }
 
 const MINUTES_PER_DAY = 60 * 24;
@@ -442,6 +498,11 @@ export interface PopupState {
   muteOnValid: boolean;
   /** 評価が済んだ候補を折りたたむ対象。**既定は 'none'** */
   foldTarget: FoldTarget;
+  /**
+   * 一覧の絞り込みに使ったスナップショットの時刻。**撮っていなければ null。**
+   * 候補ゼロの案内（describeEmpty）が「いつのトレンドか」を言うために持つ
+   */
+  trendSnapshotAt: IsoDateTime | null;
 }
 
 /** 保存済みの状態をまとめて読む */
@@ -472,7 +533,7 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
     storage.getTrendSnapshot(),
   ]);
   return {
-    views: toViews(candidates, feedback, muteLog, trendSnapshot),
+    views: toShownViews(candidates, feedback, muteLog, trendSnapshot),
     precision: precisionOf(feedback),
     settings,
     rateLimitNotice: rateLimitNotice(until, now),
@@ -482,6 +543,7 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
     authorCoverage: countAuthorCoverage(index),
     muteOnValid,
     foldTarget,
+    trendSnapshotAt: trendSnapshot?.at ?? null,
   };
 }
 
@@ -503,7 +565,8 @@ export async function applySettings(settings: Settings, now: Date): Promise<Cand
   // muteLog も読む。読まないと、**つまみを 1 つ動かした瞬間にミュートの結果表示が
   // 消える**（Candidate.verdict を持たせなかったのと同じ形の失敗）。
   // trendSnapshot も同じ理由で読む — **2026-09-17 まで読んでいなかった。**
-  // loadPopupState にだけ配線し、つまみを動かすとトレンド不在の行が消えていた
+  // loadPopupState にだけ配線し、つまみを動かすとトレンド不在の行が消えていた。
+  // いまは不在の候補を出さないので、読み忘れると逆に**つまみを動かした瞬間に現れる**
   const [index, feedback, muteLog, trendSnapshot] = await Promise.all([
     storage.getLikeIndex(),
     storage.getFeedback(),
@@ -513,7 +576,7 @@ export async function applySettings(settings: Settings, now: Date): Promise<Cand
   const candidates = detectCandidates(index, settings, now);
   await storage.saveSettings(settings);
   await storage.saveCandidates(candidates);
-  return toViews(candidates, feedback, muteLog, trendSnapshot);
+  return toShownViews(candidates, feedback, muteLog, trendSnapshot);
 }
 
 /**
@@ -680,39 +743,6 @@ export function describeMuteRecord(record: MuteRecord): string {
 }
 
 /**
- * トレンドに出ていない候補への案内。**出ている／スナップショットが無いなら空文字**
- * （describeFold と同じ規約で、器ごと出さない）。
- *
- * 【断定しない】
- * 言えるのは「そのスナップショットに居なかった」だけ。いま出ているかは分からない
- * ので、必ず時刻に紐づける。**`mutedAt` の文言と同じ理由。**
- *
- * 【★ 押し直しを促さない】（2026-09-16 実機）
- * 初版は「**次に出てきたときに押してください**」と書いていた。**ミュート済みの
- * 著者には起こり得ない。**ユーザーが Qiita 側で手動ミュートすると、拡張には
- * `mutedAt` の記録が残らないまま著者がトレンドから消えるので、
- * 「順番に押し出された」と「ミュート済み」が**区別できない**。
- * 区別できないものを根拠に行動を約束しない — 2026-08-24 に
- * `not-on-page` の文言で直したのと**同じ誤りを、新しい行で作り直していた**。
- *
- * 【記録があるなら、そちらが理由を言っている】
- * `mutedAt` が立っていればミュートの行（`describeMuteStatus`）が必ず出ているので出さない。
- * 同じことを 2 行で言うと、どちらが理由なのか読めなくなる。
- */
-export function describeOffTrend(view: CandidateView): string {
-  if (view.offTrendAt === null) return '';
-  if (view.mute?.mutedAt !== undefined) return '';
-  // 【短くした】（2026-09-16 ユーザー「長すぎる」）3 文 → 1 行。
-  // **「いまは押せません」を外した。**ミュート連動がオフのとき画面にミュートの
-  // ボタンは無く、押せるのは「妥当 / 誤り」で、それは押して問題ない
-  // （判定は保存され、再びトレンドに出たときに効く）。何が押せないのかが
-  // 読み手に伝わらず、判定まで止めてしまう文だった。
-  // 残したのは ①時刻（現在形にしない）②手動ミュートの可能性（押し直しを
-  // 待たせない）の 2 つだけ
-  return `${formatJst(view.offTrendAt)} 時点でトレンド外（ミュート済みの著者も含む）`;
-}
-
-/**
  * 失敗した試行のうち、**あとから読み込んだトレンドに著者が居れば押し直す価値がある**もの。
  *
  * default を書かない（describeMuteOutcome と同じ）。MuteOutcome に値を足したとき、
@@ -772,7 +802,7 @@ export function isMuteRetryReady(
 }
 
 /**
- * 押し直せる候補の行。**押し直せないなら空文字**（describeOffTrend と同じ規約）。
+ * 押し直せる候補の行。**押し直せないなら空文字**（describeFold と同じ規約）。
  *
  * 失敗の文言（describeMuteRecord）の**代わりに**出す。押したときの理由
  * （「トレンドに記事が無く…」）は、あとから撮ったスナップショットで古くなっている。
@@ -834,7 +864,7 @@ function mayHaveMuted(outcome: MuteOutcome): boolean {
 }
 
 /**
- * 候補 1 件のミュートの行。**出さないなら空文字**（describeOffTrend と同じ規約）。
+ * 候補 1 件のミュートの行。**出さないなら空文字**（describeFold と同じ規約）。
  *
  * 【「妥当」でなくなった候補には、ミュートしようとした経緯を出さない】（2026-09-17 実機）
  * 「妥当」→ トレンド外で見送り →「誤り」と押すと、「押したときトレンドに記事が無く、
@@ -900,7 +930,7 @@ export function describeMuteOutcome(outcome: MuteOutcome): string {
       // 【現在形と約束をやめた】（2026-09-17）以前は「いま開いているトレンドページに
       // …次に出てきたときに押し直してください。」。**押したあとに読む文なので
       // 「いま」は押した時点を指していない。**「次に出てきたとき」はミュート済みの
-      // 著者には来ない（describeOffTrend で直したのと同じ誤り）。
+      // 著者には来ない（2026-09-16 にトレンド外の行で直したのと同じ誤り）。
       // 戻ってきたときは describeMuteRetry がこの行を差し替えて案内する
       return '押したときトレンドに記事が無く、ミュートしませんでした。';
     case 'no-trend-tab':
