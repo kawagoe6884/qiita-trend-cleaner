@@ -1590,7 +1590,7 @@ describe('loadPopupState の折りたたみ設定', () => {
 /**
  * 「投稿から何分以内」の目盛り（Phase 9）。
  *
- * 分は等間隔に並ばない（60 → 2880）ので、スライダーは **添字** を持つ。
+ * 分は等間隔に並ばない（60 → 4320）ので、スライダーは **添字** を持つ。
  * 分を value にすると 60 と 120 のあいだに 59 個の無意味な目盛りができる。
  */
 describe('BURST_WINDOW_CHOICES', () => {
@@ -1606,9 +1606,9 @@ describe('BURST_WINDOW_CHOICES', () => {
     expect(BURST_WINDOW_CHOICES).toContain(DEFAULT_SETTINGS.burstWindowMinutes);
   });
 
-  it('60 分から 2 日まで', () => {
+  it('60 分から 3 日まで', () => {
     expect(BURST_WINDOW_CHOICES[0]).toBe(60);
-    expect(BURST_WINDOW_CHOICES[BURST_WINDOW_CHOICES.length - 1]).toBe(60 * 24 * 2);
+    expect(BURST_WINDOW_CHOICES[BURST_WINDOW_CHOICES.length - 1]).toBe(60 * 24 * 3);
   });
 });
 
@@ -1621,6 +1621,7 @@ describe('describeWindow', () => {
   it('1 日以上は日で言う（「1440 分」は読めない）', () => {
     expect(describeWindow(1440)).toBe('1 日');
     expect(describeWindow(2880)).toBe('2 日');
+    expect(describeWindow(4320)).toBe('3 日');
   });
 
   it('割り切れない値は分のまま（嘘の「1 日」を出さない）', () => {

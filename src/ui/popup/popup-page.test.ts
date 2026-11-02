@@ -4,7 +4,7 @@ import { loadPopupState, applySettings, recordVerdict, toViews } from './popup-s
 import { formatJst } from './popup-copy';
 import { describeMuteOutcome } from './popup-mute-copy';
 import type * as PopupState from './popup-state';
-import { DEFAULT_SETTINGS } from '../../types/domain';
+import { BURST_WINDOW_CHOICES, DEFAULT_SETTINGS } from '../../types/domain';
 import { buildFixtureScene } from '../../detect/fixture';
 import type { Candidate, FoldTarget } from '../../types/domain';
 // 実際に配布される HTML をそのまま読む（Vite の ?raw）。
@@ -1468,12 +1468,12 @@ describe('投稿直後のスライダー', () => {
   });
 
   it('つまみは分ではなく目盛りの添字を指す', async () => {
-    // Arrange — 既定は 180 分 = 添字 2。分（180）を入れると max=6 に丸められ、
+    // Arrange — 既定は 180 分 = 添字 2。分（180）を入れると max=7 に丸められ、
     // **つまみだけが右端に飛ぶ**。ラベルは settings から作るので気づけない
     await init();
     // Act & Assert
     expect(el<HTMLInputElement>('#burst-window').value).toBe('2');
-    expect(el<HTMLInputElement>('#burst-window').max).toBe('6');
+    expect(el<HTMLInputElement>('#burst-window').max).toBe('7');
   });
 
   it('添字 0 に戻せる（左端が有効な値）', async () => {
@@ -1493,12 +1493,12 @@ describe('投稿直後のスライダー', () => {
     });
   });
 
-  it('右端は 2 日', async () => {
+  it('右端は 3 日', async () => {
     await init();
     const slider = el<HTMLInputElement>('#burst-window');
-    slider.value = '6';
+    slider.value = '7';
     slider.dispatchEvent(new Event('input'));
-    expect(el('#burst-window-value').textContent).toBe('2 日');
+    expect(el('#burst-window-value').textContent).toBe('3 日');
   });
 
   it('候補の占有率の行に幅と実件数を出す', async () => {
@@ -1792,8 +1792,10 @@ describe('index.html の折りたたみ', () => {
   });
 
   it('幅のスライダーは目盛りの添字を持つ（分は等間隔に並ばない）', () => {
-    // 分を value にすると 60→2880 を等間隔の目盛りに載せられない
-    expect(indexHtml).toContain('id="burst-window" min="0" max="6" step="1"');
+    // 分を value にすると 60→4320 を等間隔の目盛りに載せられない。
+    // max は目盛りの数から作る — 目盛りを足したときに HTML だけ取り残されないように
+    const max = String(BURST_WINDOW_CHOICES.length - 1);
+    expect(indexHtml).toContain(`id="burst-window" min="0" max="${max}" step="1"`);
   });
 
   it('★ 記事数のスライダーの可動域が RANGES と一致する', () => {
@@ -1905,6 +1907,42 @@ describe('判定ボタンのラベル', () => {
     const text = el('#candidates .actions').textContent ?? '';
     expect(text).not.toContain('不正');
     expect(text).not.toContain('スパム');
+  });
+});
+
+/**
+ * 根拠リンクは判定ボタンと同じ行に置く。別の行にすると、カードが 1 行伸びるうえに
+ * 「読んでから押す」ものが離れて並ぶ。
+ */
+describe('根拠リンクの置き場所', () => {
+  it('判定ボタンの行の中、ボタンより後ろにある', async () => {
+    // Arrange
+    await init();
+    // Act
+    const children = [...el('#candidates .actions').children];
+    const evidenceIndex = children.findIndex((child) => child.classList.contains('evidence'));
+    const buttonIndexes = children
+      .map((child, index) => (child.matches('button[data-verdict]') ? index : -1))
+      .filter((index) => index >= 0);
+    // Assert
+    expect(buttonIndexes).toHaveLength(2);
+    expect(evidenceIndex).toBeGreaterThan(Math.max(...buttonIndexes));
+    expect(children[evidenceIndex]?.querySelectorAll('a')).toHaveLength(2);
+  });
+
+  it('カードに根拠だけの行を残さない', async () => {
+    await init();
+    expect(document.querySelector('#candidates li > .evidence')).toBeNull();
+  });
+
+  it('index.html: 根拠以外は縮ませない（記事が多いとボタンの文字が縦に折れる）', () => {
+    // 根拠の記事数に上限は無い。8 件で「妥 / 当」と折れた（幅 520px で実測）。
+    // jsdom はレイアウトを計算しないので、規則があることを確かめる
+    expect(indexHtml).toMatch(/\.actions > :not\(\.evidence\) \{\s*flex-shrink: 0;/);
+  });
+
+  it('index.html: 根拠を折り返すときもリンクの途中では折らない（「記 / 事 13」）', () => {
+    expect(indexHtml).toMatch(/\.evidence a \{\s*white-space: nowrap;/);
   });
 });
 

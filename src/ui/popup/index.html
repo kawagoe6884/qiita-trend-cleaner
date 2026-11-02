@@ -127,8 +127,14 @@
       .co-authors {
         font-size: 0.85rem;
       }
+      /* 判定ボタンの行（.actions）の右端に置く */
       .evidence {
+        margin-left: auto;
         font-size: 0.85rem;
+      }
+      /* 折り返すのはリンクの間だけ。途中で折ると「記 / 事 13」になる */
+      .evidence a {
+        white-space: nowrap;
       }
       /* 「この検出は [妥当] [誤り]」。**ラベルを左に置く** —
          ボタンだけだと、何に対する「妥当」なのかが読み取れない */
@@ -137,6 +143,11 @@
         display: flex;
         align-items: center;
         gap: 8px;
+      }
+      /* 根拠の記事数に上限は無い。縮むのを根拠だけにしないと、記事が多いときに
+         ボタンが押し潰されて「妥 / 当」と縦に折れる。根拠は右側の中で折り返す */
+      .actions > :not(.evidence) {
+        flex-shrink: 0;
       }
       .verdict-prompt {
         font-size: 0.85rem;
@@ -270,8 +281,8 @@
       <p class="slider">
         <label for="burst-window">投稿から何分以内</label>
         <!-- **値は分ではなく BURST_WINDOW_CHOICES の添字。**
-             60→2880 分は等間隔ではないので、分を value にすると目盛りに載らない -->
-        <input type="range" id="burst-window" min="0" max="6" step="1" />
+             60→4320 分は等間隔ではないので、分を value にすると目盛りに載らない -->
+        <input type="range" id="burst-window" min="0" max="7" step="1" />
         <output id="burst-window-value"></output>
       </p>
       <p class="footnote">条件を変えても Qiita への通信は発生せず、手元のデータで判定をやり直します。</p>
