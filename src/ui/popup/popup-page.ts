@@ -1,7 +1,7 @@
 /**
  * ポップアップの DOM 配線。
  *
- * 状態と文言の決定は popup-state.ts にある。
+ * 状態の決定は popup-state.ts、文言は popup-copy.ts（ミュートの行は popup-mute-copy.ts）にある。
  * ここは「状態を DOM に映す」ことと「イベントを流す」ことだけを行う。
  * 要素が取れなければ何もしない（selectors.ts と同じフェイルセーフ原則）。
  *
@@ -21,23 +21,24 @@ import {
   recordVerdict,
   requestMute,
   skipMute,
+  partitionViews,
+  hasMutedInFold,
+  VERDICT_PROMPT,
+  windowIndexOf,
+  BURST_WINDOW_CHOICES,
+  rateLimitNotice,
+} from './popup-state';
+import {
   formatJst,
   describeMode,
   describeCall,
   describeEmpty,
   describeCoAuthors,
-  describeMuteStatus,
-  describeRetryNotice,
   describeWindowShare,
-  partitionViews,
   describeFold,
-  hasMutedInFold,
-  VERDICT_PROMPT,
   describeWindow,
-  windowIndexOf,
-  BURST_WINDOW_CHOICES,
-  rateLimitNotice,
-} from './popup-state';
+} from './popup-copy';
+import { describeMuteStatus, describeRetryNotice } from './popup-mute-copy';
 import type { CandidateView, Precision } from './popup-state';
 import type { AuthorCoverage } from '../../detect/like-index';
 import { DEFAULT_SETTINGS } from '../../types/domain';

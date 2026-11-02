@@ -4,31 +4,35 @@ import {
   toViews,
   rateLimitNotice,
   loadPopupState,
-  formatJst,
   applySettings,
   recordVerdict,
+  hideOffTrend,
+  toShownViews,
+  partitionViews,
+  hasMutedInFold,
+  windowIndexOf,
+  BURST_WINDOW_CHOICES,
+  requestMute,
+  skipMute,
+} from './popup-state';
+import {
+  formatJst,
   describeMode,
   describeCall,
+  describeEmpty,
+  describeWindowShare,
+  describeCoAuthors,
+  describeFold,
+  describeWindow,
+} from './popup-copy';
+import {
   describeMuteOutcome,
   describeMuteRecord,
   describeMuteRetry,
   describeMuteStatus,
   describeRetryNotice,
-  hideOffTrend,
-  toShownViews,
-  describeEmpty,
-  describeWindowShare,
-  describeCoAuthors,
-  partitionViews,
-  describeFold,
-  hasMutedInFold,
-  describeWindow,
-  windowIndexOf,
-  BURST_WINDOW_CHOICES,
-  requestMute,
-  skipMute,
   isMuteRetryReady,
-} from './popup-state';
+} from './popup-mute-copy';
 import type { CandidateView } from './popup-state';
 import * as storage from '../../lib/storage';
 import * as domain from '../../types/domain';
