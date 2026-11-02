@@ -1,8 +1,9 @@
 /**
  * ポップアップの状態を作る。
  *
- * 文言は popup-copy（ミュートの行は popup-mute-copy）にある。2026-11-02 に
- * このファイルが 800 行の目安を超えたので分けた。
+ * 候補の行・案内・モード説明の文言は popup-copy、ミュートの行は popup-mute-copy に
+ * ある。2026-11-02 にこのファイルが 800 行の目安を超えたので分けた。
+ * VERDICT_PROMPT と rateLimitNotice はそのときここに残した。
  *
  * 【DOM を参照しない理由】
  * document を触るのは popup-page.ts の責務にする。token-form.ts と同じ思想で、

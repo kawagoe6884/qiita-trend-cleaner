@@ -1126,7 +1126,7 @@ describe('「妥当」と同時のミュート', () => {
     clickVerdict('妥当');
     // Assert
     await vi.waitFor(() => {
-      // 文言そのものは popup-state の describeMuteRecord が決める。ここが
+      // 文言そのものは popup-mute-copy の describeMuteRecord が決める。ここが
       // 守るのは「結果が .mute-status に届くこと」。**現在形では言わない**
       expect(el('#candidates .mute-status').textContent).toContain(
         'ミュート済みであることを確認しました',
