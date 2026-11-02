@@ -9,7 +9,7 @@ import {
   describeMuteOutcome,
 } from './popup-state';
 import type * as PopupState from './popup-state';
-import { DEFAULT_SETTINGS } from '../../types/domain';
+import { BURST_WINDOW_CHOICES, DEFAULT_SETTINGS } from '../../types/domain';
 import { buildFixtureScene } from '../../detect/fixture';
 import type { Candidate, FoldTarget } from '../../types/domain';
 // 実際に配布される HTML をそのまま読む（Vite の ?raw）。
@@ -1849,8 +1849,10 @@ describe('index.html の折りたたみ', () => {
   });
 
   it('幅のスライダーは目盛りの添字を持つ（分は等間隔に並ばない）', () => {
-    // 分を value にすると 60→4320 を等間隔の目盛りに載せられない
-    expect(indexHtml).toContain('id="burst-window" min="0" max="6" step="1"');
+    // 分を value にすると 60→4320 を等間隔の目盛りに載せられない。
+    // max は目盛りの数から作る — 目盛りを足したときに HTML だけ取り残されないように
+    const max = String(BURST_WINDOW_CHOICES.length - 1);
+    expect(indexHtml).toContain(`id="burst-window" min="0" max="${max}" step="1"`);
   });
 
   it('★ 記事数のスライダーの可動域が RANGES と一致する', () => {
