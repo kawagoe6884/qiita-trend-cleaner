@@ -2,7 +2,7 @@
  * 検出エンジンの入口。遡及フィルタ → クラスタ判定 → 補強スコアを束ねる。
  *
  * この層も純粋関数である（storage も fetch も触らない）。
- * storage への保存とログ出力は scanner.ts の責務。
+ * storage への保存とログ出力は background/scan-persist.ts の責務（2026-11-02 に scanner.ts から移した）。
  *
  * 【ScanMode を引数に取らない理由】
  * ライトモードとフルモードで判定ロジックを 2 本持たない（CLAUDE.md の約束 9）。

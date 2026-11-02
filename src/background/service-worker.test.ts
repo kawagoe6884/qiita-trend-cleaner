@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { QtgRequest, QtgResponse } from '../types/messages';
-import type { TrendItem } from '../types/domain';
+import type { Candidate, TrendItem } from '../types/domain';
 
 vi.mock('./scanner', () => ({ runScan: vi.fn() }));
 
@@ -52,6 +52,21 @@ const ITEM: TrendItem = {
   authorHandle: 'example-author-1',
   publishedAt: '2026-08-18T10:00:00Z',
 };
+
+/** 合成の候補。バッジの件数を数えるのに必要な形だけ揃える */
+function candidateOf(authorHandle: string): Candidate {
+  return {
+    authorHandle,
+    clusterAccounts: ['example-liker-1', 'example-liker-2'],
+    sharedItemCount: 2,
+    sharedItemIds: ['0123456789abcdef0001'],
+    clusterSize: 2,
+    burstScore: 0.5,
+    emptyAccountRatio: 0,
+    windowShare: { cluster: 2, total: 2 },
+    detectedAt: '2026-08-18T10:00:00Z',
+  };
+}
 
 /** 型を外して壊れたメッセージを送る。別コンテキストは何でも送れる */
 function malformed(items: unknown): QtgRequest {
@@ -231,6 +246,40 @@ describe('トレンドのスナップショット', () => {
     debugSpy.mockRestore();
     errorSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+
+  it('★ 記録に失敗したら、前回のスナップショットを消す（古い記録で一覧を絞らない）', async () => {
+    // Arrange — 2026-11-02 からスナップショットは一覧の絞り込みに使う。前回のものが
+    // 残ると、今回のスキャンで見つかった候補が「トレンド外」として理由も出ずに消える
+    const { logger } = await bootServiceWorker();
+    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    const storage = await import('../lib/storage');
+    await storage.saveTrendSnapshot(['example-author-z'], new Date());
+    mockOf(chrome.storage.local, 'set').mockRejectedValueOnce(new Error('quota exceeded'));
+    // Act
+    sendTrend([ITEM]);
+    // Assert — 無ければ一覧は 1 件も絞らない（未確認を不在と読み替えない）
+    await vi.waitFor(async () => {
+      await expect(storage.getTrendSnapshot()).resolves.toBeNull();
+    });
+    debugSpy.mockRestore();
+  });
+
+  it('★ スナップショットを残したらバッジを数え直す（スキャンが走らなくても）', async () => {
+    // Arrange — スキャン中に別タブでトレンドを開くと 2 本目のスキャンは走らない
+    // （runScan が null を返す）。数え直さないと、ポップアップを開くまで前の件数が残る
+    await bootServiceWorker();
+    const storage = await import('../lib/storage');
+    await storage.saveCandidates([
+      candidateOf('example-author-1'),
+      candidateOf('example-author-2'),
+    ]);
+    // Act — トレンドには example-author-1 だけが居る
+    sendTrend([ITEM]);
+    // Assert
+    await vi.waitFor(() => {
+      expect(mockOf(chrome.action, 'setBadgeText')).toHaveBeenCalledWith({ text: '1' });
+    });
   });
 
   it('スキャンが失敗しても記録は残る（API を 1 本も使わないので独立させてある）', async () => {
