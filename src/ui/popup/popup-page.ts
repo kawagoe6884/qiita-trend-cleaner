@@ -28,7 +28,6 @@ import {
   describeCoAuthors,
   describeMuteStatus,
   describeRetryNotice,
-  describeOffTrend,
   describeWindowShare,
   partitionViews,
   describeFold,
@@ -231,7 +230,6 @@ function candidateItem(view: CandidateView): HTMLLIElement {
     paragraph('share', describeWindowShare(view.candidate, currentSettings.burstWindowMinutes)),
     ...coAuthorLine(view),
     evidenceLine(view),
-    ...offTrendLine(view),
     ...muteStatusLine(view),
     actions,
   );
@@ -249,18 +247,6 @@ function candidateItem(view: CandidateView): HTMLLIElement {
 function muteStatusLine(view: CandidateView): HTMLParagraphElement[] {
   const text = describeMuteStatus(view, currentMuteOnValid);
   return text === '' ? [] : [paragraph('mute-status', text)];
-}
-
-/**
- * いまトレンドに出ていない候補への案内。**出ている／スナップショットが無いなら
- * 行ごと出さない**（muteStatusLine と同じ扱い）。
- *
- * **ミュートの行より前に置く。**「なぜ押せなかったか」ではなく
- * 「**押す前に、いま押しても無駄だと分かる**」ようにしたい。
- */
-function offTrendLine(view: CandidateView): HTMLParagraphElement[] {
-  const text = describeOffTrend(view);
-  return text === '' ? [] : [paragraph('off-trend', text)];
 }
 
 /**
@@ -503,8 +489,10 @@ async function handleVerdict(handle: string, verdict: Verdict): Promise<void> {
  * 「妥当」と同時のミュート。**トレンド外と分かっている候補には依頼を送らない。**
  * （2026-09-17 ユーザー「A で直して」。理由は popup-state の skipMute）
  *
- * 判断の材料は画面に出している offTrendAt そのもの。**押す前に「時点でトレンド外」と
- * 出した候補にだけ送らない** — 表示と挙動が食い違わない。
+ * 判断の材料は offTrendAt。2026-11-02 からトレンド外の候補は一覧に出さないが、
+ * **ミュート済みと確認できた著者だけはトレンド外でも残す**（popup-state の hideOffTrend）。
+ * 「誤り」→「妥当」と押し直すとここに来るので、この分岐は今も通る。
+ * 見送りの記録を書いても `mutedAt` は消えない（storage.recordMuteOutcome）。
  */
 async function muteOnVerdict(handle: string): Promise<MuteRecord | null> {
   const view = currentViews.find((candidate) => candidate.candidate.authorHandle === handle);

@@ -130,11 +130,6 @@
       .evidence {
         font-size: 0.85rem;
       }
-      /* いまトレンドに出ていない候補への案内。**display は指定しない**
-         （.co-authors と同じ理由。UA の [hidden]{display:none} に勝ってしまう） */
-      .off-trend {
-        font-size: 0.85rem;
-      }
       /* 「この検出は [妥当] [誤り]」。**ラベルを左に置く** —
          ボタンだけだと、何に対する「妥当」なのかが読み取れない */
       .actions {
@@ -287,7 +282,7 @@
     </details>
 
     <ul id="candidates"></ul>
-    <p id="empty" hidden>いまの条件に当てはまる候補はありません。トレンドページを開くと蓄積が増えます。</p>
+    <p id="empty" hidden>いまのトレンドには、条件に当てはまる候補はありません。トレンドページを開くと蓄積が増えます。</p>
 
     <details id="folded" hidden>
       <summary id="folded-summary"></summary>

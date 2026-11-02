@@ -47,6 +47,7 @@ import type {
   IsoDateTime,
   ItemId,
   LikeIndex,
+  MuteLog,
   ScanMode,
   ScanResult,
   TrendItem,
@@ -620,7 +621,7 @@ function logCandidates(candidates: Candidate[], settings: Settings): void {
  * 丸ごと上書きして消す（read-modify-write の lost update）。
  * 読み直しの窓は 1 マイクロタスクに収まる。
  */
-async function persistIndexAndDetect(fresh: LikeIndex): Promise<number> {
+async function persistIndexAndDetect(fresh: LikeIndex): Promise<Candidate[]> {
   const now = new Date();
   const stored = await storage.getLikeIndex();
   const { index: kept, purgedRecords } = purgeLikeIndex(mergeLikeIndex(stored, fresh), now);
@@ -650,7 +651,24 @@ async function persistIndexAndDetect(fresh: LikeIndex): Promise<number> {
   const candidates = detectCandidates(kept, settings, now);
   await storage.saveCandidates(candidates);
   logCandidates(candidates, settings);
-  return candidates.length;
+  return candidates;
+}
+
+/**
+ * バッジに出す件数。**ポップアップの一覧に出る候補だけを数える** — 今回のトレンドに
+ * 居る著者と、ミュート済みと確認できた著者。
+ *
+ * ポップアップは同じ一覧から撮ったスナップショットで、不在の候補を出さない
+ * （popup-state の hideOffTrend。2026-11-02）。ここで全件を数えると、
+ * 一覧は 0 件なのにバッジが 3 を出す。保存する候補は絞らない — 外すのは表示だけ。
+ * **規則を変えるときは hideOffTrend と揃える。**
+ */
+function countShown(candidates: Candidate[], items: TrendItem[], muteLog: MuteLog): number {
+  const onTrend = new Set(items.map((item) => item.authorHandle));
+  return candidates.filter(
+    (candidate) =>
+      onTrend.has(candidate.authorHandle) || muteLog[candidate.authorHandle]?.mutedAt !== undefined,
+  ).length;
 }
 
 /**
@@ -675,6 +693,8 @@ interface PersistInput {
   startedAt: IsoDateTime;
   fresh: LikeIndex;
   newItemCount: number;
+  /** バッジの件数を今回のトレンドに絞るためだけに持つ（countShown） */
+  trendItems: TrendItem[];
 }
 
 async function persistScan(input: PersistInput): Promise<ScanResult> {
@@ -688,10 +708,11 @@ async function persistScan(input: PersistInput): Promise<ScanResult> {
     finishedAt: new Date().toISOString(),
   };
 
-  const candidateCount = await persistIndexAndDetect(input.fresh);
+  const candidates = await persistIndexAndDetect(input.fresh);
   await storage.saveScanResult(result);
   await persistRateLimit(progress);
-  await updateBadge(candidateCount, progress.rateLimited);
+  const muteLog = await storage.getMuteLog();
+  await updateBadge(countShown(candidates, input.trendItems, muteLog), progress.rateLimited);
 
   logger.info(
     'scan finished: mode=' + mode,
@@ -817,5 +838,12 @@ async function scanTrend(items: TrendItem[], startedAt: IsoDateTime): Promise<Sc
     }
   }
 
-  return persistScan({ mode, progress, startedAt, fresh, newItemCount: newItems.length });
+  return persistScan({
+    mode,
+    progress,
+    startedAt,
+    fresh,
+    newItemCount: newItems.length,
+    trendItems: items,
+  });
 }
