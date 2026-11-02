@@ -132,6 +132,10 @@
         margin-left: auto;
         font-size: 0.85rem;
       }
+      /* 折り返すのはリンクの間だけ。途中で折ると「記 / 事 13」になる */
+      .evidence a {
+        white-space: nowrap;
+      }
       /* いまトレンドに出ていない候補への案内。**display は指定しない**
          （.co-authors と同じ理由。UA の [hidden]{display:none} に勝ってしまう） */
       .off-trend {
@@ -144,6 +148,11 @@
         display: flex;
         align-items: center;
         gap: 8px;
+      }
+      /* 根拠の記事数に上限は無い。縮むのを根拠だけにしないと、記事が多いときに
+         ボタンが押し潰されて「妥 / 当」と縦に折れる。根拠は右側の中で折り返す */
+      .actions > :not(.evidence) {
+        flex-shrink: 0;
       }
       .verdict-prompt {
         font-size: 0.85rem;

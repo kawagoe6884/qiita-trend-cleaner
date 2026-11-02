@@ -1991,6 +1991,16 @@ describe('根拠リンクの置き場所', () => {
     await init();
     expect(document.querySelector('#candidates li > .evidence')).toBeNull();
   });
+
+  it('index.html: 根拠以外は縮ませない（記事が多いとボタンの文字が縦に折れる）', () => {
+    // 根拠の記事数に上限は無い。8 件で「妥 / 当」と折れた（幅 520px で実測）。
+    // jsdom はレイアウトを計算しないので、規則があることを確かめる
+    expect(indexHtml).toMatch(/\.actions > :not\(\.evidence\) \{\s*flex-shrink: 0;/);
+  });
+
+  it('index.html: 根拠を折り返すときもリンクの途中では折らない（「記 / 事 13」）', () => {
+    expect(indexHtml).toMatch(/\.evidence a \{\s*white-space: nowrap;/);
+  });
 });
 
 /**
