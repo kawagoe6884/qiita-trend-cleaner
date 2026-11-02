@@ -181,9 +181,15 @@ function paragraph(className: string, text: string): HTMLParagraphElement {
   return element;
 }
 
-/** 根拠記事へのリンク。これが無いと「妥当 / 誤り」が当てずっぽうになる */
-function evidenceLine(view: CandidateView): HTMLParagraphElement {
-  const line = paragraph('evidence', '根拠: ');
+/**
+ * 根拠記事へのリンク。これが無いと「妥当 / 誤り」が当てずっぽうになる。
+ *
+ * 判定ボタンの行に入れるので <p> ではなく <span>。
+ */
+function evidenceLinks(view: CandidateView): HTMLSpanElement {
+  const line = document.createElement('span');
+  line.className = 'evidence';
+  line.textContent = '根拠: ';
   view.evidence.forEach((item, index) => {
     const link = document.createElement('a');
     link.href = item.url;
@@ -222,6 +228,8 @@ function candidateItem(view: CandidateView): HTMLLIElement {
     prompt,
     verdictButton('妥当', 'valid', view.verdict),
     verdictButton('誤り', 'false_positive', view.verdict),
+    // 読んでから押すものなので、ボタンと同じ行に置く
+    evidenceLinks(view),
   );
   item.append(
     paragraph('author', view.candidate.authorHandle),
@@ -230,7 +238,6 @@ function candidateItem(view: CandidateView): HTMLLIElement {
     // 記録は続けるが、比較相手を持たない割合は強さを誤って伝える
     paragraph('share', describeWindowShare(view.candidate, currentSettings.burstWindowMinutes)),
     ...coAuthorLine(view),
-    evidenceLine(view),
     ...offTrendLine(view),
     ...muteStatusLine(view),
     actions,

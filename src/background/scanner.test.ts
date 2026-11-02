@@ -838,7 +838,7 @@ describe('likes のページング', () => {
 
   it('最大の窓を覆ったら、それより手前のページは取らない', async () => {
     // Arrange — 総数 450 = 全 5 ページ。page=5 の最も新しいいいねが
-    // 最大の目盛り（2 日 = 2880 分）を超えているので、そこで打ち切れる
+    // 最大の目盛り（3 日 = 4320 分）を超えているので、そこで打ち切れる
     likesMock.mockImplementation((_id, _token, p) => {
       if (p === 5) return Promise.resolve(page([['example-liker-early', 5000]], 450));
       return Promise.resolve(page([['example-liker-late', 9000]], 450));
@@ -889,7 +889,7 @@ describe('likes のページング', () => {
 
   it('最終ページが窓の外でも、全ページ持っているなら打ち切りの値を書かない', async () => {
     // Arrange — 総数 150 = 全 2 ページ。page=2 の最も新しいいいねが最大の窓
-    // （2 日）より外にある。**打ち切りの条件と完全性は別の話**で、
+    // （3 日）より外にある。**打ち切りの条件と完全性は別の話**で、
     // 「もう窓の外だから止める」ことと「全部持っている」ことは両立する。
     likesMock.mockImplementation((_id, _token, p) =>
       Promise.resolve(page([[`example-liker-${String(p ?? 1)}`, 9000]], 150)),

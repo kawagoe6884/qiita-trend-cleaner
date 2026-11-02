@@ -127,7 +127,9 @@
       .co-authors {
         font-size: 0.85rem;
       }
+      /* 判定ボタンの行（.actions）の右端に置く */
       .evidence {
+        margin-left: auto;
         font-size: 0.85rem;
       }
       /* いまトレンドに出ていない候補への案内。**display は指定しない**
@@ -275,7 +277,7 @@
       <p class="slider">
         <label for="burst-window">投稿から何分以内</label>
         <!-- **値は分ではなく BURST_WINDOW_CHOICES の添字。**
-             60→2880 分は等間隔ではないので、分を value にすると目盛りに載らない -->
+             60→4320 分は等間隔ではないので、分を value にすると目盛りに載らない -->
         <input type="range" id="burst-window" min="0" max="6" step="1" />
         <output id="burst-window-value"></output>
       </p>
