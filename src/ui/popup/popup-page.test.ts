@@ -1966,6 +1966,29 @@ describe('判定ボタンのラベル', () => {
 });
 
 /**
+ * 根拠リンクは判定ボタンと同じ行に置く。別の行にすると、カードが 1 行伸びるうえに
+ * 「読んでから押す」ものが離れて並ぶ。
+ */
+describe('根拠リンクの置き場所', () => {
+  it('判定ボタンの行の中、ボタンより後ろにある', async () => {
+    // Arrange
+    await init();
+    // Act
+    const children = [...el('#candidates .actions').children];
+    const evidenceIndex = children.findIndex((child) => child.classList.contains('evidence'));
+    const lastButtonIndex = children.findLastIndex((child) => child.matches('button[data-verdict]'));
+    // Assert
+    expect(evidenceIndex).toBeGreaterThan(lastButtonIndex);
+    expect(children[evidenceIndex]?.querySelectorAll('a')).toHaveLength(2);
+  });
+
+  it('カードに根拠だけの行を残さない', async () => {
+    await init();
+    expect(document.querySelector('#candidates li > .evidence')).toBeNull();
+  });
+});
+
+/**
  * 候補カードの見出し（`.author`）にハンドルが**全文**出ること。
  *
  * 2026-09-28 に「見出しに著者名の先頭 1 文字しか出ない」という報告を受け、
