@@ -1,13 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { init, APPLY_DEBOUNCE_MS } from './popup-page';
-import {
-  loadPopupState,
-  applySettings,
-  recordVerdict,
-  toViews,
-  formatJst,
-  describeMuteOutcome,
-} from './popup-state';
+import { loadPopupState, applySettings, recordVerdict, toViews } from './popup-state';
+import { formatJst } from './popup-copy';
+import { describeMuteOutcome } from './popup-mute-copy';
 import type * as PopupState from './popup-state';
 import { DEFAULT_SETTINGS } from '../../types/domain';
 import { buildFixtureScene } from '../../detect/fixture';
