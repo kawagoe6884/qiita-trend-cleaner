@@ -1,7 +1,7 @@
 /**
  * ポップアップの DOM 配線。
  *
- * 状態と文言の決定は popup-state.ts にある。
+ * 状態の決定は popup-state.ts、文言は popup-copy.ts（ミュートの行は popup-mute-copy.ts）にある。
  * ここは「状態を DOM に映す」ことと「イベントを流す」ことだけを行う。
  * 要素が取れなければ何もしない（selectors.ts と同じフェイルセーフ原則）。
  *
@@ -21,28 +21,28 @@ import {
   recordVerdict,
   requestMute,
   skipMute,
+  partitionViews,
+  hasMutedInFold,
+  VERDICT_PROMPT,
+  windowIndexOf,
+  BURST_WINDOW_CHOICES,
+  rateLimitNotice,
+} from './popup-state';
+import {
   formatJst,
   describeMode,
   describeCall,
   describeEmpty,
   describeCoAuthors,
-  describeMuteStatus,
-  describeRetryNotice,
-  describeOffTrend,
   describeWindowShare,
-  partitionViews,
   describeFold,
-  hasMutedInFold,
-  VERDICT_PROMPT,
   describeWindow,
-  windowIndexOf,
-  BURST_WINDOW_CHOICES,
-  rateLimitNotice,
-} from './popup-state';
+} from './popup-copy';
+import { describeMuteStatus, describeRetryNotice } from './popup-mute-copy';
 import type { CandidateView, Precision } from './popup-state';
 import type { AuthorCoverage } from '../../detect/like-index';
 import { DEFAULT_SETTINGS } from '../../types/domain';
-import type { FoldTarget, MuteRecord, Settings, Verdict } from '../../types/domain';
+import type { FoldTarget, IsoDateTime, MuteRecord, Settings, Verdict } from '../../types/domain';
 
 const SELECTORS = {
   notice: '#notice',
@@ -149,7 +149,7 @@ function renderSummary(views: CandidateView[], precision: Precision): void {
   // 折りたたみの中に居るだけなら「条件をゆるめて」ではない。
   // 案内は **開いている件数** で出し分ける（renderCandidates と同じ分割）
   const { open, folded } = partitionViews(views, currentFoldTarget, currentMuteOnValid);
-  setText(SELECTORS.empty, describeEmpty(currentHasIndex, folded.length));
+  setText(SELECTORS.empty, describeEmpty(currentHasIndex, folded.length, currentTrendSnapshotAt));
   setHidden(SELECTORS.empty, open.length > 0);
   // バッジはスキャン時だけでなく、閾値を変えたときも合わせる。
   // 合わせないと一覧が 5 件を出しているのにバッジは前回の 2 件を出し続ける
@@ -238,7 +238,6 @@ function candidateItem(view: CandidateView): HTMLLIElement {
     // 記録は続けるが、比較相手を持たない割合は強さを誤って伝える
     paragraph('share', describeWindowShare(view.candidate, currentSettings.burstWindowMinutes)),
     ...coAuthorLine(view),
-    ...offTrendLine(view),
     ...muteStatusLine(view),
     actions,
   );
@@ -256,18 +255,6 @@ function candidateItem(view: CandidateView): HTMLLIElement {
 function muteStatusLine(view: CandidateView): HTMLParagraphElement[] {
   const text = describeMuteStatus(view, currentMuteOnValid);
   return text === '' ? [] : [paragraph('mute-status', text)];
-}
-
-/**
- * いまトレンドに出ていない候補への案内。**出ている／スナップショットが無いなら
- * 行ごと出さない**（muteStatusLine と同じ扱い）。
- *
- * **ミュートの行より前に置く。**「なぜ押せなかったか」ではなく
- * 「**押す前に、いま押しても無駄だと分かる**」ようにしたい。
- */
-function offTrendLine(view: CandidateView): HTMLParagraphElement[] {
-  const text = describeOffTrend(view);
-  return text === '' ? [] : [paragraph('off-trend', text)];
 }
 
 /**
@@ -413,6 +400,8 @@ let currentRateLimited = false;
 let currentMuteOnValid = false;
 /** 評価が済んだ候補を折りたたむ対象。**既定は 'none'**（折りたたまない） */
 let currentFoldTarget: FoldTarget = 'none';
+/** 一覧の絞り込みに使ったスナップショットの時刻。候補ゼロの案内が使う */
+let currentTrendSnapshotAt: IsoDateTime | null = null;
 
 /**
  * ドラッグ中に呼ぶ。**同期処理だけ。**
@@ -510,8 +499,10 @@ async function handleVerdict(handle: string, verdict: Verdict): Promise<void> {
  * 「妥当」と同時のミュート。**トレンド外と分かっている候補には依頼を送らない。**
  * （2026-09-17 ユーザー「A で直して」。理由は popup-state の skipMute）
  *
- * 判断の材料は画面に出している offTrendAt そのもの。**押す前に「時点でトレンド外」と
- * 出した候補にだけ送らない** — 表示と挙動が食い違わない。
+ * 判断の材料は offTrendAt。2026-11-02 からトレンド外の候補は一覧に出さないが、
+ * **ミュート済みと確認できた著者だけはトレンド外でも残す**（popup-state の hideOffTrend）。
+ * 「誤り」→「妥当」と押し直すとここに来るので、この分岐は今も通る。
+ * 見送りの記録を書いても `mutedAt` は消えない（storage.recordMuteOutcome）。
  */
 async function muteOnVerdict(handle: string): Promise<MuteRecord | null> {
   const view = currentViews.find((candidate) => candidate.candidate.authorHandle === handle);
@@ -706,6 +697,7 @@ export async function init(): Promise<void> {
     currentPrecision = state.precision;
     currentViews = state.views;
     currentHasIndex = state.hasIndex;
+    currentTrendSnapshotAt = state.trendSnapshotAt;
     currentRateLimited = state.rateLimitNotice !== null;
     currentMuteOnValid = state.muteOnValid;
     // **renderCandidates より前に代入する。**あとにすると初回だけ折りたたまれない

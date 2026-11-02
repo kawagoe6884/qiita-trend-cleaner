@@ -136,11 +136,6 @@
       .evidence a {
         white-space: nowrap;
       }
-      /* いまトレンドに出ていない候補への案内。**display は指定しない**
-         （.co-authors と同じ理由。UA の [hidden]{display:none} に勝ってしまう） */
-      .off-trend {
-        font-size: 0.85rem;
-      }
       /* 「この検出は [妥当] [誤り]」。**ラベルを左に置く** —
          ボタンだけだと、何に対する「妥当」なのかが読み取れない */
       .actions {
@@ -298,7 +293,9 @@
     </details>
 
     <ul id="candidates"></ul>
-    <p id="empty" hidden>いまの条件に当てはまる候補はありません。トレンドページを開くと蓄積が増えます。</p>
+    <!-- 文言は describeEmpty が書く（renderSummary が出す前に必ず上書きする）。
+         ここに置くと、出ないまま describeEmpty と食い違っていく -->
+    <p id="empty" hidden></p>
 
     <details id="folded" hidden>
       <summary id="folded-summary"></summary>

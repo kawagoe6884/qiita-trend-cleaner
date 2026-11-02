@@ -3,14 +3,14 @@
  *
  * **候補は `detectCandidates` の出力をそのまま保存する。**差し替えは
  * `detect/` の 1 箇所だけにしてあり（fixture.ts のヘッダー）、ここはそれを
- * スキャンの代わりに 1 回呼ぶだけ（本番の scanner が saveCandidates する位置）。
+ * スキャンの代わりに 1 回呼ぶだけ（本番の scan-persist が saveCandidates する位置）。
  *
  * 評価・ミュートの記録・最終スキャンは検出結果ではないので `detect/` の出力に
  * 乗らない。これらは scanner やポップアップが storage に書くものなので、
  * **同じ置き場（storage）に fixture の値を置く。**UI 層には手を入れない。
  */
 import * as storage from '../lib/storage';
-import { updateBadge } from '../lib/badge';
+import { syncBadge } from './badge-sync';
 import { detectCandidates } from '../detect/detector';
 import type { FixtureScene } from '../detect/fixture';
 
@@ -26,6 +26,6 @@ export async function seedFixture(scene: FixtureScene, now: Date): Promise<void>
     lastScanAt: scene.scanResult.finishedAt,
     lastScanResult: structuredClone(scene.scanResult),
   });
-  // ツールバーのバッジも写るので、件数を合わせる（scanner の persistScan と同じ）
-  await updateBadge(candidates.length, false);
+  // ツールバーのバッジも写るので、件数を合わせる（scan-persist と同じく badge-sync で数える）
+  await syncBadge(false);
 }

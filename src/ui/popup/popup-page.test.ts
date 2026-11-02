@@ -1,13 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { init, APPLY_DEBOUNCE_MS } from './popup-page';
-import {
-  loadPopupState,
-  applySettings,
-  recordVerdict,
-  toViews,
-  formatJst,
-  describeMuteOutcome,
-} from './popup-state';
+import { loadPopupState, applySettings, recordVerdict, toViews } from './popup-state';
+import { formatJst } from './popup-copy';
+import { describeMuteOutcome } from './popup-mute-copy';
 import type * as PopupState from './popup-state';
 import { BURST_WINDOW_CHOICES, DEFAULT_SETTINGS } from '../../types/domain';
 import { buildFixtureScene } from '../../detect/fixture';
@@ -97,7 +92,7 @@ function setupDom(): void {
       </p>
     </details>
     <ul id="candidates"></ul>
-    <p id="empty" hidden>いまの条件に当てはまる候補はありません。</p>
+    <p id="empty" hidden></p>
     <details id="folded" hidden>
       <summary id="folded-summary"></summary>
       <p class="footnote" id="fold-note" hidden>
@@ -141,6 +136,7 @@ beforeEach(() => {
     authorCoverage: COVERAGE,
     muteOnValid: false,
     foldTarget: 'none' as const,
+    trendSnapshotAt: null,
   });
   applyMock.mockResolvedValue(toViews([candidate()], {}));
   verdictMock.mockResolvedValue({ valid: 1, falsePositive: 0, ratio: 1 });
@@ -170,6 +166,7 @@ describe('init の描画', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     await init();
     expect(el('#summary').textContent).toContain('適合率 75%');
@@ -203,6 +200,7 @@ describe('init の描画', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     // Act
     await init();
@@ -230,6 +228,7 @@ describe('init の描画', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     await expect(init()).resolves.toBeUndefined();
     expect(el('#empty').hidden).toBe(false);
@@ -263,6 +262,7 @@ describe('init の描画', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     await init();
     expect(el('#notice').hidden).toBe(false);
@@ -307,6 +307,7 @@ describe('init の XSS 対策', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     // Act
     await init();
@@ -524,6 +525,7 @@ describe('候補一覧への一言', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     await init();
     expect(el('#call').hidden).toBe(true);
@@ -722,6 +724,7 @@ describe('候補ゼロの案内', () => {
       authorCoverage: hasIndex ? COVERAGE : { total: 0, solo: 0 },
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     };
   }
 
@@ -736,6 +739,16 @@ describe('候補ゼロの案内', () => {
     await init();
     expect(el('#empty').textContent).toContain('条件をゆるめる');
     expect(el('#empty').textContent).not.toContain('トレンドページを開く');
+  });
+
+  it('★ スナップショットがあれば、読み込んだ時刻を案内に出す（2026-11-02）', async () => {
+    // Arrange — 一覧はこの時刻のトレンドで絞っている
+    const at = '2026-11-02T12:53:00.000Z';
+    loadMock.mockResolvedValue({ ...emptyState(true), trendSnapshotAt: at });
+    // Act
+    await init();
+    // Assert
+    expect(el('#empty').textContent).toContain(formatJst(at));
   });
 
   it('スライダーでゼロになったときも条件の案内に変わる', async () => {
@@ -899,6 +912,7 @@ describe('coAuthors の行', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     };
   }
 
@@ -940,81 +954,6 @@ describe('coAuthors の行', () => {
 });
 
 /**
- * ★ いまトレンドに出ていない候補（ユーザー報告 2026-09-16）。
- * 候補は 7 日ぶんの蓄積から出るので、トレンドを去った著者も残る。
- * ミュートは表示中のカードを操作するので、その状態では必ず失敗する。
- */
-describe('トレンドに出ていない候補の行', () => {
-  const AT = '2026-09-16T10:00:00.000Z';
-
-  function withSnapshot(snapshot: { authors: string[]; at: string } | null) {
-    return {
-      views: toViews([candidate()], {}, {}, snapshot),
-      precision: NO_PRECISION,
-      settings: SETTINGS,
-      rateLimitNotice: null,
-      lastScanAt: null,
-      hasToken: false,
-      hasIndex: true,
-      authorCoverage: COVERAGE,
-      muteOnValid: false,
-      foldTarget: 'none' as const,
-    };
-  }
-
-  it('出ていなければ、撮った時刻とともに案内する', async () => {
-    // Arrange — 別の著者だけが出ていた
-    loadMock.mockResolvedValue(withSnapshot({ authors: ['example-author-z'], at: AT }));
-    // Act
-    await init();
-    // Assert
-    const line = document.querySelector('#candidates .off-trend');
-    expect(line?.textContent).toContain(formatJst(AT));
-  });
-
-  it('出ていれば行ごと出さない', async () => {
-    loadMock.mockResolvedValue(withSnapshot({ authors: ['example-author-a'], at: AT }));
-    await init();
-    expect(document.querySelector('#candidates .off-trend')).toBeNull();
-  });
-
-  it('★ スナップショットが無ければ行ごと出さない（更新直後の全員に嘘を出さない）', async () => {
-    // Arrange — まだ一度もトレンドページを開いていない
-    loadMock.mockResolvedValue(withSnapshot(null));
-    // Act
-    await init();
-    // Assert
-    expect(document.querySelector('#candidates .off-trend')).toBeNull();
-  });
-
-  it('★ ミュートの結果より前に出す（押す前に無駄だと分かるように）', async () => {
-    // Arrange — 押したあとに「出ていませんでした」と言われても遅い。
-    // **評価は「妥当」にする。**ミュートの記録は「妥当」を押したときにしかできず、
-    // 評価の無い記録は実機に無い形（2026-09-17、「妥当」でない候補には見送りの
-    // 行を出さなくしたとき、このフィクスチャだけが落ちて露見した）。
-    // **ミュート連動もオンにする。**記録ができるのはオンで押したときだけで、
-    // オフではミュートの行を出さない（同日、連動オフの候補に押す指示を残さなく
-    // したとき、同じくこのフィクスチャだけが落ちた）
-    const state = withSnapshot({ authors: ['example-author-z'], at: AT });
-    const [view] = state.views;
-    if (view === undefined) throw new Error('fixture broken');
-    loadMock.mockResolvedValue({
-      ...state,
-      muteOnValid: true,
-      views: [
-        { ...view, verdict: 'valid' as const, mute: { outcome: 'not-on-page' as const, at: AT } },
-      ],
-    });
-    // Act
-    await init();
-    // Assert
-    const item = el('#candidates li');
-    const classes = [...item.children].map((child) => child.className);
-    expect(classes.indexOf('off-trend')).toBeLessThan(classes.indexOf('mute-status'));
-  });
-});
-
-/**
  * 「妥当」と同時のミュート。**既定はオフ。**
  *
  * 起動は storage.onChanged ではなくメッセージで行う。評価が既に valid なら
@@ -1036,6 +975,7 @@ describe('「妥当」と同時のミュート', () => {
       authorCoverage: COVERAGE,
       muteOnValid,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     };
   }
 
@@ -1186,7 +1126,7 @@ describe('「妥当」と同時のミュート', () => {
     clickVerdict('妥当');
     // Assert
     await vi.waitFor(() => {
-      // 文言そのものは popup-state の describeMuteRecord が決める。ここが
+      // 文言そのものは popup-mute-copy の describeMuteRecord が決める。ここが
       // 守るのは「結果が .mute-status に届くこと」。**現在形では言わない**
       expect(el('#candidates .mute-status').textContent).toContain(
         'ミュート済みであることを確認しました',
@@ -1316,6 +1256,7 @@ describe('既にミュート済みの候補の表示', () => {
       authorCoverage: COVERAGE,
       muteOnValid,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     };
   }
 
@@ -1386,6 +1327,7 @@ describe('押し直せる候補の案内', () => {
       authorCoverage: COVERAGE,
       muteOnValid,
       foldTarget,
+      trendSnapshotAt: null,
     };
   }
 
@@ -1628,6 +1570,7 @@ describe('評価済みの折りたたみ', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget,
+      trendSnapshotAt: null,
     };
   }
 
@@ -2030,6 +1973,7 @@ describe('候補カードの見出し', () => {
       authorCoverage: COVERAGE,
       muteOnValid: true,
       foldTarget,
+      trendSnapshotAt: null,
     };
   }
 
