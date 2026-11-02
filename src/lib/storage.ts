@@ -352,8 +352,9 @@ export async function forgetMuteConfirmation(
  * 直近に新規ロードしたトレンドページの著者一覧。撮っていなければ null。
  *
  * **null と空配列を取り違えない。**「まだ一度もトレンドを開いていない」と
- * 「開いたが 1 件も読めなかった」は別物で、前者では候補に
- * 「トレンドに出ていません」と言ってはいけない（分母 0 を 0% にしないのと同じ話）。
+ * 「開いたが 1 件も読めなかった」は別物で、前者（null）では候補を一覧から外さず、
+ * 後者（空配列）では全件がトレンド外として外れる（popup-state の hideOffTrend。
+ * 2026-11-02）。分母 0 を 0% にしないのと同じ話。
  */
 export async function getTrendSnapshot(): Promise<TrendSnapshot | null> {
   const raw = await readRaw();
@@ -379,6 +380,17 @@ export async function saveTrendSnapshot(
   };
   await chrome.storage.local.set({ trendSnapshot });
   return trendSnapshot;
+}
+
+/**
+ * スナップショットを消す。**新しいものを保存できなかったときだけ使う。**
+ *
+ * 一覧はスナップショットで絞る（2026-11-02）。古いものが残ると、今回のスキャンで
+ * 見つかった候補が「トレンド外」として理由も出ずに消える。消せば null に戻り、
+ * 一覧は 1 件も絞らない — 隠すより出す側に倒す（約束 3 と同じ向き）。
+ */
+export async function clearTrendSnapshot(): Promise<void> {
+  await chrome.storage.local.remove('trendSnapshot');
 }
 
 /**

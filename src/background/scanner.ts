@@ -22,33 +22,22 @@
  */
 import { logger } from '../lib/logger';
 import { AuthRejectedError, RateLimitError } from '../lib/errors';
-import { updateBadge } from '../lib/badge';
-import { authorsToVisit, recordVisits, pruneVisits } from './author-visits';
+import { authorsToVisit, recordVisits } from './author-visits';
 import { isRetryDue, pruneFailures, recordFailures } from './body-failures';
+import { persistScan } from './scan-persist';
 import { fetchItemBody, fetchLikes, fetchUserItems } from '../api/qiita-client';
 import { decideMode, API_PER_PAGE } from '../api/rate-budget';
-import {
-  mergeLikeIndex,
-  purgeLikeIndex,
-  countRecords,
-  isWithinRetention,
-  toEpochMs,
-} from '../detect/like-index';
+import { isWithinRetention, toEpochMs } from '../detect/like-index';
 import { MAX_BURST_WINDOW_MINUTES } from '../types/domain';
-import { detectCandidates } from '../detect/detector';
 import { purgeAiHints, scoreAiStyle } from '../detect/ai-style';
 import * as storage from '../lib/storage';
 import type { RateState } from '../api/rate-budget';
 import type { QiitaLike } from '../api/qiita-client';
 import type {
   AiHintLog,
-  Candidate,
-  Settings,
   IsoDateTime,
   ItemId,
   LikeIndex,
-  MuteLog,
-  ScanMode,
   ScanResult,
   TrendItem,
 } from '../types/domain';
@@ -58,12 +47,6 @@ import type {
  * PRD の試算（著者 30 人 / 追加記事 約 60 本）に合わせる。
  */
 const MAX_EXTRA_ITEMS_PER_AUTHOR = 2;
-
-/**
- * Rate-Reset ヘッダーが読めなかったときの再開時刻（秒）。
- * 枠は 1 時間単位で回復するため、429 を受けた時刻から 1 時間後を案内する。
- */
-const RATE_WINDOW_SECONDS = 3600;
 
 /**
  * likers をアカウント単位のインデックスに畳む。
@@ -131,8 +114,11 @@ function collectKnownItemIds(index: LikeIndex): Set<string> {
   return known;
 }
 
-/** スキャン中に持ち回る進捗。関数間では新しいオブジェクトとして受け渡す */
-interface ScanProgress {
+/**
+ * スキャン中に持ち回る進捗。関数間では新しいオブジェクトとして受け渡す。
+ * 保存側（scan-persist）も読むので export する
+ */
+export interface ScanProgress {
   rate: RateState | null;
   /** 429 を受けたか。true になったらそれ以上叩かない */
   rateLimited: boolean;
@@ -520,7 +506,7 @@ async function runAiHints(
 }
 
 /**
- * スコアを保存する。**保存の直前に読み直す**（persistIndexAndDetect と同じ理由 —
+ * スコアを保存する。**保存の直前に読み直す**（scan-persist の persistIndexAndDetect と同じ理由 —
  * 並行したスキャンの保存を上書きで消さない）。ログは件数だけ（本文や語を出さない）。
  */
 async function persistAiHints(fresh: AiHintLog, now: Date): Promise<void> {
@@ -572,161 +558,6 @@ async function scanAuthorHistory(
     if (!progress.rateLimited) visited.push(handle);
   }
   return { progress, visited };
-}
-
-/**
- * 検出結果をログに出す。Phase 6 の候補一覧 UI ができるまでの唯一の確認手段であり、
- * OQ-12（ライトモードの射程で捕まえられるか）の検証もここで行う。
- *
- * ゼロ件のときも必ず 1 行出す。定期実行を持たない設計では初回スキャン直後の
- * ゼロ件が正常であり、「動いていない」と誤認させないため。
- * 想定内の動作なので info に留める（warn はエラー欄に載る）。
- */
-function logCandidates(candidates: Candidate[], settings: Settings): void {
-  logger.info(
-    'detected',
-    candidates.length,
-    // N / M という略号は当事者にしか読めない。何を数えているかを書く
-    'candidates (accounts>=' + String(settings.minClusterSize),
-    'items>=' + String(settings.minSharedItems),
-    'within ' + String(settings.lookbackDays) + 'd)',
-  );
-  for (const candidate of candidates) {
-    logger.info(
-      '  candidate: author=' + candidate.authorHandle,
-      'cluster:',
-      candidate.clusterSize,
-      'shared:',
-      candidate.sharedItemCount,
-      'burst:',
-      candidate.burstScore.toFixed(2),
-      'empty:',
-      candidate.emptyAccountRatio.toFixed(2),
-    );
-  }
-}
-
-/**
- * 今回の取得結果を蓄積へ畳み込み、保持期間を過ぎたものを捨て、検出をかける。
- *
- * **上書きではなくマージする。** 1 スキャン分のスナップショットだけでは
- * 「直近 3 日 = トレンドセット 6 回分」の共起を見られない。
- *
- * 429 で止まったときも実行する。既存方針（途中まででも成果は捨てない）に合わせ、
- * 不完全なインデックスでも候補が出るなら出す。次のスキャンで補強される。
- *
- * 【蓄積は保存の直前に読み直す】
- * スキャン開始時のスナップショットを持ち回ってはいけない。1 スキャンは
- * 25 本前後の直列リクエストで数秒かかり、その間に別のスキャンが保存した分を
- * 丸ごと上書きして消す（read-modify-write の lost update）。
- * 読み直しの窓は 1 マイクロタスクに収まる。
- */
-async function persistIndexAndDetect(fresh: LikeIndex): Promise<Candidate[]> {
-  const now = new Date();
-  const stored = await storage.getLikeIndex();
-  const { index: kept, purgedRecords } = purgeLikeIndex(mergeLikeIndex(stored, fresh), now);
-  await storage.saveLikeIndex(kept);
-
-  // 訪問記録も同じタイミングで掃除する。記録だけが残ると、保持期間を過ぎて
-  // インデックスから消えた著者を「訪問済み」として飛ばし続けることになる
-  const visits = await storage.getAuthorVisits();
-  const prunedVisits = pruneVisits(visits, kept);
-  if (Object.keys(prunedVisits).length !== Object.keys(visits).length) {
-    await storage.saveAuthorVisits(prunedVisits);
-  }
-
-  logger.info(
-    'index merged:',
-    'accounts:',
-    Object.keys(kept).length,
-    'records:',
-    countRecords(kept),
-    'purged:',
-    purgedRecords,
-  );
-
-  // 閾値はユーザーが動かせる（ポップアップのスライダー）。既定値を直接使うと、
-  // スライダーを動かしても次のスキャンが既定値で candidates を上書きしてしまう
-  const settings = await storage.getSettings();
-  const candidates = detectCandidates(kept, settings, now);
-  await storage.saveCandidates(candidates);
-  logCandidates(candidates, settings);
-  return candidates;
-}
-
-/**
- * バッジに出す件数。**ポップアップの一覧に出る候補だけを数える** — 今回のトレンドに
- * 居る著者と、ミュート済みと確認できた著者。
- *
- * ポップアップは同じ一覧から撮ったスナップショットで、不在の候補を出さない
- * （popup-state の hideOffTrend。2026-11-02）。ここで全件を数えると、
- * 一覧は 0 件なのにバッジが 3 を出す。保存する候補は絞らない — 外すのは表示だけ。
- * **規則を変えるときは hideOffTrend と揃える。**
- */
-function countShown(candidates: Candidate[], items: TrendItem[], muteLog: MuteLog): number {
-  const onTrend = new Set(items.map((item) => item.authorHandle));
-  return candidates.filter(
-    (candidate) =>
-      onTrend.has(candidate.authorHandle) || muteLog[candidate.authorHandle]?.mutedAt !== undefined,
-  ).length;
-}
-
-/**
- * 429 の状態を記録する。止まっていなければ消す。
- *
- * Rate-Reset が読めなかった場合は「いま + 1 時間」で案内する。枠は 1 時間単位で
- * 回復するため、この既定値は実際の回復より遅くなることはあっても早くはならない。
- */
-async function persistRateLimit(progress: ScanProgress): Promise<void> {
-  if (!progress.rateLimited) {
-    await storage.saveRateLimit(null);
-    return;
-  }
-  const resetAt = progress.resetAt ?? Math.floor(Date.now() / 1000) + RATE_WINDOW_SECONDS;
-  await storage.saveRateLimit(resetAt);
-  logger.info('rate limited: retry after', new Date(resetAt * 1000).toISOString());
-}
-
-interface PersistInput {
-  mode: ScanMode;
-  progress: ScanProgress;
-  startedAt: IsoDateTime;
-  fresh: LikeIndex;
-  newItemCount: number;
-  /** バッジの件数を今回のトレンドに絞るためだけに持つ（countShown） */
-  trendItems: TrendItem[];
-}
-
-async function persistScan(input: PersistInput): Promise<ScanResult> {
-  const { mode, progress } = input;
-  const result: ScanResult = {
-    mode,
-    newItemCount: input.newItemCount,
-    scannedItemCount: progress.scannedItemCount,
-    likeRecordCount: progress.likeRecordCount,
-    startedAt: input.startedAt,
-    finishedAt: new Date().toISOString(),
-  };
-
-  const candidates = await persistIndexAndDetect(input.fresh);
-  await storage.saveScanResult(result);
-  await persistRateLimit(progress);
-  const muteLog = await storage.getMuteLog();
-  await updateBadge(countShown(candidates, input.trendItems, muteLog), progress.rateLimited);
-
-  logger.info(
-    'scan finished: mode=' + mode,
-    // 直前の 'trend items:' が入力件数なので、ここは取得できた件数だと分かる語にする。
-    // 同じ 'items:' を 2 つの意味で使うと、全件既知のときの 'items: 0' が
-    // 「何も取れなかった」と読める
-    'fetched:',
-    progress.scannedItemCount,
-    'likes:',
-    progress.likeRecordCount,
-    'rate-remaining:',
-    progress.rate?.remaining ?? 'unknown',
-  );
-  return result;
 }
 
 /**
@@ -838,12 +669,5 @@ async function scanTrend(items: TrendItem[], startedAt: IsoDateTime): Promise<Sc
     }
   }
 
-  return persistScan({
-    mode,
-    progress,
-    startedAt,
-    fresh,
-    newItemCount: newItems.length,
-    trendItems: items,
-  });
+  return persistScan({ mode, progress, startedAt, fresh, newItemCount: newItems.length });
 }

@@ -15,6 +15,7 @@ import { detectCandidates } from '../../detect/detector';
 import { countAuthorCoverage } from '../../detect/like-index';
 import { RATE_LIMIT_ANON, RATE_LIMIT_AUTH } from '../../api/rate-budget';
 import { isTrendPage } from '../../dom/trend-reader';
+import { isHiddenAsOffTrend } from '../../lib/visibility';
 import { isMuteOutcome, BURST_WINDOW_CHOICES } from '../../types/domain';
 import type {
   AccountHandle,
@@ -104,11 +105,12 @@ export interface CandidateView {
    * 候補は 7 日ぶんの蓄積から出るので、5 日前に検出した著者はトレンドから
    * 去ったあとも候補に残る。**これが立っている候補は、ミュート済みでなければ一覧に
    * 出さない**（{@link hideOffTrend}。2026-11-02 まではこの時刻を添えて出していた）。
-   * popup-page の muteOnVerdict も、防御としてこれを見て依頼を送らない。
+   * 一覧に残ったミュート済みの著者で「妥当」を押し直したときは、popup-page の
+   * muteOnVerdict がこれを見て依頼を送らずに見送る。
    *
-   * 【なぜ boolean ではなく時刻なのか】
-   * スナップショット自体が古くなる。「出ていません」は現在形の主張になり、
-   * 2 日開いていなければ偽になりうる。時刻に紐づければ偽にならない。
+   * 【値は null かどうかしか読んでいない】（2026-11-02）
+   * 時刻を画面に出していた describeOffTrend を消したので、いまは null 判定だけに
+   * 使う。時刻のまま持つのは onTrendAt（押し直しの判定が時刻を比べる）と対にするため。
    */
   offTrendAt: IsoDateTime | null;
   /**
@@ -129,8 +131,8 @@ export interface CandidateView {
  * 呼び出し（Phase 6 からの経路）を書き換えずに済ませるため。
  *
  * **スナップショットが無いときは全員 null。**「まだ一度もトレンドを開いて
- * いない」を「全員トレンドに出ていない」と読み替えると、更新直後のユーザーに
- * 候補 30 件ぶんの嘘が並ぶ（itemCoveredMinutes で踏んだのと同じ形）。
+ * いない」を「全員トレンドに出ていない」と読み替えると、更新直後のユーザーの
+ * 一覧から候補 30 件ぶんが消える（hideOffTrend。itemCoveredMinutes で踏んだのと同じ形）。
  */
 export function toViews(
   candidates: Candidate[],
@@ -173,14 +175,27 @@ export function toViews(
  * 未確認を不在と読み替えると、更新直後のユーザーの一覧が理由も出ないまま空になる。
  *
  * 【ミュート済みと確認できた著者は外さない】（2026-11-02 ユーザー「折りたたみに残す」）
- * ミュートすると次の読み込みからトレンドに出なくなる（TrendSnapshot の JSDoc）。
- * 外すと「ミュート済みだけ」の折りたたみが常に空になり、**誤検知でミュートした著者を
- * 「誤り」に直す道が消える**（OQ-16）。トレンドに居ない理由はミュートの行が言うので、
- * 矛盾にはならない。見送りや失敗の記録（`mutedAt` が無い）は理由にならないので外す。
- * scanner の countShown（バッジ）も同じ規則で数える。
+ * 規則そのものは lib/visibility の isHiddenAsOffTrend にある。**バッジ（background の
+ * badge-sync）も同じ関数で数える**ので、一覧の件数とバッジは食い違わない。
  */
 export function hideOffTrend(views: CandidateView[]): CandidateView[] {
-  return views.filter((view) => view.offTrendAt === null || view.mute?.mutedAt !== undefined);
+  return views.filter((view) => !isHiddenAsOffTrend(view.offTrendAt !== null, view.mute));
+}
+
+/**
+ * 一覧に出すビューを作る。**ポップアップが候補を描くときは必ずここを通す。**
+ *
+ * toViews と hideOffTrend を呼び出し側で組み合わせると、3 つ目の呼び出し元が
+ * hideOffTrend を付け忘れたとき、トレンド外の著者が黙って戻ってくる
+ * （applySettings が trendSnapshot を読み忘れていた 2026-09-17 と同じ形）。
+ */
+export function toShownViews(
+  candidates: Candidate[],
+  feedback: FeedbackLog,
+  muteLog: MuteLog,
+  trendSnapshot: TrendSnapshot | null,
+): CandidateView[] {
+  return hideOffTrend(toViews(candidates, feedback, muteLog, trendSnapshot));
 }
 
 export interface PartitionedViews {
@@ -304,7 +319,8 @@ export function describeCall(views: CandidateView[], precision: Precision): stri
  *
  * 根拠記事はこの著者のぶんしか持たない（popup-state が根拠 URL を
  * authorHandle から組み立てるため）。他の著者の記事を見たければ、その著者の
- * 候補を開けば根拠リンクがある。
+ * 候補を開けば根拠リンクがある。**ただし、その著者がトレンド外なら一覧には居ない**
+ * （hideOffTrend。2026-11-02）。名前は出すが、候補が並んでいるとは限らない。
  *
  * **断定しない**（設計上の約束 6）。「組織票」「不正」とは書かない。
  */
@@ -314,21 +330,33 @@ export function describeCoAuthors(coAuthors: AccountHandle[] | undefined): strin
 }
 
 /**
- * 候補ゼロのときの案内。**原因が 2 つあるので言い分ける。**
+ * 候補ゼロのときの案内。**原因ごとに言い分ける。**
  *
- * 蓄積がまだ無いのか、蓄積はあるが条件が厳しいのかで、次にやることが違う。
- * 1 つの文言にすると、スライダーを上げてゼロになった人に
+ * 蓄積がまだ無いのか、蓄積はあるが条件が厳しいのか、折りたたみの中に居るのかで、
+ * 次にやることが違う。1 つの文言にすると、スライダーを上げてゼロになった人に
  * 「トレンドページを開いてください」と的外れな案内を出すことになる。
+ *
+ * 【スナップショットの時刻に紐づけて範囲を言う】（2026-11-02）
+ * トレンド外の候補は hideOffTrend で外しているので、範囲を言わないと保存済みの
+ * 候補があるのに「当てはまる候補はありません」が嘘になる。**「いまのトレンド」とは
+ * 言わない** — 絞りに使った記録はトレンドを最後に開いた時点のもので、2 日開いて
+ * いなければ 2 日前のもの（TrendSnapshot の JSDoc）。スナップショットが無ければ
+ * 1 件も絞っていないので、範囲は言わない。
  */
-export function describeEmpty(hasIndex: boolean, foldedCount = 0): string {
+export function describeEmpty(
+  hasIndex: boolean,
+  foldedCount = 0,
+  trendSnapshotAt: IsoDateTime | null = null,
+): string {
   // 折りたたみの中に居るのに「条件をゆるめると増えます」と言うと、
-  // 何もしていない人に条件をいじらせることになる。**原因は 3 つある**
+  // 何もしていない人に条件をいじらせることになる
   if (foldedCount > 0) return '出ている候補はすべて折りたたみの中にあります。';
-  // 「いまのトレンドには」と範囲を言う（2026-11-02）。トレンド外の候補は
-  // hideOffTrend で外しているので、範囲を言わないと保存済みの候補があるのに嘘になる
-  return hasIndex
-    ? 'いまのトレンドには、条件に当てはまる候補はありません。条件をゆるめると増えます。'
-    : 'まだ何も集めていません。トレンドページを開くと蓄積が始まります。';
+  if (!hasIndex) return 'まだ何も集めていません。トレンドページを開くと蓄積が始まります。';
+  const scope =
+    trendSnapshotAt === null
+      ? 'いまの条件に'
+      : `${formatJst(trendSnapshotAt)} に読み込んだトレンドには、条件に`;
+  return `${scope}当てはまる候補はありません。条件をゆるめると増えます。`;
 }
 
 const MINUTES_PER_DAY = 60 * 24;
@@ -470,6 +498,11 @@ export interface PopupState {
   muteOnValid: boolean;
   /** 評価が済んだ候補を折りたたむ対象。**既定は 'none'** */
   foldTarget: FoldTarget;
+  /**
+   * 一覧の絞り込みに使ったスナップショットの時刻。**撮っていなければ null。**
+   * 候補ゼロの案内（describeEmpty）が「いつのトレンドか」を言うために持つ
+   */
+  trendSnapshotAt: IsoDateTime | null;
 }
 
 /** 保存済みの状態をまとめて読む */
@@ -500,7 +533,7 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
     storage.getTrendSnapshot(),
   ]);
   return {
-    views: hideOffTrend(toViews(candidates, feedback, muteLog, trendSnapshot)),
+    views: toShownViews(candidates, feedback, muteLog, trendSnapshot),
     precision: precisionOf(feedback),
     settings,
     rateLimitNotice: rateLimitNotice(until, now),
@@ -510,6 +543,7 @@ export async function loadPopupState(now: Date): Promise<PopupState> {
     authorCoverage: countAuthorCoverage(index),
     muteOnValid,
     foldTarget,
+    trendSnapshotAt: trendSnapshot?.at ?? null,
   };
 }
 
@@ -542,7 +576,7 @@ export async function applySettings(settings: Settings, now: Date): Promise<Cand
   const candidates = detectCandidates(index, settings, now);
   await storage.saveSettings(settings);
   await storage.saveCandidates(candidates);
-  return hideOffTrend(toViews(candidates, feedback, muteLog, trendSnapshot));
+  return toShownViews(candidates, feedback, muteLog, trendSnapshot);
 }
 
 /**

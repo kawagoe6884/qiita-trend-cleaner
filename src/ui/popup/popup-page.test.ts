@@ -97,7 +97,7 @@ function setupDom(): void {
       </p>
     </details>
     <ul id="candidates"></ul>
-    <p id="empty" hidden>いまの条件に当てはまる候補はありません。</p>
+    <p id="empty" hidden></p>
     <details id="folded" hidden>
       <summary id="folded-summary"></summary>
       <p class="footnote" id="fold-note" hidden>
@@ -141,6 +141,7 @@ beforeEach(() => {
     authorCoverage: COVERAGE,
     muteOnValid: false,
     foldTarget: 'none' as const,
+    trendSnapshotAt: null,
   });
   applyMock.mockResolvedValue(toViews([candidate()], {}));
   verdictMock.mockResolvedValue({ valid: 1, falsePositive: 0, ratio: 1 });
@@ -170,6 +171,7 @@ describe('init の描画', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     await init();
     expect(el('#summary').textContent).toContain('適合率 75%');
@@ -203,6 +205,7 @@ describe('init の描画', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     // Act
     await init();
@@ -230,6 +233,7 @@ describe('init の描画', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     await expect(init()).resolves.toBeUndefined();
     expect(el('#empty').hidden).toBe(false);
@@ -263,6 +267,7 @@ describe('init の描画', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     await init();
     expect(el('#notice').hidden).toBe(false);
@@ -307,6 +312,7 @@ describe('init の XSS 対策', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     // Act
     await init();
@@ -524,6 +530,7 @@ describe('候補一覧への一言', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     });
     await init();
     expect(el('#call').hidden).toBe(true);
@@ -722,6 +729,7 @@ describe('候補ゼロの案内', () => {
       authorCoverage: hasIndex ? COVERAGE : { total: 0, solo: 0 },
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     };
   }
 
@@ -736,6 +744,16 @@ describe('候補ゼロの案内', () => {
     await init();
     expect(el('#empty').textContent).toContain('条件をゆるめる');
     expect(el('#empty').textContent).not.toContain('トレンドページを開く');
+  });
+
+  it('★ スナップショットがあれば、読み込んだ時刻を案内に出す（2026-11-02）', async () => {
+    // Arrange — 一覧はこの時刻のトレンドで絞っている
+    const at = '2026-11-02T12:53:00.000Z';
+    loadMock.mockResolvedValue({ ...emptyState(true), trendSnapshotAt: at });
+    // Act
+    await init();
+    // Assert
+    expect(el('#empty').textContent).toContain(formatJst(at));
   });
 
   it('スライダーでゼロになったときも条件の案内に変わる', async () => {
@@ -899,6 +917,7 @@ describe('coAuthors の行', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     };
   }
 
@@ -961,6 +980,7 @@ describe('「妥当」と同時のミュート', () => {
       authorCoverage: COVERAGE,
       muteOnValid,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     };
   }
 
@@ -1241,6 +1261,7 @@ describe('既にミュート済みの候補の表示', () => {
       authorCoverage: COVERAGE,
       muteOnValid,
       foldTarget: 'none' as const,
+      trendSnapshotAt: null,
     };
   }
 
@@ -1311,6 +1332,7 @@ describe('押し直せる候補の案内', () => {
       authorCoverage: COVERAGE,
       muteOnValid,
       foldTarget,
+      trendSnapshotAt: null,
     };
   }
 
@@ -1553,6 +1575,7 @@ describe('評価済みの折りたたみ', () => {
       authorCoverage: COVERAGE,
       muteOnValid: false,
       foldTarget,
+      trendSnapshotAt: null,
     };
   }
 
@@ -1917,6 +1940,7 @@ describe('候補カードの見出し', () => {
       authorCoverage: COVERAGE,
       muteOnValid: true,
       foldTarget,
+      trendSnapshotAt: null,
     };
   }
 

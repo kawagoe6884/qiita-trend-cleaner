@@ -1,10 +1,11 @@
 import { logger } from '../lib/logger';
 import * as storage from '../lib/storage';
 import { runScan } from './scanner';
+import { refreshBadge } from './badge-sync';
 import { seedFixture } from './fixture-seed';
 import { FIXTURE_SCENE } from '../detect/fixture';
 import type { QtgRequest, QtgResponse } from '../types/messages';
-import type { TrendItem } from '../types/domain';
+import type { AccountHandle, TrendItem, TrendSnapshot } from '../types/domain';
 
 const VERSION = chrome.runtime.getManifest().version;
 
@@ -78,13 +79,36 @@ function safeRecordTrend(items: TrendItem[]): void {
   const now = new Date();
   const handles = items.map((item) => item.authorHandle);
   void (async () => {
-    const snapshot = await storage.saveTrendSnapshot(handles, now);
-    // ここに居る著者は、その時点でミュートされていない（TrendSnapshot の JSDoc）
-    await storage.forgetMuteConfirmation(handles, snapshot.at);
+    await recordTrend(handles, now);
+    // 一覧はスナップショットで絞るので、バッジもここで数え直す（badge-sync）。
+    // スキャン中に別タブで開くと 2 本目のスキャンは走らず、数え直す機会がここしか無い
+    await refreshBadge(now);
   })().catch((error: unknown) => {
     // 記録に失敗しても検出は動く。想定内なので debug に留める（約束 11）
     logger.debug('trend snapshot failed:', error);
   });
+}
+
+/**
+ * スナップショットを保存し、戻ってきた著者のミュート記録を捨てる。
+ *
+ * 【保存に失敗したら前回のものを消す】（2026-11-02）
+ * 一覧はスナップショットで絞るようになった。前回のものが残ると、今回のスキャンで
+ * 見つかった候補が「トレンド外」として理由も出ずに消える。**warn には上げない** —
+ * 想定内の失敗でエラー欄を汚さない約束（4 / 11）は変わらないので、ログではなく
+ * 「古い記録で絞らない」ことで害を消す。消せば一覧は 1 件も絞らない側に倒れる。
+ */
+async function recordTrend(handles: AccountHandle[], now: Date): Promise<void> {
+  let snapshot: TrendSnapshot;
+  try {
+    snapshot = await storage.saveTrendSnapshot(handles, now);
+  } catch (error) {
+    logger.debug('trend snapshot failed:', error);
+    await storage.clearTrendSnapshot();
+    return;
+  }
+  // ここに居る著者は、その時点でミュートされていない（TrendSnapshot の JSDoc）
+  await storage.forgetMuteConfirmation(handles, snapshot.at);
 }
 
 chrome.runtime.onInstalled.addListener((details) => {

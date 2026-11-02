@@ -13,6 +13,7 @@ import {
   saveAiHints,
   saveAiHintPrefs,
   recordMuteOutcome,
+  saveTrendSnapshot,
 } from '../lib/storage';
 import { AuthRejectedError, RateLimitError } from '../lib/errors';
 import { logger } from '../lib/logger';
@@ -616,16 +617,29 @@ describe('runScan の設定とバッジ', () => {
     expect(mockOf(chrome.action, 'setBadgeText')).toHaveBeenCalledWith({ text: '1' });
   });
 
+  /**
+   * トレンドページを開いたときの順序を再現する。**本番では service worker が
+   * 同じメッセージからスナップショットを先に保存し**、バッジはそれを読んで数える
+   * （badge-sync）。runScan だけを呼ぶとスナップショットが無く、全件を数える
+   */
+  async function openTrendPage(items: TrendItem[]): Promise<void> {
+    await saveTrendSnapshot(
+      items.map((item) => item.authorHandle),
+      new Date(),
+    );
+    await runScan(items);
+  }
+
   it('★ 今回のトレンドに居ない著者はバッジに数えない（候補の保存からは外さない）', async () => {
     // Arrange — 前回のトレンドで example-author-1 が候補になった
     await saveSettings({ ...DEFAULT_SETTINGS, minClusterSize: 2, lookbackDays: 3 });
-    await runScan(SAME_AUTHOR);
+    await openTrendPage(SAME_AUTHOR);
     mockOf(chrome.action, 'setBadgeText').mockClear();
     // 今回のトレンドに example-author-1 は居ない。likers を 1 人にして新しい候補を作らない
     likesMock.mockResolvedValue(likesResponse(['example-liker-x']));
     // Act
-    await runScan([trendItem(3), trendItem(4)]);
-    // Assert — ポップアップの一覧（hideOffTrend）と同じ件数にする（2026-11-02）
+    await openTrendPage([trendItem(3), trendItem(4)]);
+    // Assert — ポップアップの一覧（toShownViews）と同じ件数にする（2026-11-02）
     expect(await getCandidates()).toHaveLength(1);
     expect(mockOf(chrome.action, 'setBadgeText')).toHaveBeenCalledWith({ text: '' });
   });
@@ -633,10 +647,10 @@ describe('runScan の設定とバッジ', () => {
   it('居る著者と居ない著者が混ざっていれば、居る著者だけを数える', async () => {
     // Arrange — 前回のトレンドで example-author-1 が候補になった
     await saveSettings({ ...DEFAULT_SETTINGS, minClusterSize: 2, lookbackDays: 3 });
-    await runScan(SAME_AUTHOR);
+    await openTrendPage(SAME_AUTHOR);
     mockOf(chrome.action, 'setBadgeText').mockClear();
     // Act — 今回は example-author-9 の 2 記事だけが出ている（同じ 2 人が揃う）
-    await runScan([trendItem(9), { ...trendItem(10), authorHandle: 'example-author-9' }]);
+    await openTrendPage([trendItem(9), { ...trendItem(10), authorHandle: 'example-author-9' }]);
     // Assert — 保存は 2 人、バッジは今回のトレンドに居る 1 人
     expect(await getCandidates()).toHaveLength(2);
     expect(mockOf(chrome.action, 'setBadgeText')).toHaveBeenCalledWith({ text: '1' });
@@ -645,12 +659,12 @@ describe('runScan の設定とバッジ', () => {
   it('★ ミュート済みと確認できた著者は、トレンドに居なくても数える（ポップアップに残すため）', async () => {
     // Arrange — example-author-1 を検出し、Qiita 側でミュートした
     await saveSettings({ ...DEFAULT_SETTINGS, minClusterSize: 2, lookbackDays: 3 });
-    await runScan(SAME_AUTHOR);
+    await openTrendPage(SAME_AUTHOR);
     await recordMuteOutcome('example-author-1', 'muted', new Date());
     mockOf(chrome.action, 'setBadgeText').mockClear();
     likesMock.mockResolvedValue(likesResponse(['example-liker-x']));
     // Act — ミュートしたので、今回のトレンドには居ない
-    await runScan([trendItem(3), trendItem(4)]);
+    await openTrendPage([trendItem(3), trendItem(4)]);
     // Assert — ポップアップ（hideOffTrend）はミュート済みを残すので、バッジも数える
     expect(mockOf(chrome.action, 'setBadgeText')).toHaveBeenCalledWith({ text: '1' });
   });

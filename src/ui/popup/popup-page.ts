@@ -41,7 +41,7 @@ import {
 import type { CandidateView, Precision } from './popup-state';
 import type { AuthorCoverage } from '../../detect/like-index';
 import { DEFAULT_SETTINGS } from '../../types/domain';
-import type { FoldTarget, MuteRecord, Settings, Verdict } from '../../types/domain';
+import type { FoldTarget, IsoDateTime, MuteRecord, Settings, Verdict } from '../../types/domain';
 
 const SELECTORS = {
   notice: '#notice',
@@ -148,7 +148,7 @@ function renderSummary(views: CandidateView[], precision: Precision): void {
   // 折りたたみの中に居るだけなら「条件をゆるめて」ではない。
   // 案内は **開いている件数** で出し分ける（renderCandidates と同じ分割）
   const { open, folded } = partitionViews(views, currentFoldTarget, currentMuteOnValid);
-  setText(SELECTORS.empty, describeEmpty(currentHasIndex, folded.length));
+  setText(SELECTORS.empty, describeEmpty(currentHasIndex, folded.length, currentTrendSnapshotAt));
   setHidden(SELECTORS.empty, open.length > 0);
   // バッジはスキャン時だけでなく、閾値を変えたときも合わせる。
   // 合わせないと一覧が 5 件を出しているのにバッジは前回の 2 件を出し続ける
@@ -392,6 +392,8 @@ let currentRateLimited = false;
 let currentMuteOnValid = false;
 /** 評価が済んだ候補を折りたたむ対象。**既定は 'none'**（折りたたまない） */
 let currentFoldTarget: FoldTarget = 'none';
+/** 一覧の絞り込みに使ったスナップショットの時刻。候補ゼロの案内が使う */
+let currentTrendSnapshotAt: IsoDateTime | null = null;
 
 /**
  * ドラッグ中に呼ぶ。**同期処理だけ。**
@@ -687,6 +689,7 @@ export async function init(): Promise<void> {
     currentPrecision = state.precision;
     currentViews = state.views;
     currentHasIndex = state.hasIndex;
+    currentTrendSnapshotAt = state.trendSnapshotAt;
     currentRateLimited = state.rateLimitNotice !== null;
     currentMuteOnValid = state.muteOnValid;
     // **renderCandidates より前に代入する。**あとにすると初回だけ折りたたまれない

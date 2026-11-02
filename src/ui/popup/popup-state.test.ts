@@ -15,6 +15,7 @@ import {
   describeMuteStatus,
   describeRetryNotice,
   hideOffTrend,
+  toShownViews,
   describeEmpty,
   describeWindowShare,
   describeCoAuthors,
@@ -211,6 +212,38 @@ describe('loadPopupState', () => {
     expect(state.views.map((view) => view.candidate.authorHandle)).toEqual(['example-author-2']);
   });
 
+  it('★ スナップショットの時刻を配線する（候補ゼロの案内が使う）', async () => {
+    await storage.saveTrendSnapshot(['example-author-z'], NOW);
+    expect((await loadPopupState(NOW)).trendSnapshotAt).toBe(NOW.toISOString());
+  });
+
+  it('スナップショットが無ければ時刻は null', async () => {
+    expect((await loadPopupState(NOW)).trendSnapshotAt).toBeNull();
+  });
+
+  it('★ ミュート済みの著者はトレンドに居なくても一覧に残す（muteLog を配線する）', async () => {
+    // Arrange — muteLog を toShownViews に渡し忘れても、hideOffTrend 自身のテストは
+    // 通る（手で組んだ記録を渡すため）。**ここだけが配線を見ている**
+    await storage.saveCandidates([candidate('1')]);
+    await storage.saveTrendSnapshot(['example-author-z'], NOW);
+    await storage.recordMuteOutcome('example-author-1', 'muted', NOW);
+    // Act
+    const state = await loadPopupState(NOW);
+    // Assert
+    expect(state.views).toHaveLength(1);
+  });
+
+  it('★ 確認済みのあとで見送りを記録しても一覧に残す（mutedAt が残るので）', async () => {
+    // Arrange — 「誤り」→「妥当」と押し直すと、トレンド外なので見送り（not-on-page）が
+    // 書かれる。outcome で判定すると、押し直した瞬間に一覧から消える
+    await storage.saveCandidates([candidate('1')]);
+    await storage.saveTrendSnapshot(['example-author-z'], NOW);
+    await storage.recordMuteOutcome('example-author-1', 'muted', NOW);
+    await storage.recordMuteOutcome('example-author-1', 'not-on-page', NOW);
+    // Act & Assert
+    expect((await loadPopupState(NOW)).views).toHaveLength(1);
+  });
+
   it('トレンドに居る候補は offTrendAt が null で、onTrendAt に時刻が配線される', async () => {
     // Arrange
     await storage.saveCandidates([candidate('1')]);
@@ -299,6 +332,21 @@ describe('applySettings', () => {
     // **保存する候補からは外さない**（蓄積と同じく、トレンドに戻れば一覧にも戻る）
     expect(views).toEqual([]);
     expect(await storage.getCandidates()).toHaveLength(1);
+  });
+
+  it('★ つまみを動かしてもミュート済みの著者は残す（muteLog を配線する）', async () => {
+    // Arrange — loadPopupState と同じ配線を、ここでも見る（2026-09-17 の穴と同じ形）
+    await storage.saveLikeIndex(clusteredIndex(5));
+    await storage.saveTrendSnapshot(['example-author-z'], NOW);
+    await storage.recordMuteOutcome('example-author-a', 'muted', NOW);
+    // Act
+    const views = await applySettings(
+      { ...DEFAULT_SETTINGS, minClusterSize: 5, minSharedItems: 2, lookbackDays: 3 },
+      NOW,
+    );
+    // Assert
+    expect(views).toHaveLength(1);
+    expect(views[0]?.mute?.mutedAt).toBe(NOW.toISOString());
   });
 
   it('再検出は API を 1 本も叩かない', async () => {
@@ -709,10 +757,10 @@ describe('toViews の offTrendAt', () => {
   const AT = '2026-09-16T10:00:00.000Z';
   const HANDLE = 'example-author-a';
 
-  it('★ スナップショットが無ければ null（全員に「出ていません」と言わない）', () => {
+  it('★ スナップショットが無ければ null（全員を一覧から外さない）', () => {
     // Arrange — 更新直後はまだ一度もトレンドを開いていない。ここで
-    // 「居ない = 出ていない」と読み替えると、**候補 30 件ぶんの嘘が並ぶ**
-    // （itemCoveredMinutes が既存データの上で死んだのと同じ形）
+    // 「居ない = 出ていない」と読み替えると、**候補 30 件ぶんが一覧から消える**
+    // （hideOffTrend。itemCoveredMinutes が既存データの上で死んだのと同じ形）
     // Act
     const [view] = toViews([candidate('a')], {}, {});
     // Assert
@@ -842,6 +890,24 @@ describe('hideOffTrend', () => {
       'example-author-c',
       'example-author-b',
     ]);
+  });
+
+  it('★ ミュート済みでトレンド外の著者は「ミュート済み」の折りたたみに入る（例外を残した理由）', () => {
+    // Arrange — 例外を残したのはこの折りたたみを空にしないため。hideOffTrend と
+    // partitionViews の規則がずれると、ここに入らず「誤り」に直す道が消える
+    const record = { outcome: 'muted' as const, at: AT, mutedAt: AT };
+    const views = toShownViews(
+      [candidate('a')],
+      { 'example-author-a': 'valid' },
+      { 'example-author-a': record },
+      { authors: ['example-author-z'], at: AT },
+    );
+    // Act
+    const { open, folded } = partitionViews(views, 'muted', false);
+    // Assert — 開いた側は空。案内は条件ではなく折りたたみを指す
+    expect(folded).toHaveLength(1);
+    expect(open).toEqual([]);
+    expect(describeEmpty(true, folded.length, AT)).toContain('折りたたみ');
   });
 });
 
@@ -1476,12 +1542,25 @@ describe('describeEmpty', () => {
     expect(describeEmpty(true)).toContain('ゆるめる');
   });
 
-  it('★ 「いまのトレンドには」と範囲を言う（トレンド外の候補は一覧から外している）', () => {
+  it('★ スナップショットがあれば、読み込んだ時刻に紐づけて範囲を言う', () => {
     // Arrange — 2026-11-02 からトレンド外の候補を出さない。候補が全員トレンド外のとき
-    // 「いまの条件に当てはまる候補はありません」と言うと、当てはまる候補は保存されて
-    // いるのに嘘になり、条件をゆるめる必要の無い人にゆるめさせる
+    // 「当てはまる候補はありません」とだけ言うと、保存済みの候補があるのに嘘になる
+    const at = '2026-11-02T12:53:00.000Z';
+    // Act
+    const text = describeEmpty(true, 0, at);
+    // Assert
+    expect(text).toContain(`${formatJst(at)} に読み込んだトレンドには`);
+  });
+
+  it('★ 「いまのトレンド」と現在形で言わない（スナップショットは古くなる）', () => {
+    // Arrange — トレンドを 2 日開いていなければ、絞りに使った記録は 2 日前のもの。
+    // 時刻を出していた「◯◯ 時点でトレンド外」の行を消したので、ここが時刻を持つ
     // Act & Assert
-    expect(describeEmpty(true)).toContain('いまのトレンドには');
+    expect(describeEmpty(true, 0, '2026-11-02T12:53:00.000Z')).not.toContain('いまのトレンド');
+  });
+
+  it('スナップショットが無ければ 1 件も絞っていないので、範囲を言わない', () => {
+    expect(describeEmpty(true, 0, null)).toContain('いまの条件に当てはまる候補はありません');
   });
 
   it('折りたたみの中に居るなら、条件をいじらせない', () => {
